@@ -52,7 +52,9 @@ async function bootstrap() {
   });
 
   app.enableCors({
-    origin: [/^https?:\/\/localhost:\d+$/],
+    origin: [/^https?:\/\/localhost:\d+$/,
+      'https://admin.fasket.cloud'
+    ],
     credentials: true,
   });
 
