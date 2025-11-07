@@ -1,0 +1,140 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsEmail, IsEnum, IsInt, IsNumber, IsObject, IsOptional, IsString, Min, ValidateNested, IsArray } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class DayHoursDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() open?: string;   // "09:00"
+  @ApiPropertyOptional() @IsOptional() @IsString() close?: string;  // "21:00"
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+}
+
+export class BusinessHoursDto {
+  @ApiPropertyOptional({ type: DayHoursDto }) @IsOptional() @ValidateNested() @Type(() => DayHoursDto) monday?: DayHoursDto;
+  @ApiPropertyOptional({ type: DayHoursDto }) @IsOptional() @ValidateNested() @Type(() => DayHoursDto) tuesday?: DayHoursDto;
+  @ApiPropertyOptional({ type: DayHoursDto }) @IsOptional() @ValidateNested() @Type(() => DayHoursDto) wednesday?: DayHoursDto;
+  @ApiPropertyOptional({ type: DayHoursDto }) @IsOptional() @ValidateNested() @Type(() => DayHoursDto) thursday?: DayHoursDto;
+  @ApiPropertyOptional({ type: DayHoursDto }) @IsOptional() @ValidateNested() @Type(() => DayHoursDto) friday?: DayHoursDto;
+  @ApiPropertyOptional({ type: DayHoursDto }) @IsOptional() @ValidateNested() @Type(() => DayHoursDto) saturday?: DayHoursDto;
+  @ApiPropertyOptional({ type: DayHoursDto }) @IsOptional() @ValidateNested() @Type(() => DayHoursDto) sunday?: DayHoursDto;
+}
+
+export class DeliveryZoneDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() fee?: number; // float in UI, convert to cents
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+}
+
+export class CashOnDeliveryDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() maxAmount?: number; // float in UI
+}
+
+export class CreditCardsDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() acceptedCards?: string[];
+}
+
+export class WalletConfigDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() merchantId?: string;
+}
+
+export class DigitalWalletsDto {
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => WalletConfigDto) paypal?: WalletConfigDto;
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => WalletConfigDto) applePay?: WalletConfigDto;
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => WalletConfigDto) googlePay?: WalletConfigDto;
+}
+
+export class StripeDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() publicKey?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() secretKey?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() webhookSecret?: string;
+}
+
+export class PaymentDto {
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => CashOnDeliveryDto) cashOnDelivery?: CashOnDeliveryDto;
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => CreditCardsDto)   creditCards?: CreditCardsDto;
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => DigitalWalletsDto) digitalWallets?: DigitalWalletsDto;
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => StripeDto)       stripe?: StripeDto;
+}
+
+export class OrderNotificationsDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() email?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() sms?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() push?: boolean;
+}
+export class MarketingEmailsDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString()  frequency?: string; // 'weekly'
+}
+export class LowStockAlertDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) threshold?: number;
+}
+
+export class AdminAlertsDto {
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => LowStockAlertDto)
+  lowStock?: LowStockAlertDto;
+
+  @ApiPropertyOptional() @IsOptional() @IsObject()
+  newOrders?: { enabled?: boolean };
+
+  @ApiPropertyOptional() @IsOptional() @IsObject()
+  systemUpdates?: { enabled?: boolean };
+}
+
+export class NotificationsDto {
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => OrderNotificationsDto)
+  orderNotifications?: OrderNotificationsDto;
+
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => MarketingEmailsDto)
+  marketingEmails?: MarketingEmailsDto;
+
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(() => AdminAlertsDto)
+  adminAlerts?: AdminAlertsDto;
+}
+
+export class GeneralSettingsDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() storeName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() storeDescription?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail()  contactEmail?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() contactPhone?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() storeAddress?: string;
+  @ApiPropertyOptional({ type: BusinessHoursDto }) @IsOptional() @ValidateNested() @Type(() => BusinessHoursDto) businessHours?: BusinessHoursDto;
+}
+
+export class DeliverySettingsDto {
+  @ApiPropertyOptional() @IsOptional() @IsNumber() deliveryFee?: number;                 // float UI → cents DB
+  @ApiPropertyOptional() @IsOptional() @IsNumber() freeDeliveryMinimum?: number;         // float UI → cents DB
+  @ApiPropertyOptional() @IsOptional() @IsString() estimatedDeliveryTime?: string;
+  @ApiPropertyOptional() @IsOptional() @IsInt()    maxDeliveryRadius?: number;
+  @ApiPropertyOptional({ type: [DeliveryZoneDto] })
+  @IsOptional() @ValidateNested({ each: true }) @Type(() => DeliveryZoneDto)
+  deliveryZones?: DeliveryZoneDto[];
+}
+
+export class PaymentSettingsDto extends PaymentDto {}
+export class NotificationsSettingsDto extends NotificationsDto {}
+
+export class SystemSettingsDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() maintenanceMode?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() allowRegistrations?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() requireEmailVerification?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsInt()    sessionTimeout?: number;
+  @ApiPropertyOptional() @IsOptional() @IsInt()    maxLoginAttempts?: number;
+  @ApiPropertyOptional() @IsOptional() @IsInt()    dataRetentionDays?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() backupFrequency?: 'daily'|'weekly'|'monthly';
+  @ApiPropertyOptional() @IsOptional() @IsString() timezone?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() language?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+}
+
+/** Full PATCH accepts any section */
+export class UpdateSettingsDto {
+  @ApiPropertyOptional({ type: GeneralSettingsDto })       @IsOptional() @ValidateNested() @Type(() => GeneralSettingsDto)       general?: GeneralSettingsDto;
+  @ApiPropertyOptional({ type: DeliverySettingsDto })      @IsOptional() @ValidateNested() @Type(() => DeliverySettingsDto)      delivery?: DeliverySettingsDto;
+  @ApiPropertyOptional({ type: PaymentSettingsDto })       @IsOptional() @ValidateNested() @Type(() => PaymentSettingsDto)       payment?: PaymentSettingsDto;
+  @ApiPropertyOptional({ type: NotificationsSettingsDto }) @IsOptional() @ValidateNested() @Type(() => NotificationsSettingsDto) notifications?: NotificationsSettingsDto;
+  @ApiPropertyOptional({ type: SystemSettingsDto })        @IsOptional() @ValidateNested() @Type(() => SystemSettingsDto)        system?: SystemSettingsDto;
+}
