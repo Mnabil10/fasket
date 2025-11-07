@@ -52,10 +52,13 @@ async function bootstrap() {
   });
 
   app.enableCors({
-    origin: [/^https?:\/\/localhost:\d+$/,
-      'https://admin.fasket.cloud'
+    origin: [
+      /^https?:\/\/localhost:\d+$/,
+      'https://admin.fasket.cloud',
     ],
     credentials: true,
+    methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
+    allowedHeaders: ['Content-Type','Authorization','X-Requested-With','Accept'],
   });
 
   await app.listen(process.env.PORT ? Number(process.env.PORT) : 4000);
