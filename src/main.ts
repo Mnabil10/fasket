@@ -21,7 +21,15 @@ async function bootstrap() {
     transform: true,
     transformOptions: { enableImplicitConversion: true },
   }));
-  app.use(helmet());
+  app.use(
+  helmet({
+    // We'll set these in Nginx
+    crossOriginOpenerPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: false,
+    // keep your other helmet defaults
+  })
+);
   app.use(compression());
   // Static files for local uploads (e.g., when UPLOADS_DRIVER=local)
   const uploadsDir = process.env.UPLOADS_DIR || 'uploads';
