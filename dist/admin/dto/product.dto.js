@@ -9,10 +9,12 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ProductListQueryDto = exports.UpdateProductDto = exports.CreateProductDto = exports.ProductStatusDto = void 0;
+exports.ProductListRequestDto = exports.ProductListQueryDto = exports.UpdateProductDto = exports.CreateProductDto = exports.ProductStatusDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
-const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
+const class_validator_1 = require("class-validator");
+const sanitize_util_1 = require("../../common/utils/sanitize.util");
+const pagination_dto_1 = require("./pagination.dto");
 var ProductStatusDto;
 (function (ProductStatusDto) {
     ProductStatusDto["DRAFT"] = "DRAFT";
@@ -28,38 +30,52 @@ class CreateProductDto {
 exports.CreateProductDto = CreateProductDto;
 __decorate([
     (0, swagger_1.ApiProperty)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanString)(value)),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "name", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "nameAr", void 0);
 __decorate([
-    (0, swagger_1.ApiProperty)(),
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "slug", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "description", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "descriptionAr", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "imageUrl", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProductDto.prototype, "sku", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)(),
     (0, class_validator_1.IsInt)(),
@@ -93,6 +109,7 @@ __decorate([
 ], CreateProductDto.prototype, "status", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
@@ -101,6 +118,7 @@ __decorate([
     (0, swagger_1.ApiPropertyOptional)({ type: [String] }),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
     __metadata("design:type", Array)
 ], CreateProductDto.prototype, "images", void 0);
 class UpdateProductDto extends (0, swagger_1.PartialType)(CreateProductDto) {
@@ -166,4 +184,7 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], ProductListQueryDto.prototype, "sort", void 0);
+class ProductListRequestDto extends (0, swagger_1.IntersectionType)(pagination_dto_1.PaginationDto, ProductListQueryDto) {
+}
+exports.ProductListRequestDto = ProductListRequestDto;
 //# sourceMappingURL=product.dto.js.map

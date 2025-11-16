@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+var AdminOrdersController_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdminOrdersController = void 0;
 const common_1 = require("@nestjs/common");
@@ -20,9 +21,10 @@ const admin_service_1 = require("./admin.service");
 const order_status_dto_1 = require("./dto/order-status.dto");
 const pagination_dto_1 = require("./dto/pagination.dto");
 const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
-let AdminOrdersController = class AdminOrdersController {
+let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersController {
     constructor(svc) {
         this.svc = svc;
+        this.logger = new common_1.Logger(AdminOrdersController_1.name);
     }
     async list(status, from, to, customer, minTotalCents, maxTotalCents, page) {
         const where = {};
@@ -79,6 +81,7 @@ let AdminOrdersController = class AdminOrdersController {
                 data: { orderId: id, from: before.status, to: dto.to, note: dto.note, actorId: user.userId },
             });
         });
+        this.logger.log({ msg: 'Order status updated', orderId: id, from: before.status, to: dto.to, actorId: user.userId });
         return { ok: true };
     }
 };
@@ -119,11 +122,11 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, order_status_dto_1.UpdateOrderStatusDto]),
     __metadata("design:returntype", Promise)
 ], AdminOrdersController.prototype, "updateStatus", null);
-exports.AdminOrdersController = AdminOrdersController = __decorate([
+exports.AdminOrdersController = AdminOrdersController = AdminOrdersController_1 = __decorate([
     (0, swagger_1.ApiTags)('Admin/Orders'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.StaffOrAdmin)(),
-    (0, common_1.Controller)('admin/orders'),
+    (0, common_1.Controller)({ path: 'admin/orders', version: ['1'] }),
     __metadata("design:paramtypes", [admin_service_1.AdminService])
 ], AdminOrdersController);
 //# sourceMappingURL=orders.controller.js.map

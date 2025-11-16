@@ -12,7 +12,7 @@ import { Express } from 'express';
 @ApiTags('Admin/Uploads')
 @ApiBearerAuth()
 @AdminOnly()
-@Controller('admin/uploads')
+@Controller({ path: 'admin/uploads', version: ['1'] })
 export class UploadsController {
   constructor(private readonly uploads: UploadsService) {}
 

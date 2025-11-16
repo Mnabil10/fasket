@@ -9,7 +9,5 @@ export declare class UploadsController {
         uploadUrl: string;
         publicUrl: string;
     }>;
-    multipart(file: Express.Multer.File): Promise<{
-        url: string;
-    }>;
+    multipart(file: Express.Multer.File): Promise<import("./uploads.service").ProcessedImageResult>;
 }

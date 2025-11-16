@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AdminOnly } from './_admin-guards';
 import { AdminService } from './admin.service';
@@ -7,8 +7,10 @@ import { PaginationDto } from './dto/pagination.dto';
 @ApiTags('Admin/Coupons')
 @ApiBearerAuth()
 @AdminOnly()
-@Controller('admin/coupons')
+@Controller({ path: 'admin/coupons', version: ['1'] })
 export class AdminCouponsController {
+  private readonly logger = new Logger(AdminCouponsController.name);
+
   constructor(private svc: AdminService) {}
 
   @Get()
@@ -33,11 +35,19 @@ export class AdminCouponsController {
       data.type = 'PERCENT';
       data.valueCents = Number(dto.percent);
     }
-    return this.svc.prisma.coupon.create({ data });
+    const created = this.svc.prisma.coupon.create({ data });
+    created.then((coupon) =>
+      this.logger.log({ msg: 'Coupon created', couponId: coupon.id, code: coupon.code, type: coupon.type }),
+    );
+    return created;
   }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: any) {
-    return this.svc.prisma.coupon.update({ where: { id }, data: dto });
+    const updated = this.svc.prisma.coupon.update({ where: { id }, data: dto });
+    updated.then((coupon) =>
+      this.logger.log({ msg: 'Coupon updated', couponId: coupon.id, code: coupon.code, isActive: coupon.isActive }),
+    );
+    return updated;
   }
 }

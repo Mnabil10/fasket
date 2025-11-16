@@ -2,15 +2,16 @@ import { AdminService } from './admin.service';
 import { PaginationDto } from './dto/pagination.dto';
 export declare class AdminCouponsController {
     private svc;
+    private readonly logger;
     constructor(svc: AdminService);
     list(q?: string, page?: PaginationDto): Promise<{
         items: {
+            type: import(".prisma/client").$Enums.CouponType;
+            code: string;
             id: string;
             createdAt: Date;
             updatedAt: Date;
-            type: import(".prisma/client").$Enums.CouponType;
             isActive: boolean;
-            code: string;
             valueCents: number;
             isPercent: boolean;
             startsAt: Date | null;
@@ -23,12 +24,12 @@ export declare class AdminCouponsController {
         pageSize: number | undefined;
     }>;
     create(dto: any): import(".prisma/client").Prisma.Prisma__CouponClient<{
+        type: import(".prisma/client").$Enums.CouponType;
+        code: string;
         id: string;
         createdAt: Date;
         updatedAt: Date;
-        type: import(".prisma/client").$Enums.CouponType;
         isActive: boolean;
-        code: string;
         valueCents: number;
         isPercent: boolean;
         startsAt: Date | null;
@@ -37,12 +38,12 @@ export declare class AdminCouponsController {
         maxDiscountCents: number | null;
     }, never, import("@prisma/client/runtime/library").DefaultArgs>;
     update(id: string, dto: any): import(".prisma/client").Prisma.Prisma__CouponClient<{
+        type: import(".prisma/client").$Enums.CouponType;
+        code: string;
         id: string;
         createdAt: Date;
         updatedAt: Date;
-        type: import(".prisma/client").$Enums.CouponType;
         isActive: boolean;
-        code: string;
         valueCents: number;
         isPercent: boolean;
         startsAt: Date | null;

@@ -1,50 +1,37 @@
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import { lookup as mimeLookup } from 'mime-types';
+import { getLocalUploadsBaseUrl, getLocalUploadsPathPrefix } from './uploads.config';
 
-const UPLOADS_DIR = process.env.UPLOADS_DIR || 'uploads';
-const LOCAL_BASE = (process.env.LOCAL_UPLOADS_BASE_URL || '/uploads').replace(/\/$/, '');
+const LOCAL_BASE_URL = getLocalUploadsBaseUrl();
+const LOCAL_PATH_PREFIX = getLocalUploadsPathPrefix();
 const DRIVER = (process.env.UPLOADS_DRIVER || 's3').toLowerCase();
-
-function isDataUrl(url?: string | null): boolean {
-  return !!url && url.startsWith('data:');
-}
 
 function extractRelativePath(url: string): string | null {
   if (!url) return null;
-  // Exact match with configured base
-  if (LOCAL_BASE && url.startsWith(LOCAL_BASE + '/')) {
-    return url.substring(LOCAL_BASE.length + 1);
+  if (LOCAL_BASE_URL && url.startsWith(LOCAL_BASE_URL + '/')) {
+    return url.substring(LOCAL_BASE_URL.length + 1);
   }
-  // Contains /uploads/ segment
-  const seg = '/uploads/';
-  const idx = url.indexOf(seg);
-  if (idx >= 0) {
-    return url.substring(idx + seg.length);
+  if (LOCAL_PATH_PREFIX && url.includes(`${LOCAL_PATH_PREFIX}/`)) {
+    const idx = url.indexOf(`${LOCAL_PATH_PREFIX}/`);
+    return url.substring(idx + LOCAL_PATH_PREFIX.length + 1);
   }
-  // Already looks relative
   if (!/^https?:\/\//i.test(url) && !url.startsWith('data:')) return url.replace(/^\/+/, '');
   return null;
 }
 
-export async function toBase64DataUrl(imageUrl?: string | null): Promise<string | undefined> {
-  if (!imageUrl) return undefined;
-  if (isDataUrl(imageUrl)) return imageUrl;
-  if (DRIVER !== 'local') return imageUrl; // Only convert automatically for local driver
-
-  const rel = extractRelativePath(imageUrl);
-  if (!rel) return imageUrl;
-
-  const filePath = path.resolve(process.cwd(), UPLOADS_DIR, rel);
-  try {
-    const buf = await fs.readFile(filePath);
-    const ext = path.extname(filePath);
-    const mime = (mimeLookup(ext) || 'application/octet-stream') as string;
-    const b64 = buf.toString('base64');
-    return `data:${mime};base64,${b64}`;
-  } catch {
-    // If file missing or unreadable, fall back to original URL
-    return imageUrl;
-  }
+function isHttpUrl(url: string) {
+  return /^https?:\/\//i.test(url);
 }
 
+export async function toPublicImageUrl(imageUrl?: string | null): Promise<string | undefined> {
+  if (!imageUrl) return undefined;
+  if (imageUrl.startsWith('data:') || isHttpUrl(imageUrl)) return imageUrl;
+  const rel = extractRelativePath(imageUrl);
+  if (!rel) return imageUrl;
+  if (DRIVER === 'local') {
+    const base = LOCAL_BASE_URL.endsWith('/') ? LOCAL_BASE_URL : `${LOCAL_BASE_URL}/`;
+    return `${base}${rel}`.replace(/(?<!:)\/+/g, '/');
+  }
+  return imageUrl.startsWith('/') ? imageUrl : `/${rel}`;
+}
+
+// TODO: remove legacy name once all call sites are migrated
+export const toBase64DataUrl = toPublicImageUrl;

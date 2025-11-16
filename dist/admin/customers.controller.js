@@ -115,7 +115,7 @@ exports.AdminCustomersController = AdminCustomersController = __decorate([
     (0, swagger_1.ApiTags)('Admin/Customers'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.AdminOnly)(),
-    (0, common_1.Controller)('admin/customers'),
+    (0, common_1.Controller)({ path: 'admin/customers', version: ['1'] }),
     __metadata("design:paramtypes", [admin_service_1.AdminService])
 ], AdminCustomersController);
 //# sourceMappingURL=customers.controller.js.map

@@ -5,11 +5,15 @@ export declare class RegisterDto {
     password: string;
 }
 export declare class LoginDto {
-    phone: string;
+    identifier: string;
+    phone?: string;
+    email?: string;
+    username?: string;
+    login?: string;
     password: string;
 }
 export declare class RefreshDto {
-    refreshToken: string;
+    refreshToken?: string;
 }
 export declare class UpdateProfileDto {
     name?: string;

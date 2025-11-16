@@ -17,6 +17,7 @@ const dashboard_controller_1 = require("./dashboard.controller");
 const admin_service_1 = require("./admin.service");
 const coupons_controller_1 = require("./coupons.controller");
 const uploads_module_1 = require("../uploads/uploads.module");
+const products_bulk_service_1 = require("./products-bulk.service");
 let AdminModule = class AdminModule {
 };
 exports.AdminModule = AdminModule;
@@ -34,7 +35,7 @@ exports.AdminModule = AdminModule = __decorate([
         imports: [
             uploads_module_1.UploadsModule,
         ],
-        providers: [admin_service_1.AdminService],
+        providers: [admin_service_1.AdminService, products_bulk_service_1.ProductsBulkService],
     })
 ], AdminModule);
 //# sourceMappingURL=admin.module.js.map

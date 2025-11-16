@@ -1,67 +1,69 @@
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto';
+import { CurrentUserPayload } from '../common/types/current-user.type';
 export declare class OrdersController {
     private service;
     constructor(service: OrdersService);
-    list(user: any): import(".prisma/client").Prisma.PrismaPromise<{
+    list(user: CurrentUserPayload): Promise<{
         id: string;
-        createdAt: Date;
-        status: import(".prisma/client").$Enums.OrderStatus;
         totalCents: number;
+        status: "PENDING" | "CANCELED" | "CONFIRMED" | "DELIVERING" | "COMPLETED";
+        createdAt: Date;
     }[]>;
-    detail(user: any, id: string): import(".prisma/client").Prisma.Prisma__OrderClient<({
+    detail(user: CurrentUserPayload, id: string): Promise<{
+        id: string;
+        userId: string;
+        status: "PENDING" | "CANCELED" | "CONFIRMED" | "DELIVERING" | "COMPLETED";
+        paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
+        subtotalCents: number;
+        shippingFeeCents: number;
+        discountCents: number;
+        totalCents: number;
+        createdAt: Date;
+        note: string | undefined;
         address: {
             id: string;
-            createdAt: Date;
-            updatedAt: Date;
             label: string;
             city: string;
             zone: string | null;
             street: string;
             building: string | null;
             apartment: string | null;
-            lat: number | null;
-            lng: number | null;
-            userId: string;
         } | null;
         items: {
             id: string;
-            orderId: string;
             productId: string;
             productNameSnapshot: string;
             priceSnapshotCents: number;
             qty: number;
         }[];
-    } & {
+    }>;
+    create(user: CurrentUserPayload, dto: CreateOrderDto): Promise<{
         id: string;
-        createdAt: Date;
-        updatedAt: Date;
         userId: string;
-        status: import(".prisma/client").$Enums.OrderStatus;
-        cartId: string | null;
-        addressId: string | null;
-        notes: string | null;
-        couponCode: string | null;
+        status: "PENDING" | "CANCELED" | "CONFIRMED" | "DELIVERING" | "COMPLETED";
+        paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
         subtotalCents: number;
         shippingFeeCents: number;
         discountCents: number;
         totalCents: number;
-        paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
-    }) | null, null, import("@prisma/client/runtime/library").DefaultArgs>;
-    create(user: any, dto: CreateOrderDto): Promise<{
-        id: string;
         createdAt: Date;
-        updatedAt: Date;
-        userId: string;
-        status: import(".prisma/client").$Enums.OrderStatus;
-        cartId: string | null;
-        addressId: string | null;
-        notes: string | null;
-        couponCode: string | null;
-        subtotalCents: number;
-        shippingFeeCents: number;
-        discountCents: number;
-        totalCents: number;
-        paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
+        note: string | undefined;
+        address: {
+            id: string;
+            label: string;
+            city: string;
+            zone: string | null;
+            street: string;
+            building: string | null;
+            apartment: string | null;
+        } | null;
+        items: {
+            id: string;
+            productId: string;
+            productNameSnapshot: string;
+            priceSnapshotCents: number;
+            qty: number;
+        }[];
     }>;
 }

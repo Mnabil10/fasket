@@ -12,14 +12,23 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdminService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../prisma/prisma.service");
+const audit_log_service_1 = require("../common/audit/audit-log.service");
+const cache_invalidation_service_1 = require("../common/cache/cache-invalidation.service");
+const slug_service_1 = require("../common/slug/slug.service");
 let AdminService = class AdminService {
-    constructor(prisma) {
+    constructor(prisma, audit, cache, slugs) {
         this.prisma = prisma;
+        this.audit = audit;
+        this.cache = cache;
+        this.slugs = slugs;
     }
 };
 exports.AdminService = AdminService;
 exports.AdminService = AdminService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        audit_log_service_1.AuditLogService,
+        cache_invalidation_service_1.CacheInvalidationService,
+        slug_service_1.SlugService])
 ], AdminService);
 //# sourceMappingURL=admin.service.js.map

@@ -1,34 +1,35 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseInterceptors, BadRequestException, ParseFilePipe, MaxFileSizeValidator, FileTypeValidator } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseInterceptors,
+  BadRequestException,
+  ParseFilePipe,
+  MaxFileSizeValidator,
+  FileTypeValidator,
+  NotFoundException,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { Express } from 'express';
+import { Prisma } from '@prisma/client';
 import { AdminOnly, StaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
-import { CategoryQueryDto, CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
-import { PaginationDto, SortDto } from './dto/pagination.dto';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage, memoryStorage } from 'multer';
+import { CategoryListQueryDto, CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 import { UploadsService } from 'src/uploads/uploads.service';
-import { toBase64DataUrl } from 'src/uploads/image.util';
-import { Express } from 'express';
-import * as path from 'path';
-import * as fs from 'fs';
-import { randomUUID } from 'crypto';
-
-function safeFilename(name: string) {
-  const parts = name.split(/\.(?=[^\.]+$)/);
-  const base = parts[0] || 'file';
-  const ext = parts[1] ? `.${parts[1].toLowerCase()}` : '';
-  const slug = base.toLowerCase().replace(/[^\w\-]+/g, '-').replace(/-+/g, '-').slice(0, 64);
-  return `${slug}${ext}`;
-}
-
-const USE_LOCAL = String(process.env.UPLOADS_DRIVER || 's3').toLowerCase() === 'local';
-const UPLOADS_DIR = process.env.UPLOADS_DIR || 'uploads';
-const LOCAL_BASE = (process.env.LOCAL_UPLOADS_BASE_URL || '/uploads').replace(/\/$/, '');
+import { toPublicImageUrl } from 'src/uploads/image.util';
 
 @ApiTags('Admin/Categories')
 @ApiBearerAuth()
 @StaffOrAdmin()
-@Controller('admin/categories')
+@Controller({ path: 'admin/categories', version: ['1'] })
 export class AdminCategoriesController {
   constructor(private svc: AdminService, private uploads: UploadsService) {}
 
@@ -37,11 +38,11 @@ export class AdminCategoriesController {
   @ApiQuery({ name: 'parentId', required: false })
   @ApiQuery({ name: 'isActive', required: false, schema: { type: 'boolean' } })
   @ApiOkResponse({ description: 'Paginated categories' })
-  async list(@Query() q: CategoryQueryDto, @Query() page: PaginationDto, @Query() sort: SortDto) {
+  async list(@Query() query: CategoryListQueryDto) {
     const where: any = {};
-    if (q.q) where.name = { contains: q.q, mode: 'insensitive' };
-    if (q.parentId) where.parentId = q.parentId;
-    if (q.isActive !== undefined) where.isActive = q.isActive;
+    if (query.q) where.name = { contains: query.q, mode: 'insensitive' };
+    if (query.parentId) where.parentId = query.parentId;
+    if (query.isActive !== undefined) where.isActive = query.isActive;
     // deletedAt is soft-delete flag
     where.deletedAt = null;
 
@@ -49,22 +50,23 @@ export class AdminCategoriesController {
       this.svc.prisma.category.findMany({
         where,
         orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-        skip: page.skip, take: page.take,
+        skip: query.skip,
+        take: query.take,
       }),
       this.svc.prisma.category.count({ where }),
     ]);
     const mapped = await Promise.all(items.map(async (c: any) => ({
       ...c,
-      imageUrl: await toBase64DataUrl(c.imageUrl),
+      imageUrl: await toPublicImageUrl(c.imageUrl),
     })));
-    return { items: mapped, total, page: page.page, pageSize: page.pageSize };
+    return { items: mapped, total, page: query.page, pageSize: query.pageSize };
   }
 
   @Get(':id')
   async one(@Param('id') id: string) {
     const c = await this.svc.prisma.category.findUnique({ where: { id } });
     if (!c) return c as any;
-    return { ...c, imageUrl: await toBase64DataUrl((c as any).imageUrl) } as any;
+    return { ...c, imageUrl: await toPublicImageUrl((c as any).imageUrl) } as any;
   }
 
   @Post()
@@ -80,19 +82,11 @@ export class AdminCategoriesController {
         parentId: { type: 'string' },
         image: { type: 'string', format: 'binary' },
       },
-      required: ['name','slug'],
+      required: ['name'],
     },
   })
   @UseInterceptors(FileInterceptor('image', {
-    storage: USE_LOCAL ? diskStorage({
-      destination: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
-        const d = new Date();
-        const dest = path.resolve(process.cwd(), UPLOADS_DIR, 'categories', String(d.getFullYear()), String(d.getMonth()+1).padStart(2,'0'), String(d.getDate()).padStart(2,'0'));
-        fs.mkdirSync(dest, { recursive: true });
-        cb(null, dest);
-      },
-      filename: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => cb(null, `${randomUUID()}-${safeFilename(file.originalname)}`),
-    }) : memoryStorage(),
+    storage: memoryStorage(),
     limits: { fileSize: Number(process.env.UPLOAD_MAX_BYTES || 10 * 1024 * 1024) },
     fileFilter: (req: Express.Request, file: Express.Multer.File, cb: (error: any, acceptFile: boolean) => void) => {
       const allowed = String(process.env.UPLOAD_ALLOWED_MIME || 'image/jpeg,image/png,image/webp')
@@ -105,23 +99,26 @@ export class AdminCategoriesController {
     @Body() dto: CreateCategoryDto,
     @UploadedFile(new ParseFilePipe({
       validators: [
-        new MaxFileSizeValidator({ maxSize: Number(process.env.UPLOAD_MAX_BYTES || 10 * 1024 * 1024) })
+        new MaxFileSizeValidator({ maxSize: Number(process.env.UPLOAD_MAX_BYTES || 10 * 1024 * 1024) }),
+        new FileTypeValidator({ fileType: /(image\/jpeg|image\/png|image\/webp)$/ }),
       ],
       fileIsRequired: false,
     })) file?: Express.Multer.File,
   ) {
-    if (!dto.slug && dto.name) dto.slug = dto.name.toLowerCase().replace(/\s+/g,'-');
+    const payload = await this.prepareCategoryPayload(dto);
     if (file) {
-      if (USE_LOCAL && (file as any).path) {
-        const absRoot = path.resolve(process.cwd(), UPLOADS_DIR);
-        const rel = path.relative(absRoot, (file as any).path).replace(/\\/g, '/');
-        dto.imageUrl = `${LOCAL_BASE}/${rel}`;
-      } else {
-        const { url } = await this.uploads.uploadBuffer(file);
-        dto.imageUrl = url;
-      }
+      const uploaded = await this.uploads.processImageAsset(file, { folder: 'categories', generateVariants: false });
+      payload.imageUrl = uploaded.url;
     }
-    return this.svc.prisma.category.create({ data: dto });
+    const created = await this.svc.prisma.category.create({ data: payload as Prisma.CategoryCreateInput });
+    await this.svc.audit.log({
+      action: 'category.create',
+      entity: 'Category',
+      entityId: created.id,
+      after: created,
+    });
+    await this.svc.cache.categoriesChanged();
+    return created;
   }
 
   @Patch(':id')
@@ -140,15 +137,7 @@ export class AdminCategoriesController {
     },
   })
   @UseInterceptors(FileInterceptor('image', {
-    storage: USE_LOCAL ? diskStorage({
-      destination: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
-        const d = new Date();
-        const dest = path.resolve(process.cwd(), UPLOADS_DIR, 'categories', String(d.getFullYear()), String(d.getMonth()+1).padStart(2,'0'), String(d.getDate()).padStart(2,'0'));
-        fs.mkdirSync(dest, { recursive: true });
-        cb(null, dest);
-      },
-      filename: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => cb(null, `${randomUUID()}-${safeFilename(file.originalname)}`),
-    }) : memoryStorage(),
+    storage: memoryStorage(),
     limits: { fileSize: Number(process.env.UPLOAD_MAX_BYTES || 10 * 1024 * 1024) },
     fileFilter: (req: Express.Request, file: Express.Multer.File, cb: (error: any, acceptFile: boolean) => void) => {
       const allowed = String(process.env.UPLOAD_ALLOWED_MIME || 'image/jpeg,image/png,image/webp')
@@ -162,29 +151,62 @@ export class AdminCategoriesController {
     @Body() dto: UpdateCategoryDto,
     @UploadedFile(new ParseFilePipe({
       validators: [
-        new MaxFileSizeValidator({ maxSize: Number(process.env.UPLOAD_MAX_BYTES || 10 * 1024 * 1024) })
+        new MaxFileSizeValidator({ maxSize: Number(process.env.UPLOAD_MAX_BYTES || 10 * 1024 * 1024) }),
+        new FileTypeValidator({ fileType: /(image\/jpeg|image\/png|image\/webp)$/ }),
       ],
       fileIsRequired: false,
     })) file?: Express.Multer.File,
   ) {
+    const existing = await this.svc.prisma.category.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Category not found');
+    const payload = await this.prepareCategoryPayload(dto, id);
     if (file) {
-      if (USE_LOCAL && (file as any).path) {
-        const absRoot = path.resolve(process.cwd(), UPLOADS_DIR);
-        const rel = path.relative(absRoot, (file as any).path).replace(/\\/g, '/');
-        dto.imageUrl = `${LOCAL_BASE}/${rel}`;
-      } else {
-        const { url } = await this.uploads.uploadBuffer(file);
-        dto.imageUrl = url;
-      }
+      const uploaded = await this.uploads.processImageAsset(file, {
+        folder: 'categories',
+        generateVariants: false,
+        existing: existing.imageUrl ? [existing.imageUrl] : [],
+      });
+      payload.imageUrl = uploaded.url;
     }
-    return this.svc.prisma.category.update({ where: { id }, data: dto });
+    const updated = await this.svc.prisma.category.update({
+      where: { id },
+      data: payload as Prisma.CategoryUpdateInput,
+    });
+    await this.svc.audit.log({
+      action: 'category.update',
+      entity: 'Category',
+      entityId: id,
+      before: existing,
+      after: updated,
+    });
+    await this.svc.cache.categoriesChanged();
+    return updated;
   }
 
   // Soft delete: sets deletedAt, keeps referential integrity
   @Delete(':id')
   @AdminOnly()
   async remove(@Param('id') id: string) {
+    const existing = await this.svc.prisma.category.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Category not found');
     await this.svc.prisma.category.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.svc.audit.log({
+      action: 'category.delete',
+      entity: 'Category',
+      entityId: id,
+      before: existing,
+    });
+    await this.svc.cache.categoriesChanged();
     return { ok: true };
+  }
+
+  private async prepareCategoryPayload(dto: CreateCategoryDto | UpdateCategoryDto, id?: string) {
+    const data: Record<string, any> = { ...dto };
+    if (data.name) data.name = data.name.trim();
+    if (!data.slug && data.name) data.slug = data.name;
+    if (data.slug) {
+      data.slug = await this.svc.slugs.generateUniqueSlug('category', data.slug, id);
+    }
+    return data;
   }
 }

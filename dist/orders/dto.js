@@ -9,10 +9,9 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.OrderItemInputDto = exports.CreateOrderDto = exports.PaymentMethodDto = void 0;
+exports.CreateOrderDto = exports.PaymentMethodDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
 const class_validator_1 = require("class-validator");
-const class_transformer_1 = require("class-transformer");
 var PaymentMethodDto;
 (function (PaymentMethodDto) {
     PaymentMethodDto["COD"] = "COD";
@@ -36,39 +35,11 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
-], CreateOrderDto.prototype, "notes", void 0);
+], CreateOrderDto.prototype, "note", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)({ required: false }),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateOrderDto.prototype, "couponCode", void 0);
-__decorate([
-    (0, swagger_1.ApiProperty)({ required: false }),
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], CreateOrderDto.prototype, "cartId", void 0);
-__decorate([
-    (0, swagger_1.ApiProperty)({ required: false, type: () => [OrderItemInputDto] }),
-    (0, class_validator_1.ValidateIf)(o => !o.cartId),
-    (0, class_validator_1.IsArray)(),
-    (0, class_validator_1.ValidateNested)({ each: true }),
-    (0, class_transformer_1.Type)(() => OrderItemInputDto),
-    __metadata("design:type", Array)
-], CreateOrderDto.prototype, "items", void 0);
-class OrderItemInputDto {
-}
-exports.OrderItemInputDto = OrderItemInputDto;
-__decorate([
-    (0, swagger_1.ApiProperty)(),
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], OrderItemInputDto.prototype, "productId", void 0);
-__decorate([
-    (0, swagger_1.ApiProperty)(),
-    (0, class_validator_1.IsInt)(),
-    (0, class_validator_1.Min)(1),
-    __metadata("design:type", Number)
-], OrderItemInputDto.prototype, "qty", void 0);
 //# sourceMappingURL=dto.js.map

@@ -1,8 +1,10 @@
 import { AdminService } from './admin.service';
 import { UpdateOrderStatusDto } from './dto/order-status.dto';
 import { PaginationDto } from './dto/pagination.dto';
+import { CurrentUserPayload } from '../common/types/current-user.type';
 export declare class AdminOrdersController {
     private svc;
+    private readonly logger;
     constructor(svc: AdminService);
     list(status?: string, from?: string, to?: string, customer?: string, minTotalCents?: string, maxTotalCents?: string, page?: PaginationDto): Promise<{
         items: ({
@@ -12,26 +14,34 @@ export declare class AdminOrdersController {
                 name: string;
             };
         } & {
+            status: import(".prisma/client").$Enums.OrderStatus;
             id: string;
             createdAt: Date;
             updatedAt: Date;
             userId: string;
-            status: import(".prisma/client").$Enums.OrderStatus;
-            cartId: string | null;
-            addressId: string | null;
-            notes: string | null;
-            couponCode: string | null;
+            totalCents: number;
             subtotalCents: number;
             shippingFeeCents: number;
             discountCents: number;
-            totalCents: number;
+            cartId: string | null;
+            addressId: string | null;
             paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
+            couponCode: string | null;
+            notes: string | null;
         })[];
         total: number;
         page: number | undefined;
         pageSize: number | undefined;
     }>;
     one(id: string): import(".prisma/client").Prisma.Prisma__OrderClient<({
+        items: {
+            id: string;
+            orderId: string;
+            productId: string;
+            productNameSnapshot: string;
+            priceSnapshotCents: number;
+            qty: number;
+        }[];
         user: {
             id: string;
             email: string | null;
@@ -46,6 +56,7 @@ export declare class AdminOrdersController {
             id: string;
             createdAt: Date;
             updatedAt: Date;
+            userId: string;
             label: string;
             city: string;
             zone: string | null;
@@ -54,42 +65,33 @@ export declare class AdminOrdersController {
             apartment: string | null;
             lat: number | null;
             lng: number | null;
-            userId: string;
         } | null;
-        items: {
-            id: string;
-            orderId: string;
-            productId: string;
-            productNameSnapshot: string;
-            priceSnapshotCents: number;
-            qty: number;
-        }[];
         statusHistory: {
             id: string;
             createdAt: Date;
             orderId: string;
-            to: import(".prisma/client").$Enums.OrderStatus;
             note: string | null;
             actorId: string | null;
             from: import(".prisma/client").$Enums.OrderStatus | null;
+            to: import(".prisma/client").$Enums.OrderStatus;
         }[];
     } & {
+        status: import(".prisma/client").$Enums.OrderStatus;
         id: string;
         createdAt: Date;
         updatedAt: Date;
         userId: string;
-        status: import(".prisma/client").$Enums.OrderStatus;
-        cartId: string | null;
-        addressId: string | null;
-        notes: string | null;
-        couponCode: string | null;
+        totalCents: number;
         subtotalCents: number;
         shippingFeeCents: number;
         discountCents: number;
-        totalCents: number;
+        cartId: string | null;
+        addressId: string | null;
         paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
+        couponCode: string | null;
+        notes: string | null;
     }) | null, null, import("@prisma/client/runtime/library").DefaultArgs>;
-    updateStatus(user: any, id: string, dto: UpdateOrderStatusDto): Promise<{
+    updateStatus(user: CurrentUserPayload, id: string, dto: UpdateOrderStatusDto): Promise<{
         ok: boolean;
         message: string;
     } | {

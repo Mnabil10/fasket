@@ -8,7 +8,7 @@ import { S3_CLIENT } from './uploads.constants';
   controllers: [UploadsController],
   providers: [
     UploadsService,
-    { provide: S3_CLIENT, useFactory: createS3Client }, // ✅ make the token available
+    { provide: S3_CLIENT, useFactory: createS3Client }, // Make the S3 client token available
   ],
   exports: [UploadsService],
 })

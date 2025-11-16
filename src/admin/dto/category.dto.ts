@@ -1,21 +1,62 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, IntersectionType, PartialType } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { cleanNullableString, cleanString } from '../../common/utils/sanitize.util';
+import { PaginationDto, SortDto } from './pagination.dto';
 
 export class CreateCategoryDto {
-  @ApiProperty() @IsString() name!: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() nameAr?: string;
-  @ApiProperty() @IsString() slug!: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() imageUrl?: string;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() isActive?: boolean = true;
-  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) sortOrder?: number = 0;
-  @ApiPropertyOptional() @IsOptional() @IsString() parentId?: string;
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  name!: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  nameAr?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean = true;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sortOrder?: number = 0;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  parentId?: string;
 }
 
 export class UpdateCategoryDto extends PartialType(CreateCategoryDto) {}
 
-/** 👈 add this so you can use ?q=... in /admin/categories */
+/** Allow searching by name with ?q=... in admin categories list */
 export class CategoryQueryDto extends PartialType(UpdateCategoryDto) {
   @ApiPropertyOptional({ description: 'search by name' })
-  @IsOptional() @IsString()
+  @IsOptional()
+  @IsString()
   q?: string;
 }
+
+export class CategoryListQueryDto extends IntersectionType(
+  PaginationDto,
+  IntersectionType(SortDto, CategoryQueryDto),
+) {}

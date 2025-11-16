@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+var AdminSettingsController_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdminSettingsController = void 0;
 const common_1 = require("@nestjs/common");
@@ -18,9 +19,10 @@ const swagger_1 = require("@nestjs/swagger");
 const _admin_guards_1 = require("./_admin-guards");
 const admin_service_1 = require("./admin.service");
 const settings_dto_1 = require("./dto/settings.dto");
-let AdminSettingsController = class AdminSettingsController {
+let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsController {
     constructor(svc) {
         this.svc = svc;
+        this.logger = new common_1.Logger(AdminSettingsController_1.name);
     }
     async getOrCreate() {
         const found = await this.svc.prisma.setting.findFirst();
@@ -129,6 +131,7 @@ let AdminSettingsController = class AdminSettingsController {
         const s = await this.getOrCreate();
         const data = this.toUpdate(dto);
         const updated = await this.svc.prisma.setting.update({ where: { id: s.id }, data });
+        this.logger.log({ msg: 'Settings updated', settingId: s.id });
         return this.toUi(updated);
     }
     async updateGeneral(dto) {
@@ -198,11 +201,11 @@ __decorate([
     __metadata("design:paramtypes", [settings_dto_1.SystemSettingsDto]),
     __metadata("design:returntype", Promise)
 ], AdminSettingsController.prototype, "updateSystem", null);
-exports.AdminSettingsController = AdminSettingsController = __decorate([
+exports.AdminSettingsController = AdminSettingsController = AdminSettingsController_1 = __decorate([
     (0, swagger_1.ApiTags)('Admin/Settings'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.AdminOnly)(),
-    (0, common_1.Controller)('admin/settings'),
+    (0, common_1.Controller)({ path: 'admin/settings', version: ['1'] }),
     __metadata("design:paramtypes", [admin_service_1.AdminService])
 ], AdminSettingsController);
 //# sourceMappingURL=settings.controller.js.map

@@ -73,7 +73,7 @@ exports.AddressesController = AddressesController = __decorate([
     (0, swagger_1.ApiTags)('Addresses'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
-    (0, common_1.Controller)('addresses'),
+    (0, common_1.Controller)({ path: 'addresses', version: ['1', '2'] }),
     __metadata("design:paramtypes", [addresses_service_1.AddressesService])
 ], AddressesController);
 //# sourceMappingURL=addresses.controller.js.map

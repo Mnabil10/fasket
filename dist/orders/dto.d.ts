@@ -5,12 +5,6 @@ export declare enum PaymentMethodDto {
 export declare class CreateOrderDto {
     addressId: string;
     paymentMethod: PaymentMethodDto;
-    notes?: string;
+    note?: string;
     couponCode?: string;
-    cartId?: string;
-    items?: OrderItemInputDto[];
-}
-export declare class OrderItemInputDto {
-    productId: string;
-    qty: number;
 }

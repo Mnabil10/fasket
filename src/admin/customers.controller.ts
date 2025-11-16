@@ -15,7 +15,7 @@ class ResetPasswordDto {
 @ApiTags('Admin/Customers')
 @ApiBearerAuth()
 @AdminOnly()
-@Controller('admin/customers')
+@Controller({ path: 'admin/customers', version: ['1'] })
 export class AdminCustomersController {
   constructor(private svc: AdminService) {}
 

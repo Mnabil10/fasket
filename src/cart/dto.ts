@@ -6,5 +6,5 @@ export class AddToCartDto {
   @ApiProperty() @IsInt() @Min(1) qty!: number;
 }
 export class UpdateCartItemDto {
-  @ApiProperty() @IsInt() @Min(1) qty!: number;
+  @ApiProperty({ minimum: 0 }) @IsInt() @Min(0) qty!: number;
 }

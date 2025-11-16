@@ -1,3 +1,4 @@
+import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshDto, RegisterDto } from './dto';
 export declare class AuthController {
@@ -14,7 +15,7 @@ export declare class AuthController {
             name: string;
         };
     }>;
-    login(dto: LoginDto): Promise<{
+    login(dto: LoginDto, req: Request): Promise<{
         accessToken: string;
         refreshToken: string;
         user: {

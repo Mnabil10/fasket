@@ -2,6 +2,7 @@ import { AdminService } from './admin.service';
 import { UpdateSettingsDto, GeneralSettingsDto, DeliverySettingsDto, PaymentSettingsDto, NotificationsSettingsDto, SystemSettingsDto } from './dto/settings.dto';
 export declare class AdminSettingsController {
     private svc;
+    private readonly logger;
     constructor(svc: AdminService);
     private getOrCreate;
     private toUi;

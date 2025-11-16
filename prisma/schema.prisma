@@ -43,8 +43,10 @@ model User {
   addresses Address[]
   cart      Cart?
   orders    Order[]
+  sessions  SessionLog[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  pushDevices  PushDevice[]
 }
 
 model Address {
@@ -88,6 +90,7 @@ model Product {
   id             String        @id @default(cuid())
   categoryId     String?
   category       Category?     @relation(fields: [categoryId], references: [id])
+  sku            String?       @unique
   name           String
   nameAr         String?
   slug           String        @unique
@@ -102,12 +105,14 @@ model Product {
   images         String[]
   cartItems      CartItem[]
   orderItems     OrderItem[]
+  stockLogs      ProductStockLog[]
   deletedAt      DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
   @@index([name])
   @@index([slug])
+  @@index([categoryId, status])
 }
 
 model Cart {
@@ -181,6 +186,49 @@ model OrderStatusHistory {
   createdAt DateTime     @default(now())
 }
 
+model ProductStockLog {
+  id           String   @id @default(cuid())
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id])
+  previousStock Int
+  newStock     Int
+  delta        Int
+  reason       String
+  actorId      String?
+  createdAt    DateTime @default(now())
+
+  @@index([productId, createdAt])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  actorId       String?
+  action        String
+  entity        String
+  entityId      String?
+  before        Json?
+  after         Json?
+  ip            String?
+  userAgent     String?
+  correlationId String?
+  createdAt     DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+}
+
+model SessionLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  ip        String?
+  userAgent String?
+  device    Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
 // prisma/schema.prisma  (only the Setting model shown)
 model Setting {
   id        String   @id @default(cuid())
@@ -242,4 +290,17 @@ model Coupon {
   maxDiscountCents Int?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+}
+
+model PushDevice {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  platform  String   @default("unknown")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

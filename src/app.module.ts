@@ -1,8 +1,11 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
+import Redis from 'ioredis';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard } from '@nestjs/throttler';
-import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { CacheModule } from '@nestjs/cache-manager';
+import { LoggerModule } from 'nestjs-pino';
+import { redisStore } from 'cache-manager-ioredis-yet';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -14,19 +17,79 @@ import { OrdersModule } from './orders/orders.module';
 import { AdminModule } from './admin/admin.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AppController } from './app.controller';
+import { HealthController } from './health.controller';
+import { CommonModule } from './common/common.module';
+import { validateEnv } from './config/env.validation';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
-    ThrottlerModule.forRoot([
-      {
-        ttl: parseInt(process.env.RATE_LIMIT_TTL ?? '60', 10),
-        limit: parseInt(process.env.RATE_LIMIT_MAX ?? '100', 10),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv, expandVariables: true }),
+    LoggerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        pinoHttp: {
+          level: config.get<string>('LOG_LEVEL') || (config.get('NODE_ENV') === 'production' ? 'info' : 'debug'),
+          redact: ['req.headers.authorization'],
+          transport:
+            config.get('NODE_ENV') !== 'production'
+              ? {
+                  target: 'pino-pretty',
+                  options: { colorize: true, singleLine: true },
+                }
+              : undefined,
+        },
+      }),
+    }),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      inject: [ConfigService],
+      useFactory: async (config: ConfigService) => {
+        const logger = new Logger('Cache');
+        const ttl = Number(config.get('CACHE_DEFAULT_TTL') ?? 60);
+        const redisUrl = config.get<string>('REDIS_URL');
+
+        if (redisUrl) {
+          let client: Redis | null = null;
+          try {
+            client = new Redis(redisUrl, {
+              lazyConnect: true,
+              maxRetriesPerRequest: 0,
+              enableOfflineQueue: false,
+              retryStrategy: () => null, // no infinite reconnect spam
+            });
+            client.on('error', (err: Error) => logger.warn(`Redis cache error: ${err.message}`));
+
+            await client.connect();
+            const store = await redisStore({ client, ttl });
+            logger.log(`Cache connected to Redis at ${redisUrl}`);
+            return { store };
+          } catch (err) {
+            logger.warn(`Redis cache disabled (connection failed): ${(err as Error).message}`);
+            if (client) {
+              try {
+                await client.disconnect();
+              } catch {
+                /* swallow */
+              }
+            }
+          }
+        }
+
+        return { ttl };
       },
-      { name: 'authLogin', ttl: 60, limit: 10 },
-      { name: 'authRegister', ttl: 60, limit: 5 },
-      { name: 'uploadsAdmin', ttl: 60, limit: 30 },
-    ]),
+    }),
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => [
+        {
+          ttl: parseInt(String(config.get('RATE_LIMIT_TTL') ?? 60), 10),
+          limit: parseInt(String(config.get('RATE_LIMIT_MAX') ?? 100), 10),
+        },
+        { name: 'authLogin', ttl: 60, limit: 10 },
+        { name: 'authRegister', ttl: 60, limit: 5 },
+        { name: 'uploadsAdmin', ttl: 60, limit: 30 },
+      ],
+    }),
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -37,8 +100,9 @@ import { AppController } from './app.controller';
     OrdersModule,
     AdminModule,
     NotificationsModule,
+    CommonModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],

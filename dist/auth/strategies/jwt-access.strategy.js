@@ -13,21 +13,31 @@ exports.JwtAccessStrategy = void 0;
 const common_1 = require("@nestjs/common");
 const passport_1 = require("@nestjs/passport");
 const passport_jwt_1 = require("passport-jwt");
+const config_1 = require("@nestjs/config");
 let JwtAccessStrategy = class JwtAccessStrategy extends (0, passport_1.PassportStrategy)(passport_jwt_1.Strategy, 'jwt') {
-    constructor() {
+    constructor(config) {
+        const secret = config.get('JWT_ACCESS_SECRET');
+        if (!secret) {
+            throw new Error('JWT_ACCESS_SECRET is not configured');
+        }
         super({
             jwtFromRequest: passport_jwt_1.ExtractJwt.fromAuthHeaderAsBearerToken(),
-            secretOrKey: process.env.JWT_ACCESS_SECRET,
+            secretOrKey: secret,
             ignoreExpiration: false,
         });
     }
     async validate(payload) {
-        return { userId: payload.sub, role: payload.role };
+        return {
+            userId: payload.sub,
+            role: payload.role,
+            phone: payload.phone,
+            email: payload.email ?? undefined,
+        };
     }
 };
 exports.JwtAccessStrategy = JwtAccessStrategy;
 exports.JwtAccessStrategy = JwtAccessStrategy = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [])
+    __metadata("design:paramtypes", [config_1.ConfigService])
 ], JwtAccessStrategy);
 //# sourceMappingURL=jwt-access.strategy.js.map

@@ -23,57 +23,65 @@ let CartController = class CartController {
     constructor(service) {
         this.service = service;
     }
-    get(user) {
-        return this.service.get(user.userId);
+    get(user, lang) {
+        return this.service.get(user.userId, lang);
     }
-    add(user, dto) {
-        return this.service.add(user.userId, dto);
+    add(user, dto, lang) {
+        return this.service.add(user.userId, dto, lang);
     }
-    update(user, id, dto) {
-        return this.service.updateQty(user.userId, id, dto.qty);
+    update(user, id, dto, lang) {
+        return this.service.updateQty(user.userId, id, dto.qty, lang);
     }
-    remove(user, id) {
-        return this.service.remove(user.userId, id);
+    remove(user, id, lang) {
+        return this.service.remove(user.userId, id, lang);
     }
 };
 exports.CartController = CartController;
 __decorate([
     (0, common_1.Get)(),
+    (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)('lang', new common_1.ParseEnumPipe({ enum: ['en', 'ar'], optional: true }))),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], CartController.prototype, "get", null);
 __decorate([
     (0, common_1.Post)('items'),
+    (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Query)('lang', new common_1.ParseEnumPipe({ enum: ['en', 'ar'], optional: true }))),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, dto_1.AddToCartDto]),
+    __metadata("design:paramtypes", [Object, dto_1.AddToCartDto, String]),
     __metadata("design:returntype", void 0)
 ], CartController.prototype, "add", null);
 __decorate([
     (0, common_1.Patch)('items/:id'),
+    (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id')),
     __param(2, (0, common_1.Body)()),
+    __param(3, (0, common_1.Query)('lang', new common_1.ParseEnumPipe({ enum: ['en', 'ar'], optional: true }))),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, dto_1.UpdateCartItemDto]),
+    __metadata("design:paramtypes", [Object, String, dto_1.UpdateCartItemDto, String]),
     __metadata("design:returntype", void 0)
 ], CartController.prototype, "update", null);
 __decorate([
     (0, common_1.Delete)('items/:id'),
+    (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Query)('lang', new common_1.ParseEnumPipe({ enum: ['en', 'ar'], optional: true }))),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:paramtypes", [Object, String, String]),
     __metadata("design:returntype", void 0)
 ], CartController.prototype, "remove", null);
 exports.CartController = CartController = __decorate([
     (0, swagger_1.ApiTags)('Cart'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
-    (0, common_1.Controller)('cart'),
+    (0, common_1.Controller)({ path: 'cart', version: ['1', '2'] }),
     __metadata("design:paramtypes", [cart_service_1.CartService])
 ], CartController);
 //# sourceMappingURL=cart.controller.js.map

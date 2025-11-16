@@ -35,7 +35,7 @@ let AdminDashboardController = class AdminDashboardController {
             ...(whereDate.createdAt ? { createdAt: whereDate.createdAt } : {}),
             status: { in: ['DELIVERED', 'OUT_FOR_DELIVERY', 'PROCESSING', 'PENDING'] },
         };
-        const [ordersForKpi, byStatus, recent, customersCount, lowStock, topRaw,] = await this.svc.prisma.$transaction([
+        const [ordersForKpi, byStatus, recent, customersCount, lowStock, topRaw] = await this.svc.prisma.$transaction([
             this.svc.prisma.order.findMany({ where: kpiWhere, select: { totalCents: true } }),
             this.svc.prisma.order.groupBy({
                 by: ['status'],
@@ -45,25 +45,37 @@ let AdminDashboardController = class AdminDashboardController {
             }),
             this.svc.prisma.order.findMany({
                 where: whereDate.createdAt ? { createdAt: whereDate.createdAt } : undefined,
-                orderBy: { createdAt: 'desc' }, take: 5,
-                select: { id: true, totalCents: true, status: true, createdAt: true, user: { select: { name: true, phone: true } } }
+                orderBy: { createdAt: 'desc' },
+                take: 5,
+                select: {
+                    id: true,
+                    totalCents: true,
+                    status: true,
+                    createdAt: true,
+                    user: { select: { name: true, phone: true } },
+                },
             }),
             this.svc.prisma.user.count(),
-            this.svc.prisma.product.findMany({ where: { stock: { lt: 10 }, status: 'ACTIVE' }, select: { id: true, name: true, stock: true }, orderBy: { stock: 'asc' }, take: 10 }),
+            this.svc.prisma.product.findMany({
+                where: { stock: { lt: 10 }, status: 'ACTIVE' },
+                select: { id: true, name: true, stock: true },
+                orderBy: { stock: 'asc' },
+                take: 10,
+            }),
             this.svc.prisma.orderItem.groupBy({ by: ['productId'], _sum: { qty: true }, orderBy: { _sum: { qty: 'desc' } }, take: 10 }),
         ]);
         const totalRevenueCents = ordersForKpi.reduce((s, o) => s + o.totalCents, 0);
         const totalOrders = ordersForKpi.length;
         const avgOrderValueCents = totalOrders ? Math.round(totalRevenueCents / totalOrders) : 0;
-        const productIds = topRaw.map(t => t.productId);
+        const productIds = topRaw.map((t) => t.productId);
         const products = await this.svc.prisma.product.findMany({
             where: { id: { in: productIds } },
-            select: { id: true, name: true }
+            select: { id: true, name: true },
         });
-        const topProducts = topRaw.map(tr => ({
+        const topProducts = topRaw.map((tr) => ({
             productId: tr.productId,
             qty: tr._sum?.qty ?? 0,
-            name: products.find(p => p.id === tr.productId)?.name,
+            name: products.find((p) => p.id === tr.productId)?.name,
         }));
         return {
             sales: { totalRevenueCents, totalOrders, avgOrderValueCents },
@@ -98,7 +110,7 @@ let AdminDashboardController = class AdminDashboardController {
       GROUP BY bucket
       ORDER BY bucket ASC
     `);
-        return rows.map(r => ({
+        return rows.map((r) => ({
             period: r.bucket.toISOString(),
             revenueCents: Number(r.revenuecents ?? 0),
             orders: Number(r.orders ?? 0),
@@ -121,10 +133,14 @@ let AdminDashboardController = class AdminDashboardController {
             take: lim.limit,
         });
         const products = await this.svc.prisma.product.findMany({
-            where: { id: { in: topRaw.map(t => t.productId) } },
-            select: { id: true, name: true }
+            where: { id: { in: topRaw.map((t) => t.productId) } },
+            select: { id: true, name: true },
         });
-        return topRaw.map(t => ({ productId: t.productId, qty: t._sum.qty ?? 0, name: products.find(p => p.id === t.productId)?.name }));
+        return topRaw.map((t) => ({
+            productId: t.productId,
+            qty: t._sum.qty ?? 0,
+            name: products.find((p) => p.id === t.productId)?.name,
+        }));
     }
     async lowStock(thr) {
         return this.svc.prisma.product.findMany({
@@ -205,7 +221,7 @@ exports.AdminDashboardController = AdminDashboardController = __decorate([
     (0, swagger_1.ApiTags)('Admin/Dashboard'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.AdminOnly)(),
-    (0, common_1.Controller)('admin/dashboard'),
+    (0, common_1.Controller)({ path: 'admin/dashboard', version: ['1'] }),
     __metadata("design:paramtypes", [admin_service_1.AdminService])
 ], AdminDashboardController);
 //# sourceMappingURL=dashboard.controller.js.map

@@ -7,6 +7,7 @@ export declare class AddressesService {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        userId: string;
         label: string;
         city: string;
         zone: string | null;
@@ -15,12 +16,12 @@ export declare class AddressesService {
         apartment: string | null;
         lat: number | null;
         lng: number | null;
-        userId: string;
     }[]>;
     create(userId: string, dto: CreateAddressDto): Promise<{
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        userId: string;
         label: string;
         city: string;
         zone: string | null;
@@ -29,12 +30,12 @@ export declare class AddressesService {
         apartment: string | null;
         lat: number | null;
         lng: number | null;
-        userId: string;
     }>;
     update(userId: string, id: string, dto: UpdateAddressDto): Promise<{
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        userId: string;
         label: string;
         city: string;
         zone: string | null;
@@ -43,7 +44,6 @@ export declare class AddressesService {
         apartment: string | null;
         lat: number | null;
         lng: number | null;
-        userId: string;
     }>;
     remove(userId: string, id: string): Promise<{
         ok: boolean;

@@ -30,9 +30,9 @@ class UpdateCartItemDto {
 }
 exports.UpdateCartItemDto = UpdateCartItemDto;
 __decorate([
-    (0, swagger_1.ApiProperty)(),
+    (0, swagger_1.ApiProperty)({ minimum: 0 }),
     (0, class_validator_1.IsInt)(),
-    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], UpdateCartItemDto.prototype, "qty", void 0);
 //# sourceMappingURL=dto.js.map

@@ -13,11 +13,20 @@ exports.JwtRefreshStrategy = void 0;
 const common_1 = require("@nestjs/common");
 const passport_1 = require("@nestjs/passport");
 const passport_jwt_1 = require("passport-jwt");
+const config_1 = require("@nestjs/config");
 let JwtRefreshStrategy = class JwtRefreshStrategy extends (0, passport_1.PassportStrategy)(passport_jwt_1.Strategy, 'jwt-refresh') {
-    constructor() {
+    constructor(config) {
+        const secret = config.get('JWT_REFRESH_SECRET');
+        if (!secret) {
+            throw new Error('JWT_REFRESH_SECRET is not configured');
+        }
         super({
-            jwtFromRequest: passport_jwt_1.ExtractJwt.fromBodyField('refreshToken'),
-            secretOrKey: process.env.JWT_REFRESH_SECRET,
+            jwtFromRequest: passport_jwt_1.ExtractJwt.fromExtractors([
+                passport_jwt_1.ExtractJwt.fromAuthHeaderAsBearerToken(),
+                passport_jwt_1.ExtractJwt.fromBodyField('refreshToken'),
+                passport_jwt_1.ExtractJwt.fromHeader('x-refresh-token'),
+            ]),
+            secretOrKey: secret,
             ignoreExpiration: false,
         });
     }
@@ -28,6 +37,6 @@ let JwtRefreshStrategy = class JwtRefreshStrategy extends (0, passport_1.Passpor
 exports.JwtRefreshStrategy = JwtRefreshStrategy;
 exports.JwtRefreshStrategy = JwtRefreshStrategy = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [])
+    __metadata("design:paramtypes", [config_1.ConfigService])
 ], JwtRefreshStrategy);
 //# sourceMappingURL=jwt-refresh.strategy.js.map

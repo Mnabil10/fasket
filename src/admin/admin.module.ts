@@ -8,6 +8,7 @@ import { AdminDashboardController } from './dashboard.controller';
 import { AdminService } from './admin.service';
 import { AdminCouponsController } from './coupons.controller';
 import { UploadsModule } from 'src/uploads/uploads.module';
+import { ProductsBulkService } from './products-bulk.service';
 
 @Module({
   controllers: [
@@ -20,10 +21,10 @@ import { UploadsModule } from 'src/uploads/uploads.module';
     AdminCouponsController,
   ],
   imports: [
-    // ✅ Modules go here
+    // Additional modules can be wired here when needed
     UploadsModule,
     // ...other modules
   ],
-  providers: [AdminService],
+  providers: [AdminService, ProductsBulkService],
 })
 export class AdminModule {}

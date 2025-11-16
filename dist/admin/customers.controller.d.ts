@@ -25,6 +25,7 @@ export declare class AdminCustomersController {
             id: string;
             createdAt: Date;
             updatedAt: Date;
+            userId: string;
             label: string;
             city: string;
             zone: string | null;
@@ -33,12 +34,11 @@ export declare class AdminCustomersController {
             apartment: string | null;
             lat: number | null;
             lng: number | null;
-            userId: string;
         }[];
         orders: {
+            status: import(".prisma/client").$Enums.OrderStatus;
             id: string;
             createdAt: Date;
-            status: import(".prisma/client").$Enums.OrderStatus;
             totalCents: number;
         }[];
     } & {

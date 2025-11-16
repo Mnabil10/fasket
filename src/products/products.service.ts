@@ -1,80 +1,202 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { toBase64DataUrl } from 'src/uploads/image.util';
+import { toPublicImageUrl } from 'src/uploads/image.util';
+import { PublicProductFeedDto, PublicProductListDto } from './dto/public-product-query.dto';
+import { CacheService } from '../common/cache/cache.service';
+import { localize } from '../common/utils/localize.util';
+
+type Lang = 'en' | 'ar' | undefined;
+const categorySelect = {
+  id: true,
+  name: true,
+  nameAr: true,
+  slug: true,
+} as const;
+type ProductWithCategory = Prisma.ProductGetPayload<{
+  include: { category: { select: typeof categorySelect } };
+}>;
 
 @Injectable()
 export class ProductsService {
-  constructor(private prisma: PrismaService) {}
+  private readonly listTtl = Number(process.env.PRODUCT_LIST_CACHE_TTL ?? 60);
+  private readonly homeTtl = Number(process.env.HOME_CACHE_TTL ?? 120);
 
-  async list(q: { q?: string; categoryId?: string; min?: number; max?: number; status?: string; lang?: 'en'|'ar' }) {
-    const where: any = { deletedAt: null };
-    if (q?.status) where.status = q.status as any;
-    if (q?.categoryId) where.categoryId = q.categoryId;
-    if (q?.q) where.OR = [
-      { name: { contains: q.q, mode: 'insensitive' } },
-      { slug: { contains: q.q, mode: 'insensitive' } },
-    ];
-    if (q?.min || q?.max) {
-      where.priceCents = {};
-      if (q.min) where.priceCents.gte = q.min;
-      if (q.max) where.priceCents.lte = q.max;
-    }
-    const items = await this.prisma.product.findMany({
-      where,
-      select: {
-        id: true, name: true, nameAr: true, slug: true, imageUrl: true,
-        priceCents: true, salePriceCents: true, stock: true, status: true,
+  constructor(private prisma: PrismaService, private cache: CacheService) {}
+
+  async list(q: PublicProductListDto) {
+    const page = q.page ?? 1;
+    const pageSize = q.pageSize ?? 20;
+    const cacheKey = this.cache.buildKey(
+      'products:list',
+      q.lang ?? 'en',
+      q.q ?? '',
+      q.categoryId ?? '',
+      q.categorySlug ?? '',
+      q.min ?? '',
+      q.max ?? '',
+      q.orderBy ?? '',
+      q.sort ?? '',
+      page,
+      pageSize,
+    );
+
+    return this.cache.wrap(cacheKey, async () => {
+      const where: Prisma.ProductWhereInput = {
+        deletedAt: null,
+        status: ProductStatus.ACTIVE,
+      };
+      if (q?.categoryId) where.categoryId = q.categoryId;
+      if (q?.categorySlug) {
+        const category = await this.prisma.category.findFirst({
+          where: { slug: q.categorySlug, deletedAt: null },
+          select: { id: true },
+        });
+        if (category) where.categoryId = category.id;
+      }
+      if (q?.q) {
+        where.OR = [
+          { name: { contains: q.q, mode: 'insensitive' } },
+          { slug: { contains: q.q, mode: 'insensitive' } },
+        ];
+      }
+      if (q?.min !== undefined || q?.max !== undefined) {
+        const range: Prisma.IntFilter = {};
+        const minCents = q.min !== undefined ? this.toCents(q.min) : undefined;
+        const maxCents = q.max !== undefined ? this.toCents(q.max) : undefined;
+        if (minCents !== undefined) range.gte = minCents;
+        if (maxCents !== undefined) range.lte = maxCents;
+        if (Object.keys(range).length) {
+          where.priceCents = range;
+        }
+      }
+      const [items, total] = await this.prisma.$transaction([
+        this.prisma.product.findMany({
+          where,
+          include: { category: { select: categorySelect } },
+          orderBy: { [q.orderBy ?? 'createdAt']: q.sort ?? 'desc' },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        }),
+        this.prisma.product.count({ where }),
+      ]);
+
+      const mapped = await Promise.all(items.map((product) => this.toProductSummary(product, q?.lang)));
+      return { items: mapped, total, page, pageSize };
+    }, this.listTtl);
+  }
+
+  async one(idOrSlug: string, lang?: Lang) {
+    const product = await this.prisma.product.findFirst({
+      where: {
+        OR: [{ id: idOrSlug }, { slug: idOrSlug }],
+        deletedAt: null,
+        status: ProductStatus.ACTIVE,
       },
-      orderBy: { createdAt: 'desc' },
+      include: { category: { select: categorySelect } },
     });
-    return Promise.all(items.map(async p => ({
-      ...p,
-      name: q.lang === 'ar' && p.nameAr ? p.nameAr : p.name,
-      imageUrl: await toBase64DataUrl(p.imageUrl),
-    })));
+    if (!product) return null;
+    return this.toProductDetail(product, lang);
   }
 
-  async one(idOrSlug: string, lang?: 'en'|'ar') {
-    const p = await this.prisma.product.findFirst({
-      where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }], deletedAt: null },
-      include: { category: { select: { id: true, name: true, nameAr: true, slug: true } } },
-    });
-    if (!p) return p;
-    const name = lang === 'ar' && (p as any).nameAr ? (p as any).nameAr : p.name;
-    const categoryName = p.category ? (lang === 'ar' && (p.category as any).nameAr ? (p.category as any).nameAr : p.category.name) : undefined;
-    return { ...p, name, category: p.category ? { ...p.category, name: categoryName } : null, imageUrl: await toBase64DataUrl((p as any).imageUrl) } as any;
+  async bestSelling(query: PublicProductFeedDto = new PublicProductFeedDto()) {
+    const currentPage = query.page ?? 1;
+    const take = query.pageSize ?? 10;
+    const lang = query.lang;
+    const cacheKey = this.cache.buildKey('home:best', lang ?? 'en', currentPage, take);
+    return this.cache.wrap(cacheKey, async () => {
+      const agg = await this.prisma.orderItem.groupBy({
+        by: ['productId'],
+        _sum: { qty: true },
+        orderBy: { _sum: { qty: 'desc' } },
+        skip: (currentPage - 1) * take,
+        take,
+      });
+      if (!agg.length) return [];
+      const ids = agg.map((a) => a.productId);
+      const products = await this.prisma.product.findMany({
+        where: { id: { in: ids }, deletedAt: null, status: ProductStatus.ACTIVE },
+        include: { category: { select: categorySelect } },
+      });
+      const productMap = new Map(products.map((p) => [p.id, p]));
+      const ordered = agg
+        .map((entry) => {
+          const product = productMap.get(entry.productId);
+          return product ? product : null;
+        })
+        .filter((p): p is typeof products[number] => !!p);
+      return Promise.all(ordered.map((product) => this.toProductSummary(product, lang)));
+    }, this.homeTtl);
   }
 
-  async bestSelling(limit = 10, lang?: 'en'|'ar') {
-    const agg = await this.prisma.orderItem.groupBy({
-      by: ['productId'],
-      _sum: { qty: true },
-      orderBy: { _sum: { qty: 'desc' } },
-      take: limit,
-    });
-    const ids = agg.map(a => a.productId);
-    if (ids.length === 0) return [];
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: ids }, deletedAt: null, status: 'ACTIVE' as any },
-      select: { id: true, name: true, nameAr: true, slug: true, imageUrl: true, priceCents: true, salePriceCents: true },
-    });
-    const byId = new Map(products.map(p => [p.id, p] as const));
-    const mapped = await Promise.all(agg.map(async a => {
-      const p = byId.get(a.productId);
-      if (!p) return null;
-      const name = lang === 'ar' && p.nameAr ? p.nameAr : p.name;
-      return { ...p, name, totalSold: a._sum.qty ?? 0, imageUrl: await toBase64DataUrl(p.imageUrl) };
-    }));
-    return mapped.filter(Boolean);
+  async hotOffers(query: PublicProductFeedDto = new PublicProductFeedDto()) {
+    const currentPage = query.page ?? 1;
+    const take = query.pageSize ?? 10;
+    const lang = query.lang;
+    const cacheKey = this.cache.buildKey('home:hot', lang ?? 'en', currentPage, take);
+    return this.cache.wrap(cacheKey, async () => {
+      const items = await this.prisma.product.findMany({
+        where: { isHotOffer: true, status: ProductStatus.ACTIVE, deletedAt: null },
+        include: { category: { select: categorySelect } },
+        orderBy: { updatedAt: 'desc' },
+        skip: (currentPage - 1) * take,
+        take,
+      });
+      return Promise.all(items.map((product) => this.toProductSummary(product, lang)));
+    }, this.homeTtl);
   }
 
-  async hotOffers(limit = 10, lang?: 'en'|'ar') {
-    const items = await this.prisma.product.findMany({
-      where: { isHotOffer: true, status: 'ACTIVE' as any, deletedAt: null },
-      select: { id: true, name: true, nameAr: true, slug: true, imageUrl: true, priceCents: true, salePriceCents: true },
-      orderBy: { updatedAt: 'desc' },
-      take: limit,
-    });
-    return Promise.all(items.map(async p => ({ ...p, name: lang === 'ar' && p.nameAr ? p.nameAr : p.name, imageUrl: await toBase64DataUrl(p.imageUrl) })));
+  private toCents(amount: number) {
+    const numeric = Number(amount);
+    if (!Number.isFinite(numeric)) return undefined;
+    return Math.round(numeric * 100);
+  }
+
+  private localize(value: string | null, valueAr: string | null, lang?: Lang) {
+    return localize(value ?? '', valueAr ?? undefined, lang);
+  }
+
+  private async toProductSummary(product: ProductWithCategory, lang?: Lang) {
+    return {
+      id: product.id,
+      name: this.localize(product.name, product.nameAr, lang) ?? product.name,
+      slug: product.slug,
+      imageUrl: await toPublicImageUrl(product.imageUrl),
+      priceCents: product.priceCents,
+      salePriceCents: product.salePriceCents,
+      stock: product.stock,
+      category: product.category
+        ? {
+            id: product.category.id,
+            name: this.localize(product.category.name, product.category.nameAr, lang) ?? product.category.name,
+            slug: product.category.slug,
+          }
+        : null,
+    };
+  }
+
+  private async toProductDetail(product: ProductWithCategory, lang?: Lang) {
+    return {
+      id: product.id,
+      name: this.localize(product.name, product.nameAr, lang) ?? product.name,
+      slug: product.slug,
+      description: this.localize(product.description ?? '', product.descriptionAr ?? '', lang),
+      descriptionAr: product.descriptionAr,
+      descriptionEn: product.description,
+      imageUrl: await toPublicImageUrl(product.imageUrl),
+      images: product.images,
+      priceCents: product.priceCents,
+      salePriceCents: product.salePriceCents,
+      stock: product.stock,
+      status: product.status,
+      isHotOffer: product.isHotOffer,
+      category: product.category
+        ? {
+            id: product.category.id,
+            name: this.localize(product.category.name, product.category.nameAr, lang) ?? product.category.name,
+            slug: product.category.slug,
+          }
+        : null,
+    };
   }
 }

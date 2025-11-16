@@ -16,18 +16,19 @@ exports.ProductsController = void 0;
 const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
 const products_service_1 = require("./products.service");
+const public_product_query_dto_1 = require("./dto/public-product-query.dto");
 let ProductsController = class ProductsController {
     constructor(service) {
         this.service = service;
     }
-    list(q, categoryId, min, max, lang) {
-        return this.service.list({ q, categoryId, min: min ? Number(min) : undefined, max: max ? Number(max) : undefined, lang });
+    list(query) {
+        return this.service.list(query);
     }
-    bestSelling(limit, lang) {
-        return this.service.bestSelling(limit ? Number(limit) : 10, lang);
+    bestSelling(query) {
+        return this.service.bestSelling(query);
     }
-    hotOffers(limit, lang) {
-        return this.service.hotOffers(limit ? Number(limit) : 10, lang);
+    hotOffers(query) {
+        return this.service.hotOffers(query);
     }
     one(idOrSlug, lang) {
         return this.service.one(idOrSlug, lang);
@@ -36,38 +37,25 @@ let ProductsController = class ProductsController {
 exports.ProductsController = ProductsController;
 __decorate([
     (0, common_1.Get)(),
-    (0, swagger_1.ApiQuery)({ name: 'q', required: false }),
-    (0, swagger_1.ApiQuery)({ name: 'categoryId', required: false }),
-    (0, swagger_1.ApiQuery)({ name: 'min', required: false }),
-    (0, swagger_1.ApiQuery)({ name: 'max', required: false }),
-    (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
-    __param(0, (0, common_1.Query)('q')),
-    __param(1, (0, common_1.Query)('categoryId')),
-    __param(2, (0, common_1.Query)('min')),
-    __param(3, (0, common_1.Query)('max')),
-    __param(4, (0, common_1.Query)('lang')),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, Number, Number, String]),
+    __metadata("design:paramtypes", [public_product_query_dto_1.PublicProductListDto]),
     __metadata("design:returntype", void 0)
 ], ProductsController.prototype, "list", null);
 __decorate([
     (0, common_1.Get)('public/best-selling'),
-    (0, swagger_1.ApiQuery)({ name: 'limit', required: false, schema: { type: 'integer', default: 10 } }),
     (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
-    __param(0, (0, common_1.Query)('limit')),
-    __param(1, (0, common_1.Query)('lang')),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:paramtypes", [public_product_query_dto_1.PublicProductFeedDto]),
     __metadata("design:returntype", void 0)
 ], ProductsController.prototype, "bestSelling", null);
 __decorate([
     (0, common_1.Get)('public/hot-offers'),
-    (0, swagger_1.ApiQuery)({ name: 'limit', required: false, schema: { type: 'integer', default: 10 } }),
     (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
-    __param(0, (0, common_1.Query)('limit')),
-    __param(1, (0, common_1.Query)('lang')),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:paramtypes", [public_product_query_dto_1.PublicProductFeedDto]),
     __metadata("design:returntype", void 0)
 ], ProductsController.prototype, "hotOffers", null);
 __decorate([
@@ -81,7 +69,7 @@ __decorate([
 ], ProductsController.prototype, "one", null);
 exports.ProductsController = ProductsController = __decorate([
     (0, swagger_1.ApiTags)('Products'),
-    (0, common_1.Controller)('products'),
+    (0, common_1.Controller)({ path: 'products', version: ['1', '2'] }),
     __metadata("design:paramtypes", [products_service_1.ProductsService])
 ], ProductsController);
 //# sourceMappingURL=products.controller.js.map

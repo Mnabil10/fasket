@@ -12,11 +12,13 @@ export function createS3Client() {
   const region = process.env.S3_REGION || (endpoint ? 'auto' : undefined);
   const forcePathStyle = String(process.env.S3_FORCE_PATH_STYLE ?? (endpoint ? 'true' : 'false')) === 'true';
 
-  const accessKeyId = process.env.S3_ACCESS_KEY;
-  const secretAccessKey = process.env.S3_SECRET_KEY;
+  const accessKeyId = process.env.S3_ACCESS_KEY_ID || process.env.S3_ACCESS_KEY;
+  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY || process.env.S3_SECRET_KEY;
 
   if (!bucket) throw new Error('S3_BUCKET is required');
-  if (!accessKeyId || !secretAccessKey) throw new Error('S3_ACCESS_KEY and S3_SECRET_KEY are required');
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error('S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required');
+  }
   if (!region) throw new Error('S3_REGION is required when S3_ENDPOINT is not set');
 
   return new S3Client({

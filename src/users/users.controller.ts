@@ -1,18 +1,25 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { CurrentUserPayload } from '../common/types/current-user.type';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @ApiTags('Users')
 @ApiBearerAuth() 
 @UseGuards(JwtAuthGuard)
-@Controller('users')
+@Controller({ path: 'users', version: ['1', '2'] })
 export class UsersController {
   constructor(private service: UsersService) {}
 
   @Get('me')
-  me(@CurrentUser() user: any) {
+  me(@CurrentUser() user: CurrentUserPayload) {
     return this.service.me(user.userId);
+  }
+
+  @Post('change-password')
+  changePassword(@CurrentUser() user: CurrentUserPayload, @Body() dto: ChangePasswordDto) {
+    return this.service.changePassword(user.userId, dto);
   }
 }

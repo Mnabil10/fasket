@@ -5,11 +5,10 @@ import { AdminService } from './admin.service';
 import { LimitDto, RangeDto, ThresholdDto, TimeSeriesDto } from './dto/dashboard.dto';
 import { Prisma } from '@prisma/client';
 
-
 @ApiTags('Admin/Dashboard')
 @ApiBearerAuth()
 @AdminOnly()
-@Controller('admin/dashboard')
+@Controller({ path: 'admin/dashboard', version: ['1'] })
 export class AdminDashboardController {
   constructor(private svc: AdminService) {}
 
@@ -25,50 +24,56 @@ export class AdminDashboardController {
 
     const kpiWhere = {
       ...(whereDate.createdAt ? { createdAt: whereDate.createdAt } : {}),
-      status: { in: ['DELIVERED','OUT_FOR_DELIVERY','PROCESSING','PENDING'] as any },
+      status: { in: ['DELIVERED', 'OUT_FOR_DELIVERY', 'PROCESSING', 'PENDING'] as any },
     };
 
-    const [
-      ordersForKpi,
-      byStatus,
-      recent,
-      customersCount,
-      lowStock,
-      topRaw,
-    ] = await this.svc.prisma.$transaction([
-      this.svc.prisma.order.findMany({ where: kpiWhere, select: { totalCents: true } }),
-      // ✅ add orderBy to satisfy Prisma's groupBy typing
-      this.svc.prisma.order.groupBy({
-        by: ['status'],
-        _count: { status: true },
-        where: whereDate.createdAt ? { createdAt: whereDate.createdAt } : undefined,
-        orderBy: { status: 'asc' },
-      }),
-      this.svc.prisma.order.findMany({
-        where: whereDate.createdAt ? { createdAt: whereDate.createdAt } : undefined,
-        orderBy: { createdAt: 'desc' }, take: 5,
-        select: { id: true, totalCents: true, status: true, createdAt: true, user: { select: { name: true, phone: true } } }
-      }),
-      this.svc.prisma.user.count(),
-      this.svc.prisma.product.findMany({ where: { stock: { lt: 10 }, status: 'ACTIVE' as any }, select: { id: true, name: true, stock: true }, orderBy: { stock: 'asc' }, take: 10 }),
-      this.svc.prisma.orderItem.groupBy({ by: ['productId'], _sum: { qty: true }, orderBy: { _sum: { qty: 'desc' } }, take: 10 }),
-    ]);
+    const [ordersForKpi, byStatus, recent, customersCount, lowStock, topRaw] =
+      await this.svc.prisma.$transaction([
+        this.svc.prisma.order.findMany({ where: kpiWhere, select: { totalCents: true } }),
+        // Add orderBy to satisfy Prisma's groupBy typing
+        this.svc.prisma.order.groupBy({
+          by: ['status'],
+          _count: { status: true },
+          where: whereDate.createdAt ? { createdAt: whereDate.createdAt } : undefined,
+          orderBy: { status: 'asc' },
+        }),
+        this.svc.prisma.order.findMany({
+          where: whereDate.createdAt ? { createdAt: whereDate.createdAt } : undefined,
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: {
+            id: true,
+            totalCents: true,
+            status: true,
+            createdAt: true,
+            user: { select: { name: true, phone: true } },
+          },
+        }),
+        this.svc.prisma.user.count(),
+        this.svc.prisma.product.findMany({
+          where: { stock: { lt: 10 }, status: 'ACTIVE' as any },
+          select: { id: true, name: true, stock: true },
+          orderBy: { stock: 'asc' },
+          take: 10,
+        }),
+        this.svc.prisma.orderItem.groupBy({ by: ['productId'], _sum: { qty: true }, orderBy: { _sum: { qty: 'desc' } }, take: 10 }),
+      ]);
 
     const totalRevenueCents = ordersForKpi.reduce((s, o) => s + o.totalCents, 0);
     const totalOrders = ordersForKpi.length;
     const avgOrderValueCents = totalOrders ? Math.round(totalRevenueCents / totalOrders) : 0;
 
-    const productIds = topRaw.map(t => t.productId);
+    const productIds = topRaw.map((t) => t.productId);
     const products = await this.svc.prisma.product.findMany({
       where: { id: { in: productIds } },
-      select: { id: true, name: true }
+      select: { id: true, name: true },
     });
 
-    // ✅ use optional chaining on _sum
-    const topProducts = topRaw.map(tr => ({
+    // Use optional chaining on _sum so missing aggregates do not throw
+    const topProducts = topRaw.map((tr) => ({
       productId: tr.productId,
       qty: tr._sum?.qty ?? 0,
-      name: products.find(p => p.id === tr.productId)?.name,
+      name: products.find((p) => p.id === tr.productId)?.name,
     }));
 
     return {
@@ -85,7 +90,7 @@ export class AdminDashboardController {
   @ApiOkResponse({ description: 'Time series of revenue/order count' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
-  @ApiQuery({ name: 'granularity', required: false, enum: ['day','week','month'] })
+  @ApiQuery({ name: 'granularity', required: false, enum: ['day', 'week', 'month'] })
   async timeSeries(@Query() q: TimeSeriesDto) {
     const gran = q.granularity ?? 'day';
     const from = q.from ? new Date(q.from) : undefined;
@@ -96,14 +101,13 @@ export class AdminDashboardController {
     if (to) whereClauses.push(Prisma.sql`"createdAt" <= ${to}`);
     whereClauses.push(Prisma.sql`"status" IN ('PENDING','PROCESSING','OUT_FOR_DELIVERY','DELIVERED')`);
 
-    // ✅ build WHERE using SQL helpers
+    // Build WHERE using SQL helpers
     const whereSql =
-  whereClauses.length > 0
-    ? Prisma.sql`WHERE ${Prisma.join(whereClauses, ' AND ')}`
-    : Prisma.empty;
+      whereClauses.length > 0
+        ? Prisma.sql`WHERE ${Prisma.join(whereClauses, ' AND ')}`
+        : Prisma.empty;
 
-
-    // ✅ safe date_trunc expression
+    // Safe date_trunc expression
     const granKey = gran === 'week' ? 'week' : gran === 'month' ? 'month' : 'day';
     const granSql = Prisma.sql`date_trunc(${Prisma.raw(`'${granKey}'`)}, "createdAt")`;
 
@@ -119,7 +123,7 @@ export class AdminDashboardController {
       ORDER BY bucket ASC
     `);
 
-    return rows.map(r => ({
+    return rows.map((r) => ({
       period: r.bucket.toISOString(),
       revenueCents: Number(r.revenuecents ?? 0),
       orders: Number(r.orders ?? 0),
@@ -139,7 +143,7 @@ export class AdminDashboardController {
     if (range.from || range.to) whereOrder.createdAt = {};
     if (range.from) whereOrder.createdAt.gte = new Date(range.from!);
     if (range.to) whereOrder.createdAt.lte = new Date(range.to!);
-    whereOrder.status = { in: ['PENDING','PROCESSING','OUT_FOR_DELIVERY','DELIVERED'] as any };
+    whereOrder.status = { in: ['PENDING', 'PROCESSING', 'OUT_FOR_DELIVERY', 'DELIVERED'] as any };
 
     const topRaw = await this.svc.prisma.orderItem.groupBy({
       by: ['productId'],
@@ -150,11 +154,15 @@ export class AdminDashboardController {
     });
 
     const products = await this.svc.prisma.product.findMany({
-      where: { id: { in: topRaw.map(t => t.productId) } },
-      select: { id: true, name: true }
+      where: { id: { in: topRaw.map((t) => t.productId) } },
+      select: { id: true, name: true },
     });
 
-    return topRaw.map(t => ({ productId: t.productId, qty: t._sum.qty ?? 0, name: products.find(p => p.id === t.productId)?.name }));
+    return topRaw.map((t) => ({
+      productId: t.productId,
+      qty: t._sum.qty ?? 0,
+      name: products.find((p) => p.id === t.productId)?.name,
+    }));
   }
 
   /**

@@ -1,12 +1,11 @@
 import { AdminService } from './admin.service';
-import { CategoryQueryDto, CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
-import { PaginationDto, SortDto } from './dto/pagination.dto';
+import { CategoryListQueryDto, CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 import { UploadsService } from 'src/uploads/uploads.service';
 export declare class AdminCategoriesController {
     private svc;
     private uploads;
     constructor(svc: AdminService, uploads: UploadsService);
-    list(q: CategoryQueryDto, page: PaginationDto, sort: SortDto): Promise<{
+    list(query: CategoryListQueryDto): Promise<{
         items: any[];
         total: number;
         page: number | undefined;
@@ -42,4 +41,5 @@ export declare class AdminCategoriesController {
     remove(id: string): Promise<{
         ok: boolean;
     }>;
+    private prepareCategoryPayload;
 }

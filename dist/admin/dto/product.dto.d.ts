@@ -1,3 +1,4 @@
+import { PaginationDto } from './pagination.dto';
 export declare enum ProductStatusDto {
     DRAFT = "DRAFT",
     ACTIVE = "ACTIVE",
@@ -7,10 +8,11 @@ export declare enum ProductStatusDto {
 export declare class CreateProductDto {
     name: string;
     nameAr?: string;
-    slug: string;
+    slug?: string;
     description?: string;
     descriptionAr?: string;
     imageUrl?: string;
+    sku?: string;
     priceCents: number;
     salePriceCents?: number;
     stock: number;
@@ -31,5 +33,8 @@ export declare class ProductListQueryDto {
     inStock?: boolean;
     orderBy?: 'createdAt' | 'priceCents' | 'name';
     sort?: 'asc' | 'desc';
+}
+declare const ProductListRequestDto_base: import("@nestjs/common").Type<PaginationDto & ProductListQueryDto>;
+export declare class ProductListRequestDto extends ProductListRequestDto_base {
 }
 export {};

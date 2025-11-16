@@ -11,28 +11,34 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UpdateProfileDto = exports.RefreshDto = exports.LoginDto = exports.RegisterDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
+const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
+const sanitize_util_1 = require("../common/utils/sanitize.util");
 class RegisterDto {
 }
 exports.RegisterDto = RegisterDto;
 __decorate([
     (0, swagger_1.ApiProperty)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanString)(value)),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], RegisterDto.prototype, "name", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanString)(value)),
     (0, class_validator_1.IsPhoneNumber)('EG'),
     __metadata("design:type", String)
 ], RegisterDto.prototype, "phone", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)({ required: false }),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)?.toLowerCase()),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsEmail)(),
     __metadata("design:type", String)
 ], RegisterDto.prototype, "email", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanString)(value)),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MinLength)(6),
     __metadata("design:type", String)
@@ -41,12 +47,42 @@ class LoginDto {
 }
 exports.LoginDto = LoginDto;
 __decorate([
-    (0, swagger_1.ApiProperty)(),
-    (0, class_validator_1.IsPhoneNumber)('EG'),
+    (0, swagger_1.ApiProperty)({ description: 'Phone number or email address', example: '+201234567890 or user@fasket.com' }),
+    (0, class_transformer_1.Transform)(({ value, obj }) => (0, sanitize_util_1.cleanString)(String(value ?? obj.identifier ?? obj.phone ?? obj.email ?? obj.username ?? obj.login ?? ''))),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], LoginDto.prototype, "identifier", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ required: false }),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], LoginDto.prototype, "phone", void 0);
 __decorate([
+    (0, swagger_1.ApiProperty)({ required: false }),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)?.toLowerCase()),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], LoginDto.prototype, "email", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ required: false }),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], LoginDto.prototype, "username", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ required: false }),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], LoginDto.prototype, "login", void 0);
+__decorate([
     (0, swagger_1.ApiProperty)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanString)(value)),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MinLength)(6),
     __metadata("design:type", String)
@@ -55,7 +91,9 @@ class RefreshDto {
 }
 exports.RefreshDto = RefreshDto;
 __decorate([
-    (0, swagger_1.ApiProperty)(),
+    (0, swagger_1.ApiProperty)({ required: false }),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], RefreshDto.prototype, "refreshToken", void 0);
@@ -64,12 +102,14 @@ class UpdateProfileDto {
 exports.UpdateProfileDto = UpdateProfileDto;
 __decorate([
     (0, swagger_1.ApiProperty)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], UpdateProfileDto.prototype, "name", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)(),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanNullableString)(value)),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MinLength)(6),

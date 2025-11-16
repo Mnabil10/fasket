@@ -1,30 +1,89 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional, IntersectionType, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
+import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { cleanNullableString, cleanString } from '../../common/utils/sanitize.util';
+import { PaginationDto } from './pagination.dto';
 
 export enum ProductStatusDto { DRAFT='DRAFT', ACTIVE='ACTIVE', HIDDEN='HIDDEN', DISCONTINUED='DISCONTINUED' }
 
 export class CreateProductDto {
-  @ApiProperty() @IsString() name!: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() nameAr?: string;
-  @ApiProperty() @IsString() slug!: string;
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  name!: string;
 
-  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() descriptionAr?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() imageUrl?: string;
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  nameAr?: string;
 
-  @ApiProperty() @IsInt() @Min(0) priceCents!: number;
-  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) salePriceCents?: number;
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  slug?: string;
 
-  @ApiProperty() @IsInt() @Min(0) stock!: number;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() isHotOffer?: boolean;
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  descriptionAr?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  sku?: string;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(0)
+  priceCents!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  salePriceCents?: number;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(0)
+  stock!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isHotOffer?: boolean;
 
   @ApiPropertyOptional({ enum: ProductStatusDto, default: ProductStatusDto.ACTIVE })
-  @IsOptional() @IsEnum(ProductStatusDto) status?: ProductStatusDto = ProductStatusDto.ACTIVE;
+  @IsOptional()
+  @IsEnum(ProductStatusDto)
+  status?: ProductStatusDto = ProductStatusDto.ACTIVE;
 
-  @ApiPropertyOptional() @IsOptional() @IsString() categoryId?: string;
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  categoryId?: string;
 
-  @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray()
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
   images?: string[];
 }
 
@@ -55,3 +114,5 @@ export class ProductListQueryDto {
   @ApiPropertyOptional({ enum: ['asc','desc'], default: 'desc' })
   @IsOptional() @IsString() sort?: 'asc' | 'desc' = 'desc';
 }
+
+export class ProductListRequestDto extends IntersectionType(PaginationDto, ProductListQueryDto) {}

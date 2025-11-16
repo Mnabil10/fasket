@@ -92,7 +92,7 @@ exports.UploadsController = UploadsController = __decorate([
     (0, swagger_1.ApiTags)('Admin/Uploads'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.AdminOnly)(),
-    (0, common_1.Controller)('admin/uploads'),
+    (0, common_1.Controller)({ path: 'admin/uploads', version: ['1'] }),
     __metadata("design:paramtypes", [uploads_service_1.UploadsService])
 ], UploadsController);
 //# sourceMappingURL=uploads.controller.js.map

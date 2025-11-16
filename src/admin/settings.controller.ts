@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Patch } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { AdminOnly } from './_admin-guards';
 import { AdminService } from './admin.service';
@@ -12,8 +12,9 @@ import { Prisma } from '@prisma/client';
 @ApiTags('Admin/Settings')
 @ApiBearerAuth()
 @AdminOnly()
-@Controller('admin/settings')
+@Controller({ path: 'admin/settings', version: ['1'] })
 export class AdminSettingsController {
+  private readonly logger = new Logger(AdminSettingsController.name);
   constructor(private svc: AdminService) {}
 
   private async getOrCreate() {
@@ -117,6 +118,7 @@ if (d.freeDeliveryMinimum !== undefined)     upd.freeDeliveryMinimumCents = Math
     const s = await this.getOrCreate();
     const data = this.toUpdate(dto);
     const updated = await this.svc.prisma.setting.update({ where: { id: s.id }, data });
+    this.logger.log({ msg: 'Settings updated', settingId: s.id });
     return this.toUi(updated);
   }
 

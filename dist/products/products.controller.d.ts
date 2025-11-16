@@ -1,36 +1,73 @@
 import { ProductsService } from './products.service';
+import { PublicProductFeedDto, PublicProductListDto } from './dto/public-product-query.dto';
 export declare class ProductsController {
     private service;
     constructor(service: ProductsService);
-    list(q?: string, categoryId?: string, min?: number, max?: number, lang?: 'en' | 'ar'): Promise<{
-        name: string;
-        imageUrl: string | undefined;
+    list(query: PublicProductListDto): Promise<{
+        items: {
+            id: string;
+            name: string;
+            slug: string;
+            imageUrl: string | undefined;
+            priceCents: number;
+            salePriceCents: number | null;
+            stock: number;
+            category: {
+                id: string;
+                name: string;
+                slug: string;
+            } | null;
+        }[];
+        total: number;
+        page: number;
+        pageSize: number;
+    }>;
+    bestSelling(query: PublicProductFeedDto): Promise<{
         id: string;
-        nameAr: string | null;
+        name: string;
         slug: string;
+        imageUrl: string | undefined;
+        priceCents: number;
+        salePriceCents: number | null;
+        stock: number;
+        category: {
+            id: string;
+            name: string;
+            slug: string;
+        } | null;
+    }[]>;
+    hotOffers(query: PublicProductFeedDto): Promise<{
+        id: string;
+        name: string;
+        slug: string;
+        imageUrl: string | undefined;
+        priceCents: number;
+        salePriceCents: number | null;
+        stock: number;
+        category: {
+            id: string;
+            name: string;
+            slug: string;
+        } | null;
+    }[]>;
+    one(idOrSlug: string, lang?: 'en' | 'ar'): Promise<{
+        id: string;
+        name: string;
+        slug: string;
+        description: string;
+        descriptionAr: string | null;
+        descriptionEn: string | null;
+        imageUrl: string | undefined;
+        images: string[];
         priceCents: number;
         salePriceCents: number | null;
         stock: number;
         status: import(".prisma/client").$Enums.ProductStatus;
-    }[]>;
-    bestSelling(limit?: string, lang?: 'en' | 'ar'): Promise<({
-        name: string;
-        totalSold: number;
-        imageUrl: string | undefined;
-        id: string;
-        nameAr: string | null;
-        slug: string;
-        priceCents: number;
-        salePriceCents: number | null;
-    } | null)[]>;
-    hotOffers(limit?: string, lang?: 'en' | 'ar'): Promise<{
-        name: string;
-        imageUrl: string | undefined;
-        id: string;
-        nameAr: string | null;
-        slug: string;
-        priceCents: number;
-        salePriceCents: number | null;
-    }[]>;
-    one(idOrSlug: string, lang?: 'en' | 'ar'): Promise<any>;
+        isHotOffer: boolean;
+        category: {
+            id: string;
+            name: string;
+            slug: string;
+        } | null;
+    } | null>;
 }

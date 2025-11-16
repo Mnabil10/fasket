@@ -1,43 +1,83 @@
 import { PrismaService } from '../prisma/prisma.service';
+import { PublicProductFeedDto, PublicProductListDto } from './dto/public-product-query.dto';
+import { CacheService } from '../common/cache/cache.service';
+type Lang = 'en' | 'ar' | undefined;
 export declare class ProductsService {
     private prisma;
-    constructor(prisma: PrismaService);
-    list(q: {
-        q?: string;
-        categoryId?: string;
-        min?: number;
-        max?: number;
-        status?: string;
-        lang?: 'en' | 'ar';
-    }): Promise<{
-        name: string;
-        imageUrl: string | undefined;
+    private cache;
+    private readonly listTtl;
+    private readonly homeTtl;
+    constructor(prisma: PrismaService, cache: CacheService);
+    list(q: PublicProductListDto): Promise<{
+        items: {
+            id: string;
+            name: string;
+            slug: string;
+            imageUrl: string | undefined;
+            priceCents: number;
+            salePriceCents: number | null;
+            stock: number;
+            category: {
+                id: string;
+                name: string;
+                slug: string;
+            } | null;
+        }[];
+        total: number;
+        page: number;
+        pageSize: number;
+    }>;
+    one(idOrSlug: string, lang?: Lang): Promise<{
         id: string;
-        nameAr: string | null;
+        name: string;
         slug: string;
+        description: string;
+        descriptionAr: string | null;
+        descriptionEn: string | null;
+        imageUrl: string | undefined;
+        images: string[];
         priceCents: number;
         salePriceCents: number | null;
         stock: number;
         status: import(".prisma/client").$Enums.ProductStatus;
-    }[]>;
-    one(idOrSlug: string, lang?: 'en' | 'ar'): Promise<any>;
-    bestSelling(limit?: number, lang?: 'en' | 'ar'): Promise<({
-        name: string;
-        totalSold: number;
-        imageUrl: string | undefined;
+        isHotOffer: boolean;
+        category: {
+            id: string;
+            name: string;
+            slug: string;
+        } | null;
+    } | null>;
+    bestSelling(query?: PublicProductFeedDto): Promise<{
         id: string;
-        nameAr: string | null;
+        name: string;
         slug: string;
+        imageUrl: string | undefined;
         priceCents: number;
         salePriceCents: number | null;
-    } | null)[]>;
-    hotOffers(limit?: number, lang?: 'en' | 'ar'): Promise<{
-        name: string;
-        imageUrl: string | undefined;
+        stock: number;
+        category: {
+            id: string;
+            name: string;
+            slug: string;
+        } | null;
+    }[]>;
+    hotOffers(query?: PublicProductFeedDto): Promise<{
         id: string;
-        nameAr: string | null;
+        name: string;
         slug: string;
+        imageUrl: string | undefined;
         priceCents: number;
         salePriceCents: number | null;
+        stock: number;
+        category: {
+            id: string;
+            name: string;
+            slug: string;
+        } | null;
     }[]>;
+    private toCents;
+    private localize;
+    private toProductSummary;
+    private toProductDetail;
 }
+export {};

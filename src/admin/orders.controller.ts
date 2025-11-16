@@ -1,16 +1,19 @@
-import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Param, Patch, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AdminOnly, StaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
 import { UpdateOrderStatusDto } from './dto/order-status.dto';
 import { PaginationDto } from './dto/pagination.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { CurrentUserPayload } from '../common/types/current-user.type';
 
 @ApiTags('Admin/Orders')
 @ApiBearerAuth()
 @StaffOrAdmin()
-@Controller('admin/orders')
+@Controller({ path: 'admin/orders', version: ['1'] })
 export class AdminOrdersController {
+  private readonly logger = new Logger(AdminOrdersController.name);
+
   constructor(private svc: AdminService) {}
 
   @Get()
@@ -74,7 +77,7 @@ export class AdminOrdersController {
   }
 
   @Patch(':id/status')
-  async updateStatus(@CurrentUser() user: any, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
+  async updateStatus(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     const before = await this.svc.prisma.order.findUnique({ where: { id } });
     if (!before) return { ok: false, message: 'Order not found' };
 
@@ -84,6 +87,7 @@ export class AdminOrdersController {
         data: { orderId: id, from: before.status as any, to: dto.to as any, note: dto.note, actorId: user.userId },
       });
     });
+    this.logger.log({ msg: 'Order status updated', orderId: id, from: before.status, to: dto.to, actorId: user.userId });
     return { ok: true };
   }
 }

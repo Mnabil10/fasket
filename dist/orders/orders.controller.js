@@ -30,14 +30,7 @@ let OrdersController = class OrdersController {
         return this.service.detail(user.userId, id);
     }
     create(user, dto) {
-        return this.service.create(user.userId, {
-            addressId: dto.addressId,
-            paymentMethod: dto.paymentMethod,
-            cartId: dto.cartId,
-            items: dto.items,
-            notes: dto.notes,
-            couponCode: dto.couponCode,
-        });
+        return this.service.create(user.userId, dto);
     }
 };
 exports.OrdersController = OrdersController;
@@ -68,7 +61,7 @@ exports.OrdersController = OrdersController = __decorate([
     (0, swagger_1.ApiTags)('Orders'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
-    (0, common_1.Controller)('orders'),
+    (0, common_1.Controller)({ path: 'orders', version: ['1', '2'] }),
     __metadata("design:paramtypes", [orders_service_1.OrdersService])
 ], OrdersController);
 //# sourceMappingURL=orders.controller.js.map

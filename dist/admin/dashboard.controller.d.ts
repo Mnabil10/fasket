@@ -74,13 +74,13 @@ export declare class AdminDashboardController {
             } | undefined;
         })[];
         recent: {
+            status: import(".prisma/client").$Enums.OrderStatus;
             user: {
                 phone: string;
                 name: string;
             };
             id: string;
             createdAt: Date;
-            status: import(".prisma/client").$Enums.OrderStatus;
             totalCents: number;
         }[];
         topProducts: {
