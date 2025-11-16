@@ -19,12 +19,16 @@ const users_service_1 = require("./users.service");
 const jwt_auth_guard_1 = require("../common/guards/jwt-auth.guard");
 const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
 const change_password_dto_1 = require("./dto/change-password.dto");
+const update_profile_dto_1 = require("./dto/update-profile.dto");
 let UsersController = class UsersController {
     constructor(service) {
         this.service = service;
     }
     me(user) {
         return this.service.me(user.userId);
+    }
+    updateProfile(user, dto) {
+        return this.service.updateProfile(user.userId, dto);
     }
     changePassword(user, dto) {
         return this.service.changePassword(user.userId, dto);
@@ -38,6 +42,14 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], UsersController.prototype, "me", null);
+__decorate([
+    (0, common_1.Patch)('me'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, update_profile_dto_1.UpdateProfileDto]),
+    __metadata("design:returntype", void 0)
+], UsersController.prototype, "updateProfile", null);
 __decorate([
     (0, common_1.Post)('change-password'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

@@ -5,3 +5,6 @@ export declare class AddToCartDto {
 export declare class UpdateCartItemDto {
     qty: number;
 }
+export declare class ApplyCouponDto {
+    couponCode: string;
+}

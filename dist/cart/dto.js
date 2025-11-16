@@ -9,9 +9,11 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UpdateCartItemDto = exports.AddToCartDto = void 0;
+exports.ApplyCouponDto = exports.UpdateCartItemDto = exports.AddToCartDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
+const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
+const sanitize_util_1 = require("../common/utils/sanitize.util");
 class AddToCartDto {
 }
 exports.AddToCartDto = AddToCartDto;
@@ -35,4 +37,15 @@ __decorate([
     (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], UpdateCartItemDto.prototype, "qty", void 0);
+class ApplyCouponDto {
+}
+exports.ApplyCouponDto = ApplyCouponDto;
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'Coupon code to validate and apply', example: 'SAVE10' }),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanString)(value)),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsNotEmpty)(),
+    (0, class_validator_1.MinLength)(2),
+    __metadata("design:type", String)
+], ApplyCouponDto.prototype, "couponCode", void 0);
 //# sourceMappingURL=dto.js.map

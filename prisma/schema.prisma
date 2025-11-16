@@ -121,6 +121,7 @@ model Cart {
   user      User       @relation(fields: [userId], references: [id])
   items     CartItem[]
   orders    Order[]
+  couponCode String?
   updatedAt DateTime   @updatedAt
   createdAt DateTime   @default(now())
 }

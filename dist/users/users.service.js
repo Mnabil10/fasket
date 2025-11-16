@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UsersService = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
 const bcrypt = require("bcrypt");
 const prisma_service_1 = require("../prisma/prisma.service");
 let UsersService = class UsersService {
@@ -58,6 +59,47 @@ let UsersService = class UsersService {
         const hashed = await bcrypt.hash(dto.newPassword, 10);
         await this.prisma.user.update({ where: { id: userId }, data: { password: hashed } });
         return { ok: true };
+    }
+    async updateProfile(userId, dto) {
+        const data = {};
+        if (dto.name !== undefined) {
+            data.name = dto.name;
+        }
+        if (dto.phone !== undefined) {
+            data.phone = dto.phone;
+        }
+        if (dto.email !== undefined) {
+            data.email = dto.email;
+        }
+        if (Object.keys(data).length === 0) {
+            throw new common_1.BadRequestException('No profile fields provided');
+        }
+        try {
+            await this.prisma.user.update({ where: { id: userId }, data });
+        }
+        catch (error) {
+            if (error instanceof client_1.Prisma.PrismaClientKnownRequestError) {
+                if (error.code === 'P2002') {
+                    const targetMeta = error.meta?.target;
+                    const targets = Array.isArray(targetMeta)
+                        ? targetMeta
+                        : typeof targetMeta === 'string'
+                            ? [targetMeta]
+                            : [];
+                    if (targets.includes('phone')) {
+                        throw new common_1.BadRequestException('Phone number already in use');
+                    }
+                    if (targets.includes('email')) {
+                        throw new common_1.BadRequestException('Email already in use');
+                    }
+                }
+                if (error.code === 'P2025') {
+                    throw new common_1.NotFoundException('User not found');
+                }
+            }
+            throw error;
+        }
+        return this.me(userId);
     }
 };
 exports.UsersService = UsersService;

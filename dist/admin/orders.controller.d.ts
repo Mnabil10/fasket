@@ -23,11 +23,11 @@ export declare class AdminOrdersController {
             subtotalCents: number;
             shippingFeeCents: number;
             discountCents: number;
-            cartId: string | null;
-            addressId: string | null;
-            paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
             couponCode: string | null;
             notes: string | null;
+            paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
+            cartId: string | null;
+            addressId: string | null;
         })[];
         total: number;
         page: number | undefined;
@@ -85,11 +85,11 @@ export declare class AdminOrdersController {
         subtotalCents: number;
         shippingFeeCents: number;
         discountCents: number;
-        cartId: string | null;
-        addressId: string | null;
-        paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
         couponCode: string | null;
         notes: string | null;
+        paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
+        cartId: string | null;
+        addressId: string | null;
     }) | null, null, import("@prisma/client/runtime/library").DefaultArgs>;
     updateStatus(user: CurrentUserPayload, id: string, dto: UpdateOrderStatusDto): Promise<{
         ok: boolean;

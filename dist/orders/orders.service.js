@@ -66,6 +66,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             if (!cart || cart.items.length === 0) {
                 throw new common_1.BadRequestException('Cart is empty');
             }
+            const couponCode = payload.couponCode ?? cart.couponCode ?? undefined;
             const productIds = cart.items.map((item) => item.productId);
             const products = await tx.product.findMany({
                 where: { id: { in: productIds }, status: client_1.ProductStatus.ACTIVE, deletedAt: null },
@@ -124,8 +125,8 @@ let OrdersService = OrdersService_1 = class OrdersService {
             const freeThreshold = setting?.freeDeliveryMinimumCents ?? 0;
             const shippingFeeCents = freeThreshold > 0 && subtotalCents >= freeThreshold ? 0 : baseShipping;
             let discountCents = 0;
-            if (payload.couponCode) {
-                const coupon = await tx.coupon.findFirst({ where: { code: payload.couponCode, isActive: true } });
+            if (couponCode) {
+                const coupon = await tx.coupon.findFirst({ where: { code: couponCode, isActive: true } });
                 const now = new Date();
                 const active = coupon &&
                     (!coupon.startsAt || coupon.startsAt <= now) &&
@@ -146,7 +147,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     }
                 }
                 else {
-                    this.logger.warn({ msg: 'Coupon rejected', code: payload.couponCode, userId, subtotalCents });
+                    this.logger.warn({ msg: 'Coupon rejected', code: couponCode, userId, subtotalCents });
                 }
             }
             const totalCents = subtotalCents + shippingFeeCents - discountCents;
@@ -163,7 +164,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     addressId: address.id,
                     cartId: cart.id,
                     notes: payload.note,
-                    couponCode: payload.couponCode,
+                    couponCode,
                     items: {
                         create: sourceItems.map((item) => ({
                             productId: item.productId,
@@ -175,6 +176,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 },
             });
             await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+            if (cart.couponCode) {
+                await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
+            }
             return { orderId: order.id };
         });
         await this.notify.enqueueOrderStatusPush(orderId, client_1.OrderStatus.PENDING);

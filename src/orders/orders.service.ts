@@ -73,6 +73,7 @@ export class OrdersService {
       if (!cart || cart.items.length === 0) {
         throw new BadRequestException('Cart is empty');
       }
+      const couponCode = payload.couponCode ?? cart.couponCode ?? undefined;
 
       const productIds = cart.items.map((item) => item.productId);
       const products = await tx.product.findMany({
@@ -136,8 +137,8 @@ export class OrdersService {
       const shippingFeeCents = freeThreshold > 0 && subtotalCents >= freeThreshold ? 0 : baseShipping;
 
       let discountCents = 0;
-      if (payload.couponCode) {
-        const coupon = await tx.coupon.findFirst({ where: { code: payload.couponCode, isActive: true } });
+      if (couponCode) {
+        const coupon = await tx.coupon.findFirst({ where: { code: couponCode, isActive: true } });
         const now = new Date();
         const active =
           coupon &&
@@ -157,7 +158,7 @@ export class OrdersService {
             discountCents = subtotalCents;
           }
         } else {
-          this.logger.warn({ msg: 'Coupon rejected', code: payload.couponCode, userId, subtotalCents });
+          this.logger.warn({ msg: 'Coupon rejected', code: couponCode, userId, subtotalCents });
         }
       }
 
@@ -176,7 +177,7 @@ export class OrdersService {
           addressId: address.id,
           cartId: cart.id,
           notes: payload.note,
-          couponCode: payload.couponCode,
+          couponCode,
           items: {
             create: sourceItems.map((item) => ({
               productId: item.productId,
@@ -189,6 +190,9 @@ export class OrdersService {
       });
 
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+      if (cart.couponCode) {
+        await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
+      }
       return { orderId: order.id };
     });
 

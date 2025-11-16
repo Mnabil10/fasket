@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class UsersService {
@@ -50,5 +52,46 @@ export class UsersService {
     const hashed = await bcrypt.hash(dto.newPassword, 10);
     await this.prisma.user.update({ where: { id: userId }, data: { password: hashed } });
     return { ok: true };
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const data: Prisma.UserUpdateInput = {};
+    if (dto.name !== undefined) {
+      data.name = dto.name;
+    }
+    if (dto.phone !== undefined) {
+      data.phone = dto.phone;
+    }
+    if (dto.email !== undefined) {
+      data.email = dto.email;
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('No profile fields provided');
+    }
+    try {
+      await this.prisma.user.update({ where: { id: userId }, data });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        if (error.code === 'P2002') {
+          const targetMeta = error.meta?.target;
+          const targets = Array.isArray(targetMeta)
+            ? targetMeta
+            : typeof targetMeta === 'string'
+              ? [targetMeta]
+              : [];
+          if (targets.includes('phone')) {
+            throw new BadRequestException('Phone number already in use');
+          }
+          if (targets.includes('email')) {
+            throw new BadRequestException('Email already in use');
+          }
+        }
+        if (error.code === 'P2025') {
+          throw new NotFoundException('User not found');
+        }
+      }
+      throw error;
+    }
+    return this.me(userId);
   }
 }

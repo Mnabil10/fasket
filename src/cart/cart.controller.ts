@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CartService } from './cart.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { AddToCartDto, UpdateCartItemDto } from './dto';
+import { AddToCartDto, ApplyCouponDto, UpdateCartItemDto } from './dto';
 import { CurrentUserPayload } from '../common/types/current-user.type';
 
 @ApiTags('Cart')
@@ -17,7 +17,7 @@ export class CartController {
   @ApiQuery({ name: 'lang', required: false, enum: ['en', 'ar'] })
   get(
     @CurrentUser() user: CurrentUserPayload,
-    @Query('lang', new ParseEnumPipe({ enum: ['en', 'ar'], optional: true })) lang?: 'en' | 'ar',
+    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
   ) {
     return this.service.get(user.userId, lang);
   }
@@ -27,9 +27,19 @@ export class CartController {
   add(
     @CurrentUser() user: CurrentUserPayload,
     @Body() dto: AddToCartDto,
-    @Query('lang', new ParseEnumPipe({ enum: ['en', 'ar'], optional: true })) lang?: 'en' | 'ar',
+    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
   ) {
     return this.service.add(user.userId, dto, lang);
+  }
+
+  @Post('apply-coupon')
+  @ApiQuery({ name: 'lang', required: false, enum: ['en', 'ar'] })
+  applyCoupon(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: ApplyCouponDto,
+    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+  ) {
+    return this.service.applyCoupon(user.userId, dto, lang);
   }
 
   @Patch('items/:id')
@@ -38,7 +48,7 @@ export class CartController {
     @CurrentUser() user: CurrentUserPayload,
     @Param('id') id: string,
     @Body() dto: UpdateCartItemDto,
-    @Query('lang', new ParseEnumPipe({ enum: ['en', 'ar'], optional: true })) lang?: 'en' | 'ar',
+    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
   ) {
     return this.service.updateQty(user.userId, id, dto.qty, lang);
   }
@@ -48,7 +58,7 @@ export class CartController {
   remove(
     @CurrentUser() user: CurrentUserPayload,
     @Param('id') id: string,
-    @Query('lang', new ParseEnumPipe({ enum: ['en', 'ar'], optional: true })) lang?: 'en' | 'ar',
+    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
   ) {
     return this.service.remove(user.userId, id, lang);
   }
