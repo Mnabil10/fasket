@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Logger, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AdminOnly, StaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
@@ -6,6 +6,13 @@ import { UpdateOrderStatusDto } from './dto/order-status.dto';
 import { PaginationDto } from './dto/pagination.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CurrentUserPayload } from '../common/types/current-user.type';
+import { DeliveryDriversService } from '../delivery-drivers/delivery-drivers.service';
+import { AssignDriverDto } from '../delivery-drivers/dto/driver.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { ReceiptService } from '../orders/receipt.service';
+import { OrderStatus } from '@prisma/client';
+import { LoyaltyService } from '../loyalty/loyalty.service';
+import { AuditLogService } from '../common/audit/audit-log.service';
 
 @ApiTags('Admin/Orders')
 @ApiBearerAuth()
@@ -14,7 +21,14 @@ import { CurrentUserPayload } from '../common/types/current-user.type';
 export class AdminOrdersController {
   private readonly logger = new Logger(AdminOrdersController.name);
 
-  constructor(private svc: AdminService) {}
+  constructor(
+    private readonly svc: AdminService,
+    private readonly drivers: DeliveryDriversService,
+    private readonly notifications: NotificationsService,
+    private readonly receipts: ReceiptService,
+    private readonly loyalty: LoyaltyService,
+    private readonly audit: AuditLogService,
+  ) {}
 
   @Get()
   @ApiQuery({ name: 'status', required: false, enum: ['PENDING','PROCESSING','OUT_FOR_DELIVERY','DELIVERED','CANCELED'] })
@@ -76,18 +90,84 @@ export class AdminOrdersController {
     });
   }
 
+  @Get(':id/receipt')
+  getReceipt(@Param('id') id: string) {
+    return this.receipts.getForAdmin(id);
+  }
+
   @Patch(':id/status')
   async updateStatus(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     const before = await this.svc.prisma.order.findUnique({ where: { id } });
-    if (!before) return { ok: false, message: 'Order not found' };
+    if (!before) {
+      return { ok: false, message: 'Order not found' };
+    }
 
-    await this.svc.prisma.$transaction(async tx => {
-      await tx.order.update({ where: { id }, data: { status: dto.to as any } });
+    const nextStatus = dto.to as OrderStatus;
+    let loyaltyEarned = 0;
+    await this.svc.prisma.$transaction(async (tx) => {
+      await tx.order.update({ where: { id }, data: { status: nextStatus } });
       await tx.orderStatusHistory.create({
-        data: { orderId: id, from: before.status as any, to: dto.to as any, note: dto.note, actorId: user.userId },
+        data: { orderId: id, from: before.status as any, to: nextStatus as any, note: dto.note, actorId: user.userId },
       });
+      if (
+        nextStatus === OrderStatus.DELIVERED &&
+        before.status !== OrderStatus.DELIVERED &&
+        (before.loyaltyPointsEarned ?? 0) === 0
+      ) {
+        loyaltyEarned = await this.loyalty.awardPoints({
+          userId: before.userId,
+          subtotalCents: before.subtotalCents,
+          tx,
+          orderId: before.id,
+        });
+        if (loyaltyEarned > 0) {
+          await tx.order.update({
+            where: { id },
+            data: { loyaltyPointsEarned: { increment: loyaltyEarned } },
+          });
+        }
+      }
+    });
+
+    const statusKey =
+      nextStatus === OrderStatus.OUT_FOR_DELIVERY
+        ? 'order_out_for_delivery'
+        : nextStatus === OrderStatus.DELIVERED
+          ? 'order_delivered'
+          : nextStatus === OrderStatus.CANCELED
+            ? 'order_canceled'
+            : 'order_status_changed';
+    await this.notifications.notify(statusKey, before.userId, { orderId: id, status: nextStatus });
+    if (loyaltyEarned > 0) {
+      await this.notifications.notify('loyalty_earned', before.userId, { orderId: id, points: loyaltyEarned });
+    }
+    await this.audit.log({
+      action: 'order.status.change',
+      entity: 'order',
+      entityId: id,
+      before: { status: before.status },
+      after: { status: nextStatus, note: dto.note },
     });
     this.logger.log({ msg: 'Order status updated', orderId: id, from: before.status, to: dto.to, actorId: user.userId });
+    return { ok: true };
+  }
+
+  @Post(':id/assign-driver')
+  async assignDriver(@Param('id') id: string, @Body() dto: AssignDriverDto) {
+    const result = await this.drivers.assignDriverToOrder(id, dto.driverId);
+    await this.notifications.notify('order_assigned_driver', result.order.userId, {
+      orderId: id,
+      driverId: result.driver.id,
+      driverName: result.driver.fullName,
+      driverPhone: result.driver.phone,
+    });
+    await this.audit.log({
+      action: 'order.assign-driver',
+      entity: 'order',
+      entityId: id,
+      after: { driverId: result.driver.id },
+    });
+    this.logger.log({ msg: 'Driver assigned', orderId: id, driverId: result.driver.id });
     return { ok: true };
   }
 }

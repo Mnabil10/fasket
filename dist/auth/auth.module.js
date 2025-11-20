@@ -15,6 +15,7 @@ const auth_controller_1 = require("./auth.controller");
 const jwt_access_strategy_1 = require("./strategies/jwt-access.strategy");
 const jwt_refresh_strategy_1 = require("./strategies/jwt-refresh.strategy");
 const auth_rate_limit_service_1 = require("./auth-rate-limit.service");
+const twofa_guard_1 = require("../common/guards/twofa.guard");
 let AuthModule = class AuthModule {
 };
 exports.AuthModule = AuthModule;
@@ -22,7 +23,7 @@ exports.AuthModule = AuthModule = __decorate([
     (0, common_1.Module)({
         imports: [passport_1.PassportModule, jwt_1.JwtModule.register({})],
         controllers: [auth_controller_1.AuthController],
-        providers: [auth_service_1.AuthService, jwt_access_strategy_1.JwtAccessStrategy, jwt_refresh_strategy_1.JwtRefreshStrategy, auth_rate_limit_service_1.AuthRateLimitService],
+        providers: [auth_service_1.AuthService, jwt_access_strategy_1.JwtAccessStrategy, jwt_refresh_strategy_1.JwtRefreshStrategy, auth_rate_limit_service_1.AuthRateLimitService, twofa_guard_1.TwoFaGuard],
         exports: [auth_service_1.AuthService],
     })
 ], AuthModule);

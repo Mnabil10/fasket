@@ -9,6 +9,10 @@ import { AdminService } from './admin.service';
 import { AdminCouponsController } from './coupons.controller';
 import { UploadsModule } from 'src/uploads/uploads.module';
 import { ProductsBulkService } from './products-bulk.service';
+import { AdminDeliveryDriversController } from './delivery-drivers.controller';
+import { DeliveryDriversModule } from '../delivery-drivers/delivery-drivers.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
   controllers: [
@@ -19,10 +23,14 @@ import { ProductsBulkService } from './products-bulk.service';
     AdminSettingsController,
     AdminDashboardController,
     AdminCouponsController,
+    AdminDeliveryDriversController,
   ],
   imports: [
     // Additional modules can be wired here when needed
     UploadsModule,
+    NotificationsModule,
+    OrdersModule,
+    DeliveryDriversModule,
     // ...other modules
   ],
   providers: [AdminService, ProductsBulkService],

@@ -1,10 +1,12 @@
 export declare class CreateAddressDto {
-    label: string;
-    city: string;
-    zone?: string;
-    street: string;
+    zoneId: string;
+    label?: string;
+    city?: string;
+    street?: string;
     building?: string;
     apartment?: string;
+    notes?: string;
+    isDefault?: boolean;
     lat?: number;
     lng?: number;
 }

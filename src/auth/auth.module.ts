@@ -6,11 +6,12 @@ import { AuthController } from './auth.controller';
 import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
 import { AuthRateLimitService } from './auth-rate-limit.service';
+import { TwoFaGuard } from '../common/guards/twofa.guard';
 
 @Module({
   imports: [PassportModule, JwtModule.register({})],
   controllers: [AuthController],
-  providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy, AuthRateLimitService],
+  providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy, AuthRateLimitService, TwoFaGuard],
   exports: [AuthService],
 })
 export class AuthModule {}

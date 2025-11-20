@@ -9,6 +9,7 @@ export declare class UsersController {
         ordersCount: number;
         totalSpentCents: number;
         points: number;
+        loyaltyPoints: number;
         loyaltyTier: string;
         id: string;
         email: string | null;
@@ -21,6 +22,7 @@ export declare class UsersController {
         ordersCount: number;
         totalSpentCents: number;
         points: number;
+        loyaltyPoints: number;
         loyaltyTier: string;
         id: string;
         email: string | null;

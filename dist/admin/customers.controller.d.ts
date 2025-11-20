@@ -1,12 +1,16 @@
 import { UserRole } from '@prisma/client';
 import { AdminService } from './admin.service';
 import { PaginationDto } from './dto/pagination.dto';
+import { CurrentUserPayload } from '../common/types/current-user.type';
+import { LoyaltyService } from '../loyalty/loyalty.service';
+import { AdjustLoyaltyPointsDto, LoyaltyHistoryQueryDto } from '../loyalty/dto/loyalty.dto';
 declare class ResetPasswordDto {
     newPassword: string;
 }
 export declare class AdminCustomersController {
-    private svc;
-    constructor(svc: AdminService);
+    private readonly svc;
+    private readonly loyalty;
+    constructor(svc: AdminService, loyalty: LoyaltyService);
     list(q?: string, page?: PaginationDto): Promise<{
         items: {
             id: string;
@@ -26,14 +30,16 @@ export declare class AdminCustomersController {
             createdAt: Date;
             updatedAt: Date;
             userId: string;
-            label: string;
-            city: string;
-            zone: string | null;
-            street: string;
+            zoneId: string;
+            label: string | null;
+            city: string | null;
+            street: string | null;
             building: string | null;
             apartment: string | null;
+            notes: string | null;
             lat: number | null;
             lng: number | null;
+            isDefault: boolean;
         }[];
         orders: {
             status: import(".prisma/client").$Enums.OrderStatus;
@@ -48,6 +54,9 @@ export declare class AdminCustomersController {
         password: string;
         role: import(".prisma/client").$Enums.UserRole;
         name: string;
+        loyaltyPoints: number;
+        twoFaEnabled: boolean;
+        twoFaSecret: string | null;
         createdAt: Date;
         updatedAt: Date;
     }) | null, null, import("@prisma/client/runtime/library").DefaultArgs>;
@@ -60,11 +69,49 @@ export declare class AdminCustomersController {
         password: string;
         role: import(".prisma/client").$Enums.UserRole;
         name: string;
+        loyaltyPoints: number;
+        twoFaEnabled: boolean;
+        twoFaSecret: string | null;
         createdAt: Date;
         updatedAt: Date;
     }, never, import("@prisma/client/runtime/library").DefaultArgs>;
     resetPassword(id: string, dto: ResetPasswordDto): Promise<{
         ok: boolean;
+    }>;
+    loyaltyHistory(id: string, query: LoyaltyHistoryQueryDto): Promise<{
+        user: {
+            id: string;
+            name: string;
+            phone: string;
+            email: string | null;
+        };
+        balance: number;
+        totals: {
+            earned: number;
+            redeemed: number;
+            adjusted: number;
+        };
+        transactions: {
+            id: string;
+            type: import(".prisma/client").$Enums.LoyaltyTransactionType;
+            points: number;
+            orderId: string | undefined;
+            metadata: string | number | boolean | import("@prisma/client/runtime/library").JsonObject | import("@prisma/client/runtime/library").JsonArray | undefined;
+            createdAt: Date;
+        }[];
+    }>;
+    adjustLoyalty(actor: CurrentUserPayload, id: string, dto: AdjustLoyaltyPointsDto): Promise<{
+        balance: number;
+        transaction: {
+            type: import(".prisma/client").$Enums.LoyaltyTransactionType;
+            id: string;
+            createdAt: Date;
+            userId: string;
+            points: number;
+            metadata: import("@prisma/client/runtime/library").JsonValue | null;
+            orderId: string | null;
+            cycleId: string | null;
+        };
     }>;
 }
 export {};

@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RegisterDeviceDto = void 0;
+exports.UnregisterDeviceDto = exports.RegisterDeviceDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
 const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
@@ -34,4 +34,48 @@ __decorate([
     (0, class_validator_1.IsIn)(['ios', 'android', 'web', 'unknown']),
     __metadata("design:type", String)
 ], RegisterDeviceDto.prototype, "platform", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'BCP-47 language code', example: 'en' }),
+    (0, class_transformer_1.Transform)(({ value }) => {
+        const cleaned = (0, sanitize_util_1.cleanString)(value);
+        return typeof cleaned === 'string' ? cleaned.toLowerCase() : undefined;
+    }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(2),
+    (0, class_validator_1.MaxLength)(10),
+    __metadata("design:type", String)
+], RegisterDeviceDto.prototype, "language", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'App version string' }),
+    (0, class_transformer_1.Transform)(({ value }) => {
+        const cleaned = (0, sanitize_util_1.cleanString)(value);
+        return typeof cleaned === 'string' ? cleaned : undefined;
+    }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(32),
+    __metadata("design:type", String)
+], RegisterDeviceDto.prototype, "appVersion", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Device model identifier' }),
+    (0, class_transformer_1.Transform)(({ value }) => {
+        const cleaned = (0, sanitize_util_1.cleanString)(value);
+        return typeof cleaned === 'string' ? cleaned : undefined;
+    }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(64),
+    __metadata("design:type", String)
+], RegisterDeviceDto.prototype, "deviceModel", void 0);
+class UnregisterDeviceDto {
+}
+exports.UnregisterDeviceDto = UnregisterDeviceDto;
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'Push token to remove' }),
+    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanString)(value)),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(10),
+    __metadata("design:type", String)
+], UnregisterDeviceDto.prototype, "token", void 0);
 //# sourceMappingURL=dto.js.map

@@ -24,7 +24,10 @@ let NotificationsController = class NotificationsController {
         this.notifications = notifications;
     }
     registerDevice(user, dto) {
-        return this.notifications.registerDevice(user.userId, dto.token, dto.platform || 'unknown');
+        return this.notifications.registerDevice(user.userId, dto);
+    }
+    unregisterDevice(user, dto) {
+        return this.notifications.unregisterDevice(user.userId, dto.token);
     }
 };
 exports.NotificationsController = NotificationsController;
@@ -37,6 +40,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, dto_1.RegisterDeviceDto]),
     __metadata("design:returntype", void 0)
 ], NotificationsController.prototype, "registerDevice", null);
+__decorate([
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt')),
+    (0, common_1.Post)('unregister-device'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, dto_1.UnregisterDeviceDto]),
+    __metadata("design:returntype", void 0)
+], NotificationsController.prototype, "unregisterDevice", null);
 exports.NotificationsController = NotificationsController = __decorate([
     (0, swagger_1.ApiTags)('Notifications'),
     (0, common_1.Controller)({ path: 'notifications', version: ['1', '2'] }),

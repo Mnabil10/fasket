@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UpdateSettingsDto = exports.SystemSettingsDto = exports.NotificationsSettingsDto = exports.PaymentSettingsDto = exports.DeliverySettingsDto = exports.GeneralSettingsDto = exports.NotificationsDto = exports.AdminAlertsDto = exports.LowStockAlertDto = exports.MarketingEmailsDto = exports.OrderNotificationsDto = exports.PaymentDto = exports.StripeDto = exports.DigitalWalletsDto = exports.WalletConfigDto = exports.CreditCardsDto = exports.CashOnDeliveryDto = exports.DeliveryZoneDto = exports.BusinessHoursDto = exports.DayHoursDto = void 0;
+exports.UpdateSettingsDto = exports.SystemSettingsDto = exports.LoyaltySettingsDto = exports.NotificationsSettingsDto = exports.PaymentSettingsDto = exports.DeliverySettingsDto = exports.GeneralSettingsDto = exports.NotificationsDto = exports.AdminAlertsDto = exports.LowStockAlertDto = exports.MarketingEmailsDto = exports.OrderNotificationsDto = exports.PaymentDto = exports.StripeDto = exports.DigitalWalletsDto = exports.WalletConfigDto = exports.CreditCardsDto = exports.CashOnDeliveryDto = exports.DeliveryZoneDto = exports.BusinessHoursDto = exports.DayHoursDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
@@ -90,23 +90,41 @@ class DeliveryZoneDto {
 }
 exports.DeliveryZoneDto = DeliveryZoneDto;
 __decorate([
+    (0, swagger_1.ApiProperty)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.Matches)(/^[a-z0-9-]+$/i),
+    __metadata("design:type", String)
+], DeliveryZoneDto.prototype, "id", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], DeliveryZoneDto.prototype, "nameEn", void 0);
+__decorate([
     (0, swagger_1.ApiPropertyOptional)(),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
-], DeliveryZoneDto.prototype, "name", void 0);
+], DeliveryZoneDto.prototype, "nameAr", void 0);
 __decorate([
-    (0, swagger_1.ApiPropertyOptional)(),
-    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiProperty)({ description: 'Delivery fee in store currency', minimum: 0 }),
     (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], DeliveryZoneDto.prototype, "fee", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Override ETA in minutes' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], DeliveryZoneDto.prototype, "etaMinutes", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
-], DeliveryZoneDto.prototype, "enabled", void 0);
+], DeliveryZoneDto.prototype, "isActive", void 0);
 class CashOnDeliveryDto {
 }
 exports.CashOnDeliveryDto = CashOnDeliveryDto;
@@ -412,6 +430,85 @@ exports.PaymentSettingsDto = PaymentSettingsDto;
 class NotificationsSettingsDto extends NotificationsDto {
 }
 exports.NotificationsSettingsDto = NotificationsSettingsDto;
+class LoyaltySettingsDto {
+}
+exports.LoyaltySettingsDto = LoyaltySettingsDto;
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], LoyaltySettingsDto.prototype, "enabled", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "earnPoints", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "earnPerCents", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "redeemRate", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "redeemUnitCents", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "minRedeemPoints", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "maxDiscountPercent", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "maxRedeemPerOrder", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "resetThreshold", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "earnRate", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], LoyaltySettingsDto.prototype, "redeemRateValue", void 0);
 class SystemSettingsDto {
 }
 exports.SystemSettingsDto = SystemSettingsDto;
@@ -506,6 +603,13 @@ __decorate([
     (0, class_transformer_1.Type)(() => NotificationsSettingsDto),
     __metadata("design:type", NotificationsSettingsDto)
 ], UpdateSettingsDto.prototype, "notifications", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ type: LoyaltySettingsDto }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => LoyaltySettingsDto),
+    __metadata("design:type", LoyaltySettingsDto)
+], UpdateSettingsDto.prototype, "loyalty", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)({ type: SystemSettingsDto }),
     (0, class_validator_1.IsOptional)(),

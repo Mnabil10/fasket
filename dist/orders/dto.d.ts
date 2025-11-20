@@ -7,4 +7,5 @@ export declare class CreateOrderDto {
     paymentMethod: PaymentMethodDto;
     note?: string;
     couponCode?: string;
+    loyaltyPointsToRedeem?: number;
 }

@@ -17,10 +17,10 @@ export declare class AdminCategoriesController {
         name: string;
         createdAt: Date;
         updatedAt: Date;
+        isActive: boolean;
         nameAr: string | null;
         slug: string;
         imageUrl: string | null;
-        isActive: boolean;
         sortOrder: number;
         parentId: string | null;
         deletedAt: Date | null;
@@ -30,10 +30,10 @@ export declare class AdminCategoriesController {
         name: string;
         createdAt: Date;
         updatedAt: Date;
+        isActive: boolean;
         nameAr: string | null;
         slug: string;
         imageUrl: string | null;
-        isActive: boolean;
         sortOrder: number;
         parentId: string | null;
         deletedAt: Date | null;

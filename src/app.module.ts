@@ -6,6 +6,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { CacheModule } from '@nestjs/cache-manager';
 import { LoggerModule } from 'nestjs-pino';
 import { redisStore } from 'cache-manager-ioredis-yet';
+import { TerminusModule } from '@nestjs/terminus';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -17,13 +18,16 @@ import { OrdersModule } from './orders/orders.module';
 import { AdminModule } from './admin/admin.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AppController } from './app.controller';
-import { HealthController } from './health.controller';
+import { HealthController } from './health/health.controller';
 import { CommonModule } from './common/common.module';
 import { validateEnv } from './config/env.validation';
+import { SettingsModule } from './settings/settings.module';
+import { LoyaltyModule } from './loyalty/loyalty.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv, expandVariables: true }),
+    TerminusModule,
     LoggerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -100,6 +104,8 @@ import { validateEnv } from './config/env.validation';
     OrdersModule,
     AdminModule,
     NotificationsModule,
+    SettingsModule,
+    LoyaltyModule,
     CommonModule,
   ],
   controllers: [AppController, HealthController],

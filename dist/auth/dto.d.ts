@@ -11,6 +11,7 @@ export declare class LoginDto {
     username?: string;
     login?: string;
     password: string;
+    otp?: string;
 }
 export declare class RefreshDto {
     refreshToken?: string;
@@ -18,4 +19,7 @@ export declare class RefreshDto {
 export declare class UpdateProfileDto {
     name?: string;
     password?: string;
+}
+export declare class VerifyTwoFaDto {
+    otp: string;
 }

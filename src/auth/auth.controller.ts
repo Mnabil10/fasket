@@ -4,7 +4,10 @@ import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
-import { LoginDto, RefreshDto, RegisterDto } from './dto';
+import { LoginDto, RefreshDto, RegisterDto, VerifyTwoFaDto } from './dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 
 @ApiTags('Auth')
 @Controller({ path: 'auth', version: ['1', '2'] })
@@ -31,5 +34,26 @@ export class AuthController {
   refresh(@Req() req: any, @Body() _dto: RefreshDto) {
     // req.user is populated by JwtRefreshStrategy.validate
     return this.service.issueTokensForUserId(req.user.userId);
+  }
+
+  @Post('admin/setup-2fa')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  setupAdminTwoFa(@Req() req: any) {
+    return this.service.setupAdminTwoFa(req.user.userId);
+  }
+
+  @Post('admin/enable-2fa')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  enableAdminTwoFa(@Req() req: any, @Body() dto: VerifyTwoFaDto) {
+    return this.service.enableAdminTwoFa(req.user.userId, dto.otp);
+  }
+
+  @Post('admin/disable-2fa')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  disableAdminTwoFa(@Req() req: any) {
+    return this.service.disableAdminTwoFa(req.user.userId);
   }
 }

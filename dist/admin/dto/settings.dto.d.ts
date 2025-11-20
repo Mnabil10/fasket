@@ -13,9 +13,12 @@ export declare class BusinessHoursDto {
     sunday?: DayHoursDto;
 }
 export declare class DeliveryZoneDto {
-    name?: string;
-    fee?: number;
-    enabled?: boolean;
+    id: string;
+    nameEn: string;
+    nameAr?: string;
+    fee: number;
+    etaMinutes?: number;
+    isActive?: boolean;
 }
 export declare class CashOnDeliveryDto {
     enabled?: boolean;
@@ -92,6 +95,19 @@ export declare class PaymentSettingsDto extends PaymentDto {
 }
 export declare class NotificationsSettingsDto extends NotificationsDto {
 }
+export declare class LoyaltySettingsDto {
+    enabled?: boolean;
+    earnPoints?: number;
+    earnPerCents?: number;
+    redeemRate?: number;
+    redeemUnitCents?: number;
+    minRedeemPoints?: number;
+    maxDiscountPercent?: number;
+    maxRedeemPerOrder?: number;
+    resetThreshold?: number;
+    earnRate?: number;
+    redeemRateValue?: number;
+}
 export declare class SystemSettingsDto {
     maintenanceMode?: boolean;
     allowRegistrations?: boolean;
@@ -109,5 +125,6 @@ export declare class UpdateSettingsDto {
     delivery?: DeliverySettingsDto;
     payment?: PaymentSettingsDto;
     notifications?: NotificationsSettingsDto;
+    loyalty?: LoyaltySettingsDto;
     system?: SystemSettingsDto;
 }

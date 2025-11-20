@@ -1,12 +1,15 @@
 import { AdminService } from './admin.service';
-import { UpdateSettingsDto, GeneralSettingsDto, DeliverySettingsDto, PaymentSettingsDto, NotificationsSettingsDto, SystemSettingsDto } from './dto/settings.dto';
+import { UpdateSettingsDto, GeneralSettingsDto, DeliverySettingsDto, PaymentSettingsDto, NotificationsSettingsDto, SystemSettingsDto, LoyaltySettingsDto } from './dto/settings.dto';
+import { SettingsService } from '../settings/settings.service';
 export declare class AdminSettingsController {
-    private svc;
+    private readonly svc;
+    private readonly settingsService;
     private readonly logger;
-    constructor(svc: AdminService);
+    constructor(svc: AdminService, settingsService: SettingsService);
     private getOrCreate;
     private toUi;
     private toUpdate;
+    private transformDeliveryZones;
     get(): Promise<{
         general: {
             storeName: any;
@@ -21,10 +24,31 @@ export declare class AdminSettingsController {
             freeDeliveryMinimum: number;
             estimatedDeliveryTime: any;
             maxDeliveryRadius: any;
-            deliveryZones: any;
+            deliveryZones: {
+                id: string;
+                nameEn: string;
+                nameAr: string;
+                fee: number;
+                feeCents: number;
+                etaMinutes: number | undefined;
+                isActive: boolean;
+            }[];
         };
         payment: any;
         notifications: any;
+        loyalty: {
+            enabled: any;
+            earnPoints: any;
+            earnPerCents: any;
+            redeemRate: any;
+            redeemUnitCents: any;
+            minRedeemPoints: any;
+            maxDiscountPercent: any;
+            maxRedeemPerOrder: any;
+            resetThreshold: any;
+            earnRate: any;
+            redeemRateValue: any;
+        };
         system: {
             maintenanceMode: any;
             allowRegistrations: any;
@@ -53,10 +77,31 @@ export declare class AdminSettingsController {
             freeDeliveryMinimum: number;
             estimatedDeliveryTime: any;
             maxDeliveryRadius: any;
-            deliveryZones: any;
+            deliveryZones: {
+                id: string;
+                nameEn: string;
+                nameAr: string;
+                fee: number;
+                feeCents: number;
+                etaMinutes: number | undefined;
+                isActive: boolean;
+            }[];
         };
         payment: any;
         notifications: any;
+        loyalty: {
+            enabled: any;
+            earnPoints: any;
+            earnPerCents: any;
+            redeemRate: any;
+            redeemUnitCents: any;
+            minRedeemPoints: any;
+            maxDiscountPercent: any;
+            maxRedeemPerOrder: any;
+            resetThreshold: any;
+            earnRate: any;
+            redeemRateValue: any;
+        };
         system: {
             maintenanceMode: any;
             allowRegistrations: any;
@@ -85,10 +130,31 @@ export declare class AdminSettingsController {
             freeDeliveryMinimum: number;
             estimatedDeliveryTime: any;
             maxDeliveryRadius: any;
-            deliveryZones: any;
+            deliveryZones: {
+                id: string;
+                nameEn: string;
+                nameAr: string;
+                fee: number;
+                feeCents: number;
+                etaMinutes: number | undefined;
+                isActive: boolean;
+            }[];
         };
         payment: any;
         notifications: any;
+        loyalty: {
+            enabled: any;
+            earnPoints: any;
+            earnPerCents: any;
+            redeemRate: any;
+            redeemUnitCents: any;
+            minRedeemPoints: any;
+            maxDiscountPercent: any;
+            maxRedeemPerOrder: any;
+            resetThreshold: any;
+            earnRate: any;
+            redeemRateValue: any;
+        };
         system: {
             maintenanceMode: any;
             allowRegistrations: any;
@@ -117,10 +183,31 @@ export declare class AdminSettingsController {
             freeDeliveryMinimum: number;
             estimatedDeliveryTime: any;
             maxDeliveryRadius: any;
-            deliveryZones: any;
+            deliveryZones: {
+                id: string;
+                nameEn: string;
+                nameAr: string;
+                fee: number;
+                feeCents: number;
+                etaMinutes: number | undefined;
+                isActive: boolean;
+            }[];
         };
         payment: any;
         notifications: any;
+        loyalty: {
+            enabled: any;
+            earnPoints: any;
+            earnPerCents: any;
+            redeemRate: any;
+            redeemUnitCents: any;
+            minRedeemPoints: any;
+            maxDiscountPercent: any;
+            maxRedeemPerOrder: any;
+            resetThreshold: any;
+            earnRate: any;
+            redeemRateValue: any;
+        };
         system: {
             maintenanceMode: any;
             allowRegistrations: any;
@@ -149,10 +236,31 @@ export declare class AdminSettingsController {
             freeDeliveryMinimum: number;
             estimatedDeliveryTime: any;
             maxDeliveryRadius: any;
-            deliveryZones: any;
+            deliveryZones: {
+                id: string;
+                nameEn: string;
+                nameAr: string;
+                fee: number;
+                feeCents: number;
+                etaMinutes: number | undefined;
+                isActive: boolean;
+            }[];
         };
         payment: any;
         notifications: any;
+        loyalty: {
+            enabled: any;
+            earnPoints: any;
+            earnPerCents: any;
+            redeemRate: any;
+            redeemUnitCents: any;
+            minRedeemPoints: any;
+            maxDiscountPercent: any;
+            maxRedeemPerOrder: any;
+            resetThreshold: any;
+            earnRate: any;
+            redeemRateValue: any;
+        };
         system: {
             maintenanceMode: any;
             allowRegistrations: any;
@@ -181,10 +289,84 @@ export declare class AdminSettingsController {
             freeDeliveryMinimum: number;
             estimatedDeliveryTime: any;
             maxDeliveryRadius: any;
-            deliveryZones: any;
+            deliveryZones: {
+                id: string;
+                nameEn: string;
+                nameAr: string;
+                fee: number;
+                feeCents: number;
+                etaMinutes: number | undefined;
+                isActive: boolean;
+            }[];
         };
         payment: any;
         notifications: any;
+        loyalty: {
+            enabled: any;
+            earnPoints: any;
+            earnPerCents: any;
+            redeemRate: any;
+            redeemUnitCents: any;
+            minRedeemPoints: any;
+            maxDiscountPercent: any;
+            maxRedeemPerOrder: any;
+            resetThreshold: any;
+            earnRate: any;
+            redeemRateValue: any;
+        };
+        system: {
+            maintenanceMode: any;
+            allowRegistrations: any;
+            requireEmailVerification: any;
+            sessionTimeout: any;
+            maxLoginAttempts: any;
+            dataRetentionDays: any;
+            backupFrequency: any;
+            timezone: any;
+            language: any;
+            currency: any;
+        };
+        updatedAt: any;
+    }>;
+    updateLoyalty(dto: LoyaltySettingsDto): Promise<{
+        general: {
+            storeName: any;
+            storeDescription: any;
+            contactEmail: any;
+            contactPhone: any;
+            storeAddress: any;
+            businessHours: any;
+        };
+        delivery: {
+            deliveryFee: number;
+            freeDeliveryMinimum: number;
+            estimatedDeliveryTime: any;
+            maxDeliveryRadius: any;
+            deliveryZones: {
+                id: string;
+                nameEn: string;
+                nameAr: string;
+                fee: number;
+                feeCents: number;
+                etaMinutes: number | undefined;
+                isActive: boolean;
+            }[];
+        };
+        payment: any;
+        notifications: any;
+        loyalty: {
+            enabled: any;
+            earnPoints: any;
+            earnPerCents: any;
+            redeemRate: any;
+            redeemUnitCents: any;
+            minRedeemPoints: any;
+            maxDiscountPercent: any;
+            maxRedeemPerOrder: any;
+            resetThreshold: any;
+            earnRate: any;
+            redeemRateValue: any;
+        };
         system: {
             maintenanceMode: any;
             allowRegistrations: any;
@@ -213,10 +395,31 @@ export declare class AdminSettingsController {
             freeDeliveryMinimum: number;
             estimatedDeliveryTime: any;
             maxDeliveryRadius: any;
-            deliveryZones: any;
+            deliveryZones: {
+                id: string;
+                nameEn: string;
+                nameAr: string;
+                fee: number;
+                feeCents: number;
+                etaMinutes: number | undefined;
+                isActive: boolean;
+            }[];
         };
         payment: any;
         notifications: any;
+        loyalty: {
+            enabled: any;
+            earnPoints: any;
+            earnPerCents: any;
+            redeemRate: any;
+            redeemUnitCents: any;
+            minRedeemPoints: any;
+            maxDiscountPercent: any;
+            maxRedeemPerOrder: any;
+            resetThreshold: any;
+            earnRate: any;
+            redeemRateValue: any;
+        };
         system: {
             maintenanceMode: any;
             allowRegistrations: any;

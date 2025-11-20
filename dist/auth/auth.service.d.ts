@@ -9,7 +9,9 @@ export declare class AuthService {
     private readonly config;
     constructor(prisma: PrismaService, jwt: JwtService, rateLimiter: AuthRateLimitService, config: ConfigService);
     private readonly logger;
+    private readonly otpDigits;
     private normalizeEmail;
+    private bcryptRounds;
     register(input: {
         name: string;
         phone: string;
@@ -29,6 +31,7 @@ export declare class AuthService {
     login(input: {
         identifier: string;
         password: string;
+        otp?: string;
     }, metadata: {
         ip?: string;
         userAgent?: string;
@@ -43,11 +46,23 @@ export declare class AuthService {
             role: import(".prisma/client").$Enums.UserRole;
         };
     }>;
+    setupAdminTwoFa(userId: string): Promise<{
+        secret: string;
+        secretBase32: string;
+        otpauthUrl: string;
+    }>;
+    enableAdminTwoFa(userId: string, otp: string): Promise<{
+        enabled: boolean;
+    }>;
+    disableAdminTwoFa(userId: string): Promise<{
+        enabled: boolean;
+    }>;
     issueTokens(user: {
         id: string;
         role: string;
         phone: string;
         email?: string | null;
+        twoFaVerified?: boolean;
     }): Promise<{
         accessToken: string;
         refreshToken: string;
@@ -57,4 +72,8 @@ export declare class AuthService {
         refreshToken: string;
     }>;
     private logSession;
+    private generateSecret;
+    private toBase32;
+    private verifyTotp;
+    private generateTotp;
 }

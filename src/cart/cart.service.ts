@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { Cart, Coupon, Prisma, ProductStatus } from '@prisma/client';
+import { Address, Cart, Coupon, Prisma, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
 import { localize } from 'src/common/utils/localize.util';
 import { ApplyCouponDto } from './dto';
+import { SettingsService } from '../settings/settings.service';
+import { DomainError, ErrorCode } from '../common/errors';
 
 type CartItemWithProduct = Prisma.CartItemGetPayload<{
   include: {
@@ -72,22 +74,27 @@ type CouponValidationResult =
 
 @Injectable()
 export class CartService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly settings: SettingsService,
+  ) {}
 
   private async ensureCart(userId: string): Promise<CartEntity> {
-    let cart = await this.prisma.cart.findUnique({ where: { userId } });
-    if (!cart) {
-      cart = await this.prisma.cart.create({ data: { userId } });
-    }
+    const cart = await this.prisma.cart.upsert({
+      where: { userId },
+      update: {},
+      create: { userId },
+    });
     return cart as CartEntity;
   }
 
-  async get(userId: string, lang?: Lang) {
+  async get(userId: string, lang?: Lang, addressId?: string) {
     const cart = await this.ensureCart(userId);
-    return this.buildCartResponse(cart, lang);
+    const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
+    return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
   }
 
-  async add(userId: string, dto: { productId: string; qty: number }, lang?: Lang) {
+  async add(userId: string, dto: { productId: string; qty: number }, lang?: Lang, addressId?: string) {
     if (dto.qty < 1) {
       throw new BadRequestException('Quantity must be at least 1');
     }
@@ -109,15 +116,16 @@ export class CartService {
       throw new BadRequestException('Insufficient stock');
     }
     const price = product.salePriceCents ?? product.priceCents;
+    const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
     await this.prisma.cartItem.upsert({
       where: { cartId_productId: { cartId: cart.id, productId: dto.productId } },
       update: { qty: { increment: dto.qty }, priceCents: price },
       create: { cartId: cart.id, productId: dto.productId, qty: dto.qty, priceCents: price },
     });
-    return this.buildCartResponse(cart, lang);
+    return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
   }
 
-  async updateQty(userId: string, id: string, qty: number, lang?: Lang) {
+  async updateQty(userId: string, id: string, qty: number, lang?: Lang, addressId?: string) {
     if (qty < 0) qty = 0;
     const cart = await this.ensureCart(userId);
     const item = await this.prisma.cartItem.findFirst({
@@ -131,9 +139,10 @@ export class CartService {
       await this.prisma.cartItem.delete({ where: { id: item.id } });
       throw new BadRequestException('Product unavailable');
     }
+    const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
     if (qty === 0) {
       await this.prisma.cartItem.delete({ where: { id: item.id } });
-      return this.buildCartResponse(cart, lang);
+      return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
     }
     const availableStock = item.product.stock ?? 0;
     if (qty > availableStock) {
@@ -144,16 +153,17 @@ export class CartService {
       where: { id: item.id },
       data: { qty, priceCents: price },
     });
-    return this.buildCartResponse(cart, lang);
+    return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
   }
 
-  async remove(userId: string, id: string, lang?: Lang) {
+  async remove(userId: string, id: string, lang?: Lang, addressId?: string) {
     const cart = await this.ensureCart(userId);
+    const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
     await this.prisma.cartItem.deleteMany({ where: { id, cartId: cart.id } });
-    return this.buildCartResponse(cart, lang);
+    return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
   }
 
-  async applyCoupon(userId: string, dto: ApplyCouponDto, lang?: Lang) {
+  async applyCoupon(userId: string, dto: ApplyCouponDto, lang?: Lang, addressId?: string) {
     let cart = await this.ensureCart(userId);
     const snapshot = await this.loadCartSnapshot(cart.id, lang);
     if (!snapshot.items.length) {
@@ -171,7 +181,8 @@ export class CartService {
     }
     await this.prisma.cart.update({ where: { id: cart.id }, data: { couponCode: coupon.code } });
     cart = { ...cart, couponCode: coupon.code } as CartEntity;
-    return this.buildCartResponse(cart, lang, snapshot, coupon);
+    const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
+    return this.buildCartResponse(cart, lang, snapshot, coupon, deliveryAddress);
   }
 
   private async loadCartSnapshot(cartId: string, lang?: Lang): Promise<CartSnapshot> {
@@ -241,11 +252,26 @@ export class CartService {
     return { items: serializedItems, subtotalCents };
   }
 
+  private async resolveDeliveryAddress(userId: string, addressId?: string): Promise<Address | null> {
+    if (addressId) {
+      const address = await this.prisma.address.findFirst({ where: { id: addressId, userId } });
+      if (!address) {
+        throw new DomainError(ErrorCode.ADDRESS_NOT_FOUND, 'Delivery address not found');
+      }
+      return address;
+    }
+    return this.prisma.address.findFirst({
+      where: { userId },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
   private async buildCartResponse(
     cart: CartEntity,
     lang?: Lang,
     snapshot?: CartSnapshot,
     couponOverride?: Coupon | null,
+    deliveryAddress?: Address | null,
   ) {
     const cartSnapshot = snapshot ?? (await this.loadCartSnapshot(cart.id, lang));
     let couponCode = cart.couponCode ?? null;
@@ -254,40 +280,35 @@ export class CartService {
       couponCode = null;
     }
 
-    const setting = await this.prisma.setting.findFirst();
-    const shippingFeeCents = this.calculateShippingFee(cartSnapshot.subtotalCents, setting ?? undefined);
+    const effectiveAddress = deliveryAddress ?? (await this.resolveDeliveryAddress(cart.userId));
+    const quote = await this.settings.computeDeliveryQuote({
+      subtotalCents: cartSnapshot.subtotalCents,
+      zoneId: effectiveAddress?.zoneId,
+    });
     const { discountCents, coupon, couponNotice } = await this.resolveCouponDiscount(
       cart.id,
       couponCode,
       cartSnapshot.subtotalCents,
       couponOverride,
     );
-    const totalCents = Math.max(cartSnapshot.subtotalCents + shippingFeeCents - discountCents, 0);
+    const totalCents = Math.max(cartSnapshot.subtotalCents + quote.shippingFeeCents - discountCents, 0);
     return {
       cartId: cart.id,
       items: cartSnapshot.items,
       subtotalCents: cartSnapshot.subtotalCents,
-      shippingFeeCents,
+      shippingFeeCents: quote.shippingFeeCents,
       discountCents,
       totalCents,
       coupon,
       couponNotice,
+      delivery: {
+        addressId: effectiveAddress?.id ?? null,
+        zoneId: quote.deliveryZoneId ?? effectiveAddress?.zoneId ?? null,
+        zoneName: quote.deliveryZoneName ?? effectiveAddress?.zoneId ?? null,
+        estimatedDeliveryTime: quote.estimatedDeliveryTime ?? null,
+        etaMinutes: quote.etaMinutes ?? null,
+      },
     };
-  }
-
-  private calculateShippingFee(
-    subtotalCents: number,
-    setting?: { deliveryFeeCents?: number | null; freeDeliveryMinimumCents?: number | null },
-  ) {
-    if (subtotalCents === 0) {
-      return 0;
-    }
-    const baseShipping = setting?.deliveryFeeCents ?? 0;
-    const freeThreshold = setting?.freeDeliveryMinimumCents ?? 0;
-    if (freeThreshold > 0 && subtotalCents >= freeThreshold) {
-      return 0;
-    }
-    return baseShipping;
   }
 
   private async resolveCouponDiscount(

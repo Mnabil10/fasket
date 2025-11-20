@@ -4,4 +4,5 @@ export interface CurrentUserPayload {
     role: UserRole;
     phone: string;
     email?: string;
+    twoFaVerified?: boolean;
 }

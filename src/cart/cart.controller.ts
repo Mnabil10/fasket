@@ -15,51 +15,61 @@ export class CartController {
 
   @Get()
   @ApiQuery({ name: 'lang', required: false, enum: ['en', 'ar'] })
+  @ApiQuery({ name: 'addressId', required: false })
   get(
     @CurrentUser() user: CurrentUserPayload,
     @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('addressId') addressId?: string,
   ) {
-    return this.service.get(user.userId, lang);
+    return this.service.get(user.userId, lang, addressId);
   }
 
   @Post('items')
   @ApiQuery({ name: 'lang', required: false, enum: ['en', 'ar'] })
+  @ApiQuery({ name: 'addressId', required: false })
   add(
     @CurrentUser() user: CurrentUserPayload,
     @Body() dto: AddToCartDto,
     @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('addressId') addressId?: string,
   ) {
-    return this.service.add(user.userId, dto, lang);
+    return this.service.add(user.userId, dto, lang, addressId);
   }
 
   @Post('apply-coupon')
   @ApiQuery({ name: 'lang', required: false, enum: ['en', 'ar'] })
+  @ApiQuery({ name: 'addressId', required: false })
   applyCoupon(
     @CurrentUser() user: CurrentUserPayload,
     @Body() dto: ApplyCouponDto,
     @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('addressId') addressId?: string,
   ) {
-    return this.service.applyCoupon(user.userId, dto, lang);
+    return this.service.applyCoupon(user.userId, dto, lang, addressId);
   }
 
   @Patch('items/:id')
   @ApiQuery({ name: 'lang', required: false, enum: ['en', 'ar'] })
+  @ApiQuery({ name: 'addressId', required: false })
   update(
     @CurrentUser() user: CurrentUserPayload,
     @Param('id') id: string,
     @Body() dto: UpdateCartItemDto,
     @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('addressId') addressId?: string,
   ) {
-    return this.service.updateQty(user.userId, id, dto.qty, lang);
+    return this.service.updateQty(user.userId, id, dto.qty, lang, addressId);
   }
 
   @Delete('items/:id')
   @ApiQuery({ name: 'lang', required: false, enum: ['en', 'ar'] })
+  @ApiQuery({ name: 'addressId', required: false })
   remove(
     @CurrentUser() user: CurrentUserPayload,
     @Param('id') id: string,
     @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('addressId') addressId?: string,
   ) {
-    return this.service.remove(user.userId, id, lang);
+    return this.service.remove(user.userId, id, lang, addressId);
   }
 }

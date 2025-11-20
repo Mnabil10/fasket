@@ -1,12 +1,16 @@
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateOrderDto } from './dto';
+import { SettingsService } from '../settings/settings.service';
+import { LoyaltyService } from '../loyalty/loyalty.service';
 type PublicStatus = 'PENDING' | 'CONFIRMED' | 'DELIVERING' | 'COMPLETED' | 'CANCELED';
 export declare class OrdersService {
-    private prisma;
-    private notify;
+    private readonly prisma;
+    private readonly notify;
+    private readonly settings;
+    private readonly loyalty;
     private readonly logger;
-    constructor(prisma: PrismaService, notify: NotificationsService);
+    constructor(prisma: PrismaService, notify: NotificationsService, settings: SettingsService, loyalty: LoyaltyService);
     list(userId: string): Promise<{
         id: string;
         totalCents: number;
@@ -21,17 +25,28 @@ export declare class OrdersService {
         subtotalCents: number;
         shippingFeeCents: number;
         discountCents: number;
+        loyaltyDiscountCents: number;
+        loyaltyPointsUsed: number;
         totalCents: number;
         createdAt: Date;
         note: string | undefined;
+        estimatedDeliveryTime: string | undefined;
+        deliveryEtaMinutes: number | undefined;
+        deliveryZoneId: string | undefined;
+        deliveryZoneName: string | undefined;
         address: {
             id: string;
-            label: string;
-            city: string;
-            zone: string | null;
-            street: string;
+            label: string | null;
+            city: string | null;
+            zoneId: string;
+            street: string | null;
             building: string | null;
             apartment: string | null;
+        } | null;
+        driver: {
+            id: string;
+            fullName: string;
+            phone: string;
         } | null;
         items: {
             id: string;
@@ -49,17 +64,28 @@ export declare class OrdersService {
         subtotalCents: number;
         shippingFeeCents: number;
         discountCents: number;
+        loyaltyDiscountCents: number;
+        loyaltyPointsUsed: number;
         totalCents: number;
         createdAt: Date;
         note: string | undefined;
+        estimatedDeliveryTime: string | undefined;
+        deliveryEtaMinutes: number | undefined;
+        deliveryZoneId: string | undefined;
+        deliveryZoneName: string | undefined;
         address: {
             id: string;
-            label: string;
-            city: string;
-            zone: string | null;
-            street: string;
+            label: string | null;
+            city: string | null;
+            zoneId: string;
+            street: string | null;
             building: string | null;
             apartment: string | null;
+        } | null;
+        driver: {
+            id: string;
+            fullName: string;
+            phone: string;
         } | null;
         items: {
             id: string;

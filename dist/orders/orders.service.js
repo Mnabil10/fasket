@@ -16,10 +16,15 @@ const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const notifications_service_1 = require("../notifications/notifications.service");
 const dto_1 = require("./dto");
+const settings_service_1 = require("../settings/settings.service");
+const loyalty_service_1 = require("../loyalty/loyalty.service");
+const errors_1 = require("../common/errors");
 let OrdersService = OrdersService_1 = class OrdersService {
-    constructor(prisma, notify) {
+    constructor(prisma, notify, settings, loyalty) {
         this.prisma = prisma;
         this.notify = notify;
+        this.settings = settings;
+        this.loyalty = loyalty;
         this.logger = new common_1.Logger(OrdersService_1.name);
     }
     async list(userId) {
@@ -40,6 +45,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
             where: { id, userId },
             include: {
                 address: true,
+                driver: {
+                    select: { id: true, fullName: true, phone: true },
+                },
                 items: {
                     select: {
                         id: true,
@@ -58,13 +66,13 @@ let OrdersService = OrdersService_1 = class OrdersService {
         return this.toOrderDetail(order);
     }
     async create(userId, payload) {
-        const { orderId } = await this.prisma.$transaction(async (tx) => {
+        const { orderId, loyaltyNotice } = await this.prisma.$transaction(async (tx) => {
             const cart = await tx.cart.findUnique({
                 where: { userId },
                 include: { items: true },
             });
             if (!cart || cart.items.length === 0) {
-                throw new common_1.BadRequestException('Cart is empty');
+                throw new errors_1.DomainError(errors_1.ErrorCode.CART_EMPTY, 'Cart is empty');
             }
             const couponCode = payload.couponCode ?? cart.couponCode ?? undefined;
             const productIds = cart.items.map((item) => item.productId);
@@ -73,15 +81,15 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true },
             });
             if (products.length !== productIds.length) {
-                throw new common_1.BadRequestException('One or more products are unavailable');
+                throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'One or more products are unavailable');
             }
             const productMap = new Map(products.map((product) => [product.id, product]));
             const sourceItems = cart.items.map((item) => {
                 const product = productMap.get(item.productId);
                 if (!product)
-                    throw new common_1.BadRequestException('Product unavailable');
+                    throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
                 if (product.stock < item.qty) {
-                    throw new common_1.BadRequestException(`Insufficient stock for ${product.name}`);
+                    throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, `Insufficient stock for ${product.name}`);
                 }
                 return {
                     productId: product.id,
@@ -96,7 +104,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     data: { stock: { decrement: item.qty } },
                 });
                 if (updated.count !== 1) {
-                    throw new common_1.BadRequestException('Insufficient stock for ' + item.productId);
+                    throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for ' + item.productId);
                 }
                 const product = productMap.get(item.productId);
                 if (product) {
@@ -117,13 +125,18 @@ let OrdersService = OrdersService_1 = class OrdersService {
             }
             const address = await tx.address.findFirst({ where: { id: payload.addressId, userId } });
             if (!address) {
-                throw new common_1.BadRequestException('Invalid address');
+                throw new errors_1.DomainError(errors_1.ErrorCode.ADDRESS_NOT_FOUND, 'Invalid address');
             }
             const subtotalCents = sourceItems.reduce((sum, item) => sum + item.priceCents * item.qty, 0);
-            const setting = await tx.setting.findFirst();
-            const baseShipping = setting?.deliveryFeeCents ?? 0;
-            const freeThreshold = setting?.freeDeliveryMinimumCents ?? 0;
-            const shippingFeeCents = freeThreshold > 0 && subtotalCents >= freeThreshold ? 0 : baseShipping;
+            const quote = await this.settings.computeDeliveryQuote({
+                subtotalCents,
+                zoneId: address.zoneId,
+            });
+            const deliveryZone = await this.settings.getZoneById(address.zoneId, { includeInactive: true });
+            const shippingFeeCents = quote.shippingFeeCents;
+            const deliveryZoneName = deliveryZone?.nameEn ?? deliveryZone?.nameAr ?? address.zoneId;
+            const deliveryEtaMinutes = quote.etaMinutes ?? undefined;
+            const estimatedDeliveryTime = quote.estimatedDeliveryTime ?? undefined;
             let discountCents = 0;
             if (couponCode) {
                 const coupon = await tx.coupon.findFirst({ where: { code: couponCode, isActive: true } });
@@ -147,10 +160,10 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     }
                 }
                 else {
-                    this.logger.warn({ msg: 'Coupon rejected', code: couponCode, userId, subtotalCents });
+                    throw new errors_1.DomainError(errors_1.ErrorCode.COUPON_INVALID, 'Coupon is invalid or expired');
                 }
             }
-            const totalCents = subtotalCents + shippingFeeCents - discountCents;
+            let totalCents = subtotalCents + shippingFeeCents - discountCents;
             const paymentMethod = payload.paymentMethod ?? dto_1.PaymentMethodDto.COD;
             const order = await tx.order.create({
                 data: {
@@ -161,10 +174,16 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     shippingFeeCents,
                     discountCents,
                     totalCents,
+                    loyaltyDiscountCents: 0,
+                    loyaltyPointsUsed: 0,
                     addressId: address.id,
                     cartId: cart.id,
                     notes: payload.note,
                     couponCode,
+                    deliveryZoneId: address.zoneId,
+                    deliveryZoneName,
+                    deliveryEtaMinutes,
+                    estimatedDeliveryTime,
                     items: {
                         create: sourceItems.map((item) => ({
                             productId: item.productId,
@@ -175,13 +194,42 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     },
                 },
             });
+            let loyaltyNotice;
+            if (payload.loyaltyPointsToRedeem && payload.loyaltyPointsToRedeem > 0) {
+                const redemption = await this.loyalty.redeemPoints({
+                    userId,
+                    pointsToRedeem: payload.loyaltyPointsToRedeem,
+                    subtotalCents: Math.max(subtotalCents - discountCents, 0),
+                    tx,
+                    orderId: order.id,
+                });
+                if (redemption.discountCents > 0) {
+                    totalCents = Math.max(totalCents - redemption.discountCents, 0);
+                    await tx.order.update({
+                        where: { id: order.id },
+                        data: {
+                            loyaltyDiscountCents: redemption.discountCents,
+                            loyaltyPointsUsed: redemption.pointsUsed,
+                            totalCents,
+                        },
+                    });
+                    loyaltyNotice = redemption;
+                }
+            }
             await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
             if (cart.couponCode) {
                 await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
             }
-            return { orderId: order.id };
+            return { orderId: order.id, loyaltyNotice };
         });
-        await this.notify.enqueueOrderStatusPush(orderId, client_1.OrderStatus.PENDING);
+        await this.notify.notify('order_created', userId, { orderId, status: client_1.OrderStatus.PENDING });
+        if (loyaltyNotice) {
+            await this.notify.notify('loyalty_redeemed', userId, {
+                orderId,
+                points: loyaltyNotice.pointsUsed,
+                discountCents: loyaltyNotice.discountCents,
+            });
+        }
         this.logger.log({ msg: 'Order created', orderId, userId });
         return this.detail(userId, orderId);
     }
@@ -208,18 +256,31 @@ let OrdersService = OrdersService_1 = class OrdersService {
             subtotalCents: order.subtotalCents,
             shippingFeeCents: order.shippingFeeCents,
             discountCents: order.discountCents,
+            loyaltyDiscountCents: order.loyaltyDiscountCents,
+            loyaltyPointsUsed: order.loyaltyPointsUsed,
             totalCents: order.totalCents,
             createdAt: order.createdAt,
             note: order.notes ?? undefined,
+            estimatedDeliveryTime: order.estimatedDeliveryTime ?? undefined,
+            deliveryEtaMinutes: order.deliveryEtaMinutes ?? undefined,
+            deliveryZoneId: order.deliveryZoneId ?? undefined,
+            deliveryZoneName: order.deliveryZoneName ?? undefined,
             address: order.address
                 ? {
                     id: order.address.id,
                     label: order.address.label,
                     city: order.address.city,
-                    zone: order.address.zone,
+                    zoneId: order.address.zoneId,
                     street: order.address.street,
                     building: order.address.building,
                     apartment: order.address.apartment,
+                }
+                : null,
+            driver: order.driver
+                ? {
+                    id: order.driver.id,
+                    fullName: order.driver.fullName,
+                    phone: order.driver.phone,
                 }
                 : null,
             items: order.items.map((item) => ({
@@ -235,6 +296,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
 exports.OrdersService = OrdersService;
 exports.OrdersService = OrdersService = OrdersService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService, notifications_service_1.NotificationsService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        notifications_service_1.NotificationsService,
+        settings_service_1.SettingsService,
+        loyalty_service_1.LoyaltyService])
 ], OrdersService);
 //# sourceMappingURL=orders.service.js.map

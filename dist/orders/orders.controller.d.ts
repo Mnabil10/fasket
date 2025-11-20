@@ -1,9 +1,11 @@
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto';
 import { CurrentUserPayload } from '../common/types/current-user.type';
+import { ReceiptService } from './receipt.service';
 export declare class OrdersController {
-    private service;
-    constructor(service: OrdersService);
+    private readonly service;
+    private readonly receipts;
+    constructor(service: OrdersService, receipts: ReceiptService);
     list(user: CurrentUserPayload): Promise<{
         id: string;
         totalCents: number;
@@ -18,17 +20,28 @@ export declare class OrdersController {
         subtotalCents: number;
         shippingFeeCents: number;
         discountCents: number;
+        loyaltyDiscountCents: number;
+        loyaltyPointsUsed: number;
         totalCents: number;
         createdAt: Date;
         note: string | undefined;
+        estimatedDeliveryTime: string | undefined;
+        deliveryEtaMinutes: number | undefined;
+        deliveryZoneId: string | undefined;
+        deliveryZoneName: string | undefined;
         address: {
             id: string;
-            label: string;
-            city: string;
-            zone: string | null;
-            street: string;
+            label: string | null;
+            city: string | null;
+            zoneId: string;
+            street: string | null;
             building: string | null;
             apartment: string | null;
+        } | null;
+        driver: {
+            id: string;
+            fullName: string;
+            phone: string;
         } | null;
         items: {
             id: string;
@@ -46,17 +59,28 @@ export declare class OrdersController {
         subtotalCents: number;
         shippingFeeCents: number;
         discountCents: number;
+        loyaltyDiscountCents: number;
+        loyaltyPointsUsed: number;
         totalCents: number;
         createdAt: Date;
         note: string | undefined;
+        estimatedDeliveryTime: string | undefined;
+        deliveryEtaMinutes: number | undefined;
+        deliveryZoneId: string | undefined;
+        deliveryZoneName: string | undefined;
         address: {
             id: string;
-            label: string;
-            city: string;
-            zone: string | null;
-            street: string;
+            label: string | null;
+            city: string | null;
+            zoneId: string;
+            street: string | null;
             building: string | null;
             apartment: string | null;
+        } | null;
+        driver: {
+            id: string;
+            fullName: string;
+            phone: string;
         } | null;
         items: {
             id: string;
@@ -66,4 +90,5 @@ export declare class OrdersController {
             qty: number;
         }[];
     }>;
+    receipt(user: CurrentUserPayload, id: string): Promise<import("./dto/receipt.dto").OrderReceiptDto>;
 }

@@ -9,6 +9,7 @@ export declare class JwtAccessStrategy extends JwtAccessStrategy_base {
         role: string;
         phone: string;
         email?: string | null;
+        twoFaVerified?: boolean;
     }): Promise<CurrentUserPayload>;
 }
 export {};

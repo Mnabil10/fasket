@@ -1,6 +1,7 @@
 import { Coupon } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplyCouponDto } from './dto';
+import { SettingsService } from '../settings/settings.service';
 type Lang = 'en' | 'ar' | undefined;
 type CartItemResponse = {
     id: string;
@@ -27,10 +28,11 @@ type SerializedCoupon = {
     endsAt: Date | null;
 };
 export declare class CartService {
-    private prisma;
-    constructor(prisma: PrismaService);
+    private readonly prisma;
+    private readonly settings;
+    constructor(prisma: PrismaService, settings: SettingsService);
     private ensureCart;
-    get(userId: string, lang?: Lang): Promise<{
+    get(userId: string, lang?: Lang, addressId?: string): Promise<{
         cartId: string;
         items: CartItemResponse[];
         subtotalCents: number;
@@ -43,11 +45,18 @@ export declare class CartService {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
     add(userId: string, dto: {
         productId: string;
         qty: number;
-    }, lang?: Lang): Promise<{
+    }, lang?: Lang, addressId?: string): Promise<{
         cartId: string;
         items: CartItemResponse[];
         subtotalCents: number;
@@ -60,8 +69,15 @@ export declare class CartService {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
-    updateQty(userId: string, id: string, qty: number, lang?: Lang): Promise<{
+    updateQty(userId: string, id: string, qty: number, lang?: Lang, addressId?: string): Promise<{
         cartId: string;
         items: CartItemResponse[];
         subtotalCents: number;
@@ -74,8 +90,15 @@ export declare class CartService {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
-    remove(userId: string, id: string, lang?: Lang): Promise<{
+    remove(userId: string, id: string, lang?: Lang, addressId?: string): Promise<{
         cartId: string;
         items: CartItemResponse[];
         subtotalCents: number;
@@ -88,8 +111,15 @@ export declare class CartService {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
-    applyCoupon(userId: string, dto: ApplyCouponDto, lang?: Lang): Promise<{
+    applyCoupon(userId: string, dto: ApplyCouponDto, lang?: Lang, addressId?: string): Promise<{
         cartId: string;
         items: CartItemResponse[];
         subtotalCents: number;
@@ -102,10 +132,17 @@ export declare class CartService {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
     private loadCartSnapshot;
+    private resolveDeliveryAddress;
     private buildCartResponse;
-    private calculateShippingFee;
     private resolveCouponDiscount;
     private validateCoupon;
     private calculateCouponDiscount;

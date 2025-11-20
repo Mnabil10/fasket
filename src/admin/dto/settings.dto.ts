@@ -1,4 +1,4 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
   IsBoolean,
@@ -9,6 +9,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -76,20 +77,35 @@ export class BusinessHoursDto {
 }
 
 export class DeliveryZoneDto {
-  @ApiPropertyOptional()
-  @IsOptional()
+  @ApiProperty()
   @IsString()
-  name?: string;
+  @Matches(/^[a-z0-9-]+$/i)
+  id!: string;
+
+  @ApiProperty()
+  @IsString()
+  nameEn!: string;
 
   @ApiPropertyOptional()
   @IsOptional()
+  @IsString()
+  nameAr?: string;
+
+  @ApiProperty({ description: 'Delivery fee in store currency', minimum: 0 })
   @IsNumber()
-  fee?: number; // float from UI, stored as cents in DB on save
+  @Min(0)
+  fee!: number;
+
+  @ApiPropertyOptional({ description: 'Override ETA in minutes' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  etaMinutes?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()
-  enabled?: boolean;
+  isActive?: boolean;
 }
 
 export class CashOnDeliveryDto {
@@ -340,6 +356,73 @@ export class DeliverySettingsDto {
 export class PaymentSettingsDto extends PaymentDto {}
 export class NotificationsSettingsDto extends NotificationsDto {}
 
+export class LoyaltySettingsDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  earnPoints?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  earnPerCents?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  redeemRate?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  redeemUnitCents?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minRedeemPoints?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxDiscountPercent?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxRedeemPerOrder?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  resetThreshold?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  earnRate?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  redeemRateValue?: number;
+}
+
 export class SystemSettingsDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -417,6 +500,12 @@ export class UpdateSettingsDto {
   @ValidateNested()
   @Type(() => NotificationsSettingsDto)
   notifications?: NotificationsSettingsDto;
+
+  @ApiPropertyOptional({ type: LoyaltySettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LoyaltySettingsDto)
+  loyalty?: LoyaltySettingsDto;
 
   @ApiPropertyOptional({ type: SystemSettingsDto })
   @IsOptional()

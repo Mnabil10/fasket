@@ -15,6 +15,7 @@ const throttler_1 = require("@nestjs/throttler");
 const cache_manager_1 = require("@nestjs/cache-manager");
 const nestjs_pino_1 = require("nestjs-pino");
 const cache_manager_ioredis_yet_1 = require("cache-manager-ioredis-yet");
+const terminus_1 = require("@nestjs/terminus");
 const prisma_module_1 = require("./prisma/prisma.module");
 const auth_module_1 = require("./auth/auth.module");
 const users_module_1 = require("./users/users.module");
@@ -26,9 +27,11 @@ const orders_module_1 = require("./orders/orders.module");
 const admin_module_1 = require("./admin/admin.module");
 const notifications_module_1 = require("./notifications/notifications.module");
 const app_controller_1 = require("./app.controller");
-const health_controller_1 = require("./health.controller");
+const health_controller_1 = require("./health/health.controller");
 const common_module_1 = require("./common/common.module");
 const env_validation_1 = require("./config/env.validation");
+const settings_module_1 = require("./settings/settings.module");
+const loyalty_module_1 = require("./loyalty/loyalty.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -36,6 +39,7 @@ exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
             config_1.ConfigModule.forRoot({ isGlobal: true, validate: env_validation_1.validateEnv, expandVariables: true }),
+            terminus_1.TerminusModule,
             nestjs_pino_1.LoggerModule.forRootAsync({
                 inject: [config_1.ConfigService],
                 useFactory: (config) => ({
@@ -109,6 +113,8 @@ exports.AppModule = AppModule = __decorate([
             orders_module_1.OrdersModule,
             admin_module_1.AdminModule,
             notifications_module_1.NotificationsModule,
+            settings_module_1.SettingsModule,
+            loyalty_module_1.LoyaltyModule,
             common_module_1.CommonModule,
         ],
         controllers: [app_controller_1.AppController, health_controller_1.HealthController],

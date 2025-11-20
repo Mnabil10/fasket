@@ -32,6 +32,7 @@ let JwtAccessStrategy = class JwtAccessStrategy extends (0, passport_1.PassportS
             role: payload.role,
             phone: payload.phone,
             email: payload.email ?? undefined,
+            twoFaVerified: payload.twoFaVerified,
         };
     }
 };

@@ -19,6 +19,9 @@ const throttler_1 = require("@nestjs/throttler");
 const passport_1 = require("@nestjs/passport");
 const auth_service_1 = require("./auth.service");
 const dto_1 = require("./dto");
+const jwt_auth_guard_1 = require("../common/guards/jwt-auth.guard");
+const roles_decorator_1 = require("../common/decorators/roles.decorator");
+const roles_guard_1 = require("../common/guards/roles.guard");
 let AuthController = class AuthController {
     constructor(service) {
         this.service = service;
@@ -34,6 +37,15 @@ let AuthController = class AuthController {
     }
     refresh(req, _dto) {
         return this.service.issueTokensForUserId(req.user.userId);
+    }
+    setupAdminTwoFa(req) {
+        return this.service.setupAdminTwoFa(req.user.userId);
+    }
+    enableAdminTwoFa(req, dto) {
+        return this.service.enableAdminTwoFa(req.user.userId, dto.otp);
+    }
+    disableAdminTwoFa(req) {
+        return this.service.disableAdminTwoFa(req.user.userId);
     }
 };
 exports.AuthController = AuthController;
@@ -63,6 +75,34 @@ __decorate([
     __metadata("design:paramtypes", [Object, dto_1.RefreshDto]),
     __metadata("design:returntype", void 0)
 ], AuthController.prototype, "refresh", null);
+__decorate([
+    (0, common_1.Post)('admin/setup-2fa'),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('ADMIN'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "setupAdminTwoFa", null);
+__decorate([
+    (0, common_1.Post)('admin/enable-2fa'),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('ADMIN'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, dto_1.VerifyTwoFaDto]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "enableAdminTwoFa", null);
+__decorate([
+    (0, common_1.Post)('admin/disable-2fa'),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('ADMIN'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "disableAdminTwoFa", null);
 exports.AuthController = AuthController = __decorate([
     (0, swagger_1.ApiTags)('Auth'),
     (0, common_1.Controller)({ path: 'auth', version: ['1', '2'] }),

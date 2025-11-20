@@ -4,7 +4,7 @@ import { CurrentUserPayload } from '../common/types/current-user.type';
 export declare class CartController {
     private service;
     constructor(service: CartService);
-    get(user: CurrentUserPayload, lang?: 'en' | 'ar'): Promise<{
+    get(user: CurrentUserPayload, lang?: 'en' | 'ar', addressId?: string): Promise<{
         cartId: string;
         items: {
             id: string;
@@ -39,8 +39,15 @@ export declare class CartController {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
-    add(user: CurrentUserPayload, dto: AddToCartDto, lang?: 'en' | 'ar'): Promise<{
+    add(user: CurrentUserPayload, dto: AddToCartDto, lang?: 'en' | 'ar', addressId?: string): Promise<{
         cartId: string;
         items: {
             id: string;
@@ -75,8 +82,15 @@ export declare class CartController {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
-    applyCoupon(user: CurrentUserPayload, dto: ApplyCouponDto, lang?: 'en' | 'ar'): Promise<{
+    applyCoupon(user: CurrentUserPayload, dto: ApplyCouponDto, lang?: 'en' | 'ar', addressId?: string): Promise<{
         cartId: string;
         items: {
             id: string;
@@ -111,8 +125,15 @@ export declare class CartController {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
-    update(user: CurrentUserPayload, id: string, dto: UpdateCartItemDto, lang?: 'en' | 'ar'): Promise<{
+    update(user: CurrentUserPayload, id: string, dto: UpdateCartItemDto, lang?: 'en' | 'ar', addressId?: string): Promise<{
         cartId: string;
         items: {
             id: string;
@@ -147,8 +168,15 @@ export declare class CartController {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
-    remove(user: CurrentUserPayload, id: string, lang?: 'en' | 'ar'): Promise<{
+    remove(user: CurrentUserPayload, id: string, lang?: 'en' | 'ar', addressId?: string): Promise<{
         cartId: string;
         items: {
             id: string;
@@ -183,5 +211,12 @@ export declare class CartController {
             requiredSubtotalCents: number;
             shortfallCents: number;
         } | undefined;
+        delivery: {
+            addressId: string | null;
+            zoneId: string | null;
+            zoneName: string | null;
+            estimatedDeliveryTime: string | null;
+            etaMinutes: number | null;
+        };
     }>;
 }

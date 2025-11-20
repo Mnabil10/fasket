@@ -21,9 +21,21 @@ const admin_service_1 = require("./admin.service");
 const order_status_dto_1 = require("./dto/order-status.dto");
 const pagination_dto_1 = require("./dto/pagination.dto");
 const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
+const delivery_drivers_service_1 = require("../delivery-drivers/delivery-drivers.service");
+const driver_dto_1 = require("../delivery-drivers/dto/driver.dto");
+const notifications_service_1 = require("../notifications/notifications.service");
+const receipt_service_1 = require("../orders/receipt.service");
+const client_1 = require("@prisma/client");
+const loyalty_service_1 = require("../loyalty/loyalty.service");
+const audit_log_service_1 = require("../common/audit/audit-log.service");
 let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersController {
-    constructor(svc) {
+    constructor(svc, drivers, notifications, receipts, loyalty, audit) {
         this.svc = svc;
+        this.drivers = drivers;
+        this.notifications = notifications;
+        this.receipts = receipts;
+        this.loyalty = loyalty;
+        this.audit = audit;
         this.logger = new common_1.Logger(AdminOrdersController_1.name);
     }
     async list(status, from, to, customer, minTotalCents, maxTotalCents, page) {
@@ -71,17 +83,74 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
             include: { items: true, address: true, user: true, statusHistory: true },
         });
     }
+    getReceipt(id) {
+        return this.receipts.getForAdmin(id);
+    }
     async updateStatus(user, id, dto) {
         const before = await this.svc.prisma.order.findUnique({ where: { id } });
-        if (!before)
+        if (!before) {
             return { ok: false, message: 'Order not found' };
+        }
+        const nextStatus = dto.to;
+        let loyaltyEarned = 0;
         await this.svc.prisma.$transaction(async (tx) => {
-            await tx.order.update({ where: { id }, data: { status: dto.to } });
+            await tx.order.update({ where: { id }, data: { status: nextStatus } });
             await tx.orderStatusHistory.create({
-                data: { orderId: id, from: before.status, to: dto.to, note: dto.note, actorId: user.userId },
+                data: { orderId: id, from: before.status, to: nextStatus, note: dto.note, actorId: user.userId },
             });
+            if (nextStatus === client_1.OrderStatus.DELIVERED &&
+                before.status !== client_1.OrderStatus.DELIVERED &&
+                (before.loyaltyPointsEarned ?? 0) === 0) {
+                loyaltyEarned = await this.loyalty.awardPoints({
+                    userId: before.userId,
+                    subtotalCents: before.subtotalCents,
+                    tx,
+                    orderId: before.id,
+                });
+                if (loyaltyEarned > 0) {
+                    await tx.order.update({
+                        where: { id },
+                        data: { loyaltyPointsEarned: { increment: loyaltyEarned } },
+                    });
+                }
+            }
+        });
+        const statusKey = nextStatus === client_1.OrderStatus.OUT_FOR_DELIVERY
+            ? 'order_out_for_delivery'
+            : nextStatus === client_1.OrderStatus.DELIVERED
+                ? 'order_delivered'
+                : nextStatus === client_1.OrderStatus.CANCELED
+                    ? 'order_canceled'
+                    : 'order_status_changed';
+        await this.notifications.notify(statusKey, before.userId, { orderId: id, status: nextStatus });
+        if (loyaltyEarned > 0) {
+            await this.notifications.notify('loyalty_earned', before.userId, { orderId: id, points: loyaltyEarned });
+        }
+        await this.audit.log({
+            action: 'order.status.change',
+            entity: 'order',
+            entityId: id,
+            before: { status: before.status },
+            after: { status: nextStatus, note: dto.note },
         });
         this.logger.log({ msg: 'Order status updated', orderId: id, from: before.status, to: dto.to, actorId: user.userId });
+        return { ok: true };
+    }
+    async assignDriver(id, dto) {
+        const result = await this.drivers.assignDriverToOrder(id, dto.driverId);
+        await this.notifications.notify('order_assigned_driver', result.order.userId, {
+            orderId: id,
+            driverId: result.driver.id,
+            driverName: result.driver.fullName,
+            driverPhone: result.driver.phone,
+        });
+        await this.audit.log({
+            action: 'order.assign-driver',
+            entity: 'order',
+            entityId: id,
+            after: { driverId: result.driver.id },
+        });
+        this.logger.log({ msg: 'Driver assigned', orderId: id, driverId: result.driver.id });
         return { ok: true };
     }
 };
@@ -114,6 +183,13 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], AdminOrdersController.prototype, "one", null);
 __decorate([
+    (0, common_1.Get)(':id/receipt'),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], AdminOrdersController.prototype, "getReceipt", null);
+__decorate([
     (0, common_1.Patch)(':id/status'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id')),
@@ -122,11 +198,24 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, order_status_dto_1.UpdateOrderStatusDto]),
     __metadata("design:returntype", Promise)
 ], AdminOrdersController.prototype, "updateStatus", null);
+__decorate([
+    (0, common_1.Post)(':id/assign-driver'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, driver_dto_1.AssignDriverDto]),
+    __metadata("design:returntype", Promise)
+], AdminOrdersController.prototype, "assignDriver", null);
 exports.AdminOrdersController = AdminOrdersController = AdminOrdersController_1 = __decorate([
     (0, swagger_1.ApiTags)('Admin/Orders'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.StaffOrAdmin)(),
     (0, common_1.Controller)({ path: 'admin/orders', version: ['1'] }),
-    __metadata("design:paramtypes", [admin_service_1.AdminService])
+    __metadata("design:paramtypes", [admin_service_1.AdminService,
+        delivery_drivers_service_1.DeliveryDriversService,
+        notifications_service_1.NotificationsService,
+        receipt_service_1.ReceiptService,
+        loyalty_service_1.LoyaltyService,
+        audit_log_service_1.AuditLogService])
 ], AdminOrdersController);
 //# sourceMappingURL=orders.controller.js.map

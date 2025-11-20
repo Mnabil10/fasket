@@ -20,6 +20,9 @@ const _admin_guards_1 = require("./_admin-guards");
 const admin_service_1 = require("./admin.service");
 const pagination_dto_1 = require("./dto/pagination.dto");
 const bcrypt = require("bcrypt");
+const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
+const loyalty_service_1 = require("../loyalty/loyalty.service");
+const loyalty_dto_1 = require("../loyalty/dto/loyalty.dto");
 class ResetPasswordDto {
 }
 __decorate([
@@ -29,8 +32,9 @@ __decorate([
     __metadata("design:type", String)
 ], ResetPasswordDto.prototype, "newPassword", void 0);
 let AdminCustomersController = class AdminCustomersController {
-    constructor(svc) {
+    constructor(svc, loyalty) {
         this.svc = svc;
+        this.loyalty = loyalty;
     }
     async list(q, page) {
         const where = {};
@@ -72,6 +76,17 @@ let AdminCustomersController = class AdminCustomersController {
         await this.svc.prisma.user.update({ where: { id }, data: { password: hash } });
         return { ok: true };
     }
+    loyaltyHistory(id, query) {
+        return this.loyalty.getAdminSummary(id, { historyLimit: query.limit });
+    }
+    adjustLoyalty(actor, id, dto) {
+        return this.loyalty.adjustUserPoints({
+            userId: id,
+            points: dto.points,
+            reason: dto.reason,
+            actorId: actor.userId,
+        });
+    }
 };
 exports.AdminCustomersController = AdminCustomersController;
 __decorate([
@@ -111,11 +126,31 @@ __decorate([
     __metadata("design:paramtypes", [String, ResetPasswordDto]),
     __metadata("design:returntype", Promise)
 ], AdminCustomersController.prototype, "resetPassword", null);
+__decorate([
+    (0, common_1.Get)(':id/loyalty'),
+    (0, swagger_1.ApiOkResponse)({ description: 'Loyalty totals and transaction history' }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, loyalty_dto_1.LoyaltyHistoryQueryDto]),
+    __metadata("design:returntype", void 0)
+], AdminCustomersController.prototype, "loyaltyHistory", null);
+__decorate([
+    (0, common_1.Post)(':id/loyalty-adjust'),
+    (0, swagger_1.ApiOkResponse)({ description: 'Adjust loyalty balance' }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, loyalty_dto_1.AdjustLoyaltyPointsDto]),
+    __metadata("design:returntype", void 0)
+], AdminCustomersController.prototype, "adjustLoyalty", null);
 exports.AdminCustomersController = AdminCustomersController = __decorate([
     (0, swagger_1.ApiTags)('Admin/Customers'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.AdminOnly)(),
     (0, common_1.Controller)({ path: 'admin/customers', version: ['1'] }),
-    __metadata("design:paramtypes", [admin_service_1.AdminService])
+    __metadata("design:paramtypes", [admin_service_1.AdminService,
+        loyalty_service_1.LoyaltyService])
 ], AdminCustomersController);
 //# sourceMappingURL=customers.controller.js.map

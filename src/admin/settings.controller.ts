@@ -5,9 +5,12 @@ import { AdminService } from './admin.service';
 import {
   UpdateSettingsDto,
   GeneralSettingsDto, DeliverySettingsDto, PaymentSettingsDto,
-  NotificationsSettingsDto, SystemSettingsDto,
+  NotificationsSettingsDto, SystemSettingsDto, LoyaltySettingsDto,
 } from './dto/settings.dto';
 import { Prisma } from '@prisma/client';
+import { SettingsService } from '../settings/settings.service';
+import { DeliveryZone } from '../settings/settings.types';
+import { DomainError, ErrorCode } from '../common/errors';
 
 @ApiTags('Admin/Settings')
 @ApiBearerAuth()
@@ -15,7 +18,10 @@ import { Prisma } from '@prisma/client';
 @Controller({ path: 'admin/settings', version: ['1'] })
 export class AdminSettingsController {
   private readonly logger = new Logger(AdminSettingsController.name);
-  constructor(private svc: AdminService) {}
+  constructor(
+    private readonly svc: AdminService,
+    private readonly settingsService: SettingsService,
+  ) {}
 
   private async getOrCreate() {
     const found = await this.svc.prisma.setting.findFirst();
@@ -40,10 +46,31 @@ export class AdminSettingsController {
         freeDeliveryMinimum: (setting.freeDeliveryMinimumCents ?? 0) / 100,
         estimatedDeliveryTime: setting.estimatedDeliveryTime ?? null,
         maxDeliveryRadius: setting.maxDeliveryRadiusKm ?? null,
-        deliveryZones: setting.deliveryZones ?? [],
+        deliveryZones: this.settingsService.deserializeDeliveryZones(setting.deliveryZones).map((zone) => ({
+          id: zone.id,
+          nameEn: zone.nameEn,
+          nameAr: zone.nameAr,
+          fee: zone.feeCents / 100,
+          feeCents: zone.feeCents,
+          etaMinutes: zone.etaMinutes,
+          isActive: zone.isActive,
+        })),
       },
       payment: setting.payment ?? {},
       notifications: setting.notifications ?? {},
+      loyalty: {
+        enabled: setting.loyaltyEnabled,
+        earnPoints: setting.loyaltyEarnPoints,
+        earnPerCents: setting.loyaltyEarnPerCents,
+        redeemRate: setting.loyaltyRedeemRate,
+        redeemUnitCents: setting.loyaltyRedeemUnitCents,
+        minRedeemPoints: setting.loyaltyMinRedeemPoints,
+        maxDiscountPercent: setting.loyaltyMaxDiscountPercent,
+        maxRedeemPerOrder: setting.loyaltyMaxRedeemPerOrder,
+        resetThreshold: setting.loyaltyResetThreshold,
+        earnRate: setting.loyaltyEarnRate,
+        redeemRateValue: setting.loyaltyRedeemRateValue,
+      },
       system: {
         maintenanceMode: setting.maintenanceMode,
         allowRegistrations: setting.allowRegistrations,
@@ -82,11 +109,25 @@ if (d.freeDeliveryMinimum !== undefined)     upd.freeDeliveryMinimumCents = Math
 
       if (d.estimatedDeliveryTime !== undefined)   upd.estimatedDeliveryTime = d.estimatedDeliveryTime;
       if (d.maxDeliveryRadius !== undefined)       upd.maxDeliveryRadiusKm = d.maxDeliveryRadius!;
-      if (d.deliveryZones !== undefined)           upd.deliveryZones = d.deliveryZones as any;
+      if (d.deliveryZones !== undefined)           upd.deliveryZones = this.transformDeliveryZones(d.deliveryZones) as any;
     }
 
     if (data.payment)       upd.payment = data.payment as any;
     if (data.notifications) upd.notifications = data.notifications as any;
+    if (data.loyalty) {
+      const l = data.loyalty as any;
+      if (l.enabled !== undefined) upd.loyaltyEnabled = l.enabled;
+      if (l.earnPoints !== undefined) upd.loyaltyEarnPoints = l.earnPoints;
+      if (l.earnPerCents !== undefined) upd.loyaltyEarnPerCents = l.earnPerCents;
+      if (l.redeemRate !== undefined) upd.loyaltyRedeemRate = l.redeemRate;
+      if (l.redeemUnitCents !== undefined) upd.loyaltyRedeemUnitCents = l.redeemUnitCents;
+      if (l.minRedeemPoints !== undefined) upd.loyaltyMinRedeemPoints = l.minRedeemPoints;
+      if (l.maxDiscountPercent !== undefined) upd.loyaltyMaxDiscountPercent = l.maxDiscountPercent;
+      if (l.maxRedeemPerOrder !== undefined) upd.loyaltyMaxRedeemPerOrder = l.maxRedeemPerOrder;
+      if (l.resetThreshold !== undefined) upd.loyaltyResetThreshold = l.resetThreshold;
+      if (l.earnRate !== undefined) upd.loyaltyEarnRate = l.earnRate;
+      if (l.redeemRateValue !== undefined) upd.loyaltyRedeemRateValue = l.redeemRateValue;
+    }
 
     if (data.system) {
       const s = data.system as SystemSettingsDto;
@@ -105,6 +146,44 @@ if (d.freeDeliveryMinimum !== undefined)     upd.freeDeliveryMinimumCents = Math
     return upd;
   }
 
+  private transformDeliveryZones(zones?: DeliverySettingsDto['deliveryZones']): DeliveryZone[] | undefined {
+    if (!zones) return undefined;
+    const seen = new Set<string>();
+    const normalized: DeliveryZone[] = zones.map((zone) => {
+      const id = zone.id?.trim();
+      if (!id) {
+        throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Delivery zone id is required');
+      }
+      if (seen.has(id)) {
+        throw new DomainError(ErrorCode.VALIDATION_FAILED, `Duplicate delivery zone id "${id}"`);
+      }
+      seen.add(id);
+      const nameEn = zone.nameEn?.trim();
+      if (!nameEn) {
+        throw new DomainError(ErrorCode.VALIDATION_FAILED, `Delivery zone "${id}" requires an English name`);
+      }
+      const nameAr = zone.nameAr?.trim() ?? '';
+      const feeRaw = (zone as any).feeCents ?? zone.fee ?? 0;
+      const feeCents =
+        (zone as any).feeCents !== undefined
+          ? Math.max(0, Math.round(Number((zone as any).feeCents)))
+          : Math.max(0, Math.round(Number(feeRaw) * 100));
+      const etaMinutes =
+        zone.etaMinutes === undefined || zone.etaMinutes === null
+          ? undefined
+          : Math.max(0, Math.round(Number(zone.etaMinutes)));
+      return {
+        id,
+        nameEn,
+        nameAr,
+        feeCents,
+        etaMinutes,
+        isActive: zone.isActive ?? true,
+      };
+    });
+    return normalized;
+  }
+
   @Get()
   @ApiOkResponse({ description: 'Full settings payload (sectioned for the UI)' })
   async get() {
@@ -119,6 +198,7 @@ if (d.freeDeliveryMinimum !== undefined)     upd.freeDeliveryMinimumCents = Math
     const data = this.toUpdate(dto);
     const updated = await this.svc.prisma.setting.update({ where: { id: s.id }, data });
     this.logger.log({ msg: 'Settings updated', settingId: s.id });
+    await this.settingsService.clearCache();
     return this.toUi(updated);
   }
 
@@ -142,6 +222,11 @@ if (d.freeDeliveryMinimum !== undefined)     upd.freeDeliveryMinimumCents = Math
   @Patch('notifications')
   async updateNotifications(@Body() dto: NotificationsSettingsDto) {
     return this.update({ notifications: dto });
+  }
+
+  @Patch('loyalty')
+  async updateLoyalty(@Body() dto: LoyaltySettingsDto) {
+    return this.update({ loyalty: dto });
   }
 
   @Patch('system')

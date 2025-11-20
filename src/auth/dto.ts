@@ -1,7 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsOptional, IsPhoneNumber, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsOptional, IsPhoneNumber, IsString, Matches } from 'class-validator';
 import { cleanNullableString, cleanString } from '../common/utils/sanitize.util';
+
+const passwordPolicy = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-={}\[\]:;"'`|<>,.?/]{8,}$/;
 
 export class RegisterDto {
   @ApiProperty()
@@ -23,7 +25,7 @@ export class RegisterDto {
   @ApiProperty()
   @Transform(({ value }) => cleanString(value))
   @IsString()
-  @MinLength(6)
+  @Matches(passwordPolicy, { message: 'Password must be at least 8 chars and contain letters and numbers' })
   password!: string;
 }
 
@@ -66,8 +68,14 @@ export class LoginDto {
   @ApiProperty()
   @Transform(({ value }) => cleanString(value))
   @IsString()
-  @MinLength(6)
+  @Matches(passwordPolicy, { message: 'Invalid password format' })
   password!: string;
+
+  @ApiProperty({ required: false, description: '6-digit TOTP code when 2FA is enabled' })
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  otp?: string;
 }
 
 export class RefreshDto {
@@ -89,6 +97,13 @@ export class UpdateProfileDto {
   @Transform(({ value }) => cleanNullableString(value))
   @IsOptional()
   @IsString()
-  @MinLength(6)
+  @Matches(passwordPolicy, { message: 'Password must be at least 8 chars and contain letters and numbers' })
   password?: string;
+}
+
+export class VerifyTwoFaDto {
+  @ApiProperty({ description: '6-digit TOTP' })
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  otp!: string;
 }

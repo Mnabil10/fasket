@@ -14,6 +14,7 @@ exports.AllExceptionsFilter = void 0;
 const common_1 = require("@nestjs/common");
 const Sentry = require("@sentry/node");
 const request_context_service_1 = require("../context/request-context.service");
+const errors_1 = require("../errors");
 let AllExceptionsFilter = AllExceptionsFilter_1 = class AllExceptionsFilter {
     constructor(context) {
         this.context = context;
@@ -29,17 +30,35 @@ let AllExceptionsFilter = AllExceptionsFilter_1 = class AllExceptionsFilter {
         let status = common_1.HttpStatus.INTERNAL_SERVER_ERROR;
         let message = 'Internal server error';
         let details;
-        let code;
-        if (exception instanceof common_1.HttpException) {
+        let code = errors_1.ErrorCode.INTERNAL_ERROR;
+        if (exception instanceof errors_1.DomainError) {
+            status = exception.httpStatus;
+            message = exception.userMessage;
+            code = exception.code;
+            details = exception.details;
+        }
+        else if (exception instanceof common_1.HttpException) {
             status = exception.getStatus();
             const res = exception.getResponse();
             if (typeof res === 'string') {
                 message = res;
             }
             else if (typeof res === 'object') {
-                message = res.message || message;
-                details = res.details ?? res.errors;
-                code = res.code;
+                let responseMessage = res.message;
+                if (Array.isArray(responseMessage)) {
+                    details = { errors: responseMessage };
+                    responseMessage = 'Validation failed';
+                }
+                else {
+                    details = res.details ?? res.errors;
+                }
+                message = responseMessage || message;
+                if (res.code && Object.values(errors_1.ErrorCode).includes(res.code)) {
+                    code = res.code;
+                }
+                if (!code && status === common_1.HttpStatus.BAD_REQUEST) {
+                    code = errors_1.ErrorCode.VALIDATION_FAILED;
+                }
             }
             else {
                 message = exception.message;
@@ -61,7 +80,7 @@ let AllExceptionsFilter = AllExceptionsFilter_1 = class AllExceptionsFilter {
             path: request.path,
             method: request.method,
             status,
-            code: code || `ERR_${status}`,
+            code: code || errors_1.ErrorCode.INTERNAL_ERROR,
         };
         if (status >= 500) {
             this.logger.error({ ...logPayload, message }, exception?.stack);
@@ -74,11 +93,10 @@ let AllExceptionsFilter = AllExceptionsFilter_1 = class AllExceptionsFilter {
         }
         response.status(status).json({
             success: false,
-            error: {
-                code: code || `ERR_${status}`,
-                message,
-                details,
-            },
+            error: { code, message },
+            code,
+            message,
+            details,
             correlationId,
         });
     }

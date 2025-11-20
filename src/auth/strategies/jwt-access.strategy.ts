@@ -18,12 +18,13 @@ export class JwtAccessStrategy extends PassportStrategy(Strategy, 'jwt') {
       ignoreExpiration: false,
     });
   }
-  async validate(payload: { sub: string; role: string; phone: string; email?: string | null }): Promise<CurrentUserPayload> {
+  async validate(payload: { sub: string; role: string; phone: string; email?: string | null; twoFaVerified?: boolean }): Promise<CurrentUserPayload> {
     return {
       userId: payload.sub,
       role: payload.role as UserRole,
       phone: payload.phone,
       email: payload.email ?? undefined,
+      twoFaVerified: payload.twoFaVerified,
     };
   }
 }

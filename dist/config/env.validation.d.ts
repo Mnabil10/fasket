@@ -50,8 +50,8 @@ declare const baseSchema: z.ZodObject<{
     JWT_ACCESS_TTL: number;
     JWT_REFRESH_SECRET: string;
     JWT_REFRESH_TTL: number;
-    UPLOADS_DRIVER: "s3" | "local" | "inline";
     CACHE_DEFAULT_TTL: number;
+    UPLOADS_DRIVER: "s3" | "local" | "inline";
     UPLOADS_DIR: string;
     NODE_ENV: "production" | "development" | "test";
     DATABASE_URL: string;
@@ -62,6 +62,7 @@ declare const baseSchema: z.ZodObject<{
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
+    REDIS_URL?: string | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
     S3_PUBLIC_BASE_URL?: string | undefined;
@@ -77,7 +78,6 @@ declare const baseSchema: z.ZodObject<{
     S3_SECRET_KEY?: string | undefined;
     API_PREFIX?: string | undefined;
     ENFORCE_HTTPS?: "true" | "false" | undefined;
-    REDIS_URL?: string | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
     LOG_LEVEL?: string | undefined;
@@ -95,13 +95,14 @@ declare const baseSchema: z.ZodObject<{
     AUTH_BRUTE_MAX?: number | undefined;
     JWT_ACCESS_TTL?: number | undefined;
     JWT_REFRESH_TTL?: number | undefined;
+    CACHE_DEFAULT_TTL?: number | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
     UPLOADS_DRIVER?: "s3" | "local" | "inline" | undefined;
-    CACHE_DEFAULT_TTL?: number | undefined;
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
+    REDIS_URL?: string | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
     S3_PUBLIC_BASE_URL?: string | undefined;
@@ -121,7 +122,6 @@ declare const baseSchema: z.ZodObject<{
     ENFORCE_HTTPS?: "true" | "false" | undefined;
     RATE_LIMIT_TTL?: number | undefined;
     RATE_LIMIT_MAX?: number | undefined;
-    REDIS_URL?: string | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
     LOG_LEVEL?: string | undefined;
@@ -140,8 +140,8 @@ export declare function validateEnv(config: Record<string, unknown>): {
     JWT_ACCESS_TTL: number;
     JWT_REFRESH_SECRET: string;
     JWT_REFRESH_TTL: number;
-    UPLOADS_DRIVER: "s3" | "local" | "inline";
     CACHE_DEFAULT_TTL: number;
+    UPLOADS_DRIVER: "s3" | "local" | "inline";
     UPLOADS_DIR: string;
     NODE_ENV: "production" | "development" | "test";
     DATABASE_URL: string;
@@ -152,6 +152,7 @@ export declare function validateEnv(config: Record<string, unknown>): {
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
+    REDIS_URL?: string | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
     S3_PUBLIC_BASE_URL?: string | undefined;
@@ -167,7 +168,6 @@ export declare function validateEnv(config: Record<string, unknown>): {
     S3_SECRET_KEY?: string | undefined;
     API_PREFIX?: string | undefined;
     ENFORCE_HTTPS?: "true" | "false" | undefined;
-    REDIS_URL?: string | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
     LOG_LEVEL?: string | undefined;

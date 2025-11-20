@@ -1,6 +1,6 @@
 import { Request } from 'express';
 import { AuthService } from './auth.service';
-import { LoginDto, RefreshDto, RegisterDto } from './dto';
+import { LoginDto, RefreshDto, RegisterDto, VerifyTwoFaDto } from './dto';
 export declare class AuthController {
     private service;
     constructor(service: AuthService);
@@ -29,5 +29,16 @@ export declare class AuthController {
     refresh(req: any, _dto: RefreshDto): Promise<{
         accessToken: string;
         refreshToken: string;
+    }>;
+    setupAdminTwoFa(req: any): Promise<{
+        secret: string;
+        secretBase32: string;
+        otpauthUrl: string;
+    }>;
+    enableAdminTwoFa(req: any, dto: VerifyTwoFaDto): Promise<{
+        enabled: boolean;
+    }>;
+    disableAdminTwoFa(req: any): Promise<{
+        enabled: boolean;
     }>;
 }

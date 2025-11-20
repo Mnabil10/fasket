@@ -13,7 +13,7 @@ export class UsersService {
     const [user, ordersCount, sums] = await this.prisma.$transaction([
       this.prisma.user.findUnique({
         where: { id: userId },
-        select: { id: true, name: true, phone: true, email: true, role: true, createdAt: true },
+        select: { id: true, name: true, phone: true, email: true, role: true, createdAt: true, loyaltyPoints: true },
       }),
       this.prisma.order.count({ where: { userId } }),
       this.prisma.order.aggregate({ where: { userId }, _sum: { totalCents: true } }),
@@ -22,7 +22,7 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
     const totalSpentCents = sums._sum.totalCents ?? 0;
-    const points = Math.floor(totalSpentCents / 100);
+    const points = user.loyaltyPoints ?? 0;
     const loyaltyTier =
       points >= 5000 ? 'Platinum' : points >= 2500 ? 'Gold' : points >= 1000 ? 'Silver' : 'Bronze';
     return {
@@ -30,6 +30,7 @@ export class UsersService {
       ordersCount,
       totalSpentCents,
       points,
+      loyaltyPoints: points,
       loyaltyTier,
     };
   }

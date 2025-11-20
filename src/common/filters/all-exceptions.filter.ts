@@ -2,6 +2,7 @@ import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logge
 import { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
 import { RequestContextService } from '../context/request-context.service';
+import { DomainError, ErrorCode } from '../errors';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -22,17 +23,33 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
     let details: any;
-    let code: string | undefined;
+    let code: ErrorCode = ErrorCode.INTERNAL_ERROR;
 
-    if (exception instanceof HttpException) {
+    if (exception instanceof DomainError) {
+      status = exception.httpStatus;
+      message = exception.userMessage;
+      code = exception.code;
+      details = exception.details;
+    } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const res = exception.getResponse();
       if (typeof res === 'string') {
         message = res;
       } else if (typeof res === 'object') {
-        message = (res as any).message || message;
-        details = (res as any).details ?? (res as any).errors;
-        code = (res as any).code;
+        let responseMessage = (res as any).message;
+        if (Array.isArray(responseMessage)) {
+          details = { errors: responseMessage };
+          responseMessage = 'Validation failed';
+        } else {
+          details = (res as any).details ?? (res as any).errors;
+        }
+        message = responseMessage || message;
+        if ((res as any).code && Object.values(ErrorCode).includes((res as any).code)) {
+          code = (res as any).code as ErrorCode;
+        }
+        if (!code && status === HttpStatus.BAD_REQUEST) {
+          code = ErrorCode.VALIDATION_FAILED;
+        }
       } else {
         message = exception.message;
       }
@@ -54,7 +71,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       path: request.path,
       method: request.method,
       status,
-      code: code || `ERR_${status}`,
+      code: code || ErrorCode.INTERNAL_ERROR,
     };
     if (status >= 500) {
       this.logger.error({ ...logPayload, message }, (exception as any)?.stack);
@@ -68,11 +85,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     response.status(status).json({
       success: false,
-      error: {
-        code: code || `ERR_${status}`,
-        message,
-        details,
-      },
+      error: { code, message },
+      code, // legacy field for backward compatibility
+      message, // legacy field for backward compatibility
+      details,
       correlationId,
     });
   }

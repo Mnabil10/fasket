@@ -13,11 +13,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
 const common_1 = require("@nestjs/common");
 const bcrypt = require("bcrypt");
+const crypto_1 = require("crypto");
 const jwt_1 = require("@nestjs/jwt");
 const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("../prisma/prisma.service");
 const auth_rate_limit_service_1 = require("./auth-rate-limit.service");
 const device_util_1 = require("../common/utils/device.util");
+const errors_1 = require("../common/errors");
 let AuthService = AuthService_1 = class AuthService {
     constructor(prisma, jwt, rateLimiter, config) {
         this.prisma = prisma;
@@ -25,9 +27,14 @@ let AuthService = AuthService_1 = class AuthService {
         this.rateLimiter = rateLimiter;
         this.config = config;
         this.logger = new common_1.Logger(AuthService_1.name);
+        this.otpDigits = 6;
     }
     normalizeEmail(email) {
         return email ? email.trim().toLowerCase() : undefined;
+    }
+    bcryptRounds() {
+        const parsed = Number(this.config.get('BCRYPT_ROUNDS') ?? 12);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 12;
     }
     async register(input) {
         const normalizedEmail = this.normalizeEmail(input.email);
@@ -37,7 +44,7 @@ let AuthService = AuthService_1 = class AuthService {
         const exists = await this.prisma.user.findFirst({ where: { OR: or } });
         if (exists)
             throw new common_1.BadRequestException('User already exists');
-        const hash = await bcrypt.hash(input.password, 10);
+        const hash = await bcrypt.hash(input.password, this.bcryptRounds());
         const user = await this.prisma.user.create({
             data: { name: input.name, phone: input.phone, email: normalizedEmail, password: hash },
             select: { id: true, name: true, phone: true, email: true, role: true },
@@ -79,17 +86,57 @@ let AuthService = AuthService_1 = class AuthService {
             this.logger.warn({ msg: 'Login failed - bad password', userId: user.id, ip: metadata.ip });
             throw new common_1.UnauthorizedException('Invalid credentials');
         }
+        if (user.role === 'ADMIN' && user.twoFaEnabled) {
+            if (!input.otp || !this.verifyTotp(input.otp, user.twoFaSecret ?? '')) {
+                throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
+            }
+        }
         await this.rateLimiter.reset(identifier, metadata.ip);
         const tokens = await this.issueTokens({
             id: user.id,
             role: user.role,
             phone: user.phone,
             email: user.email,
+            twoFaVerified: !user.twoFaEnabled || Boolean(input.otp),
         });
         const safeUser = { id: user.id, name: user.name, phone: user.phone, email: user.email, role: user.role };
         await this.logSession(user.id, metadata);
         this.logger.log({ msg: 'Login success', userId: user.id, ip: metadata.ip });
         return { user: safeUser, ...tokens };
+    }
+    async setupAdminTwoFa(userId) {
+        const secret = this.generateSecret();
+        const secretBase32 = this.toBase32(Buffer.from(secret, 'hex'));
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { twoFaSecret: secret, twoFaEnabled: false },
+        });
+        return {
+            secret,
+            secretBase32,
+            otpauthUrl: `otpauth://totp/Fasket:${userId}?secret=${secretBase32}&issuer=Fasket`,
+        };
+    }
+    async enableAdminTwoFa(userId, otp) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { twoFaSecret: true } });
+        if (!user?.twoFaSecret) {
+            throw new common_1.BadRequestException('2FA not initialized');
+        }
+        if (!this.verifyTotp(otp, user.twoFaSecret)) {
+            throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Invalid 2FA code');
+        }
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { twoFaEnabled: true },
+        });
+        return { enabled: true };
+    }
+    async disableAdminTwoFa(userId) {
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { twoFaEnabled: false, twoFaSecret: null },
+        });
+        return { enabled: false };
     }
     async issueTokens(user) {
         const accessSecret = this.config.get('JWT_ACCESS_SECRET');
@@ -107,6 +154,7 @@ let AuthService = AuthService_1 = class AuthService {
             role: user.role,
             phone: user.phone,
             email: user.email,
+            twoFaVerified: user.twoFaVerified ?? true,
         };
         const access = await this.jwt.signAsync(accessPayload, {
             secret: accessSecret,
@@ -121,7 +169,7 @@ let AuthService = AuthService_1 = class AuthService {
     async issueTokensForUserId(sub) {
         const user = await this.prisma.user.findUnique({
             where: { id: sub },
-            select: { role: true, phone: true, email: true },
+            select: { role: true, phone: true, email: true, twoFaEnabled: true },
         });
         if (!user) {
             this.logger.warn({ msg: 'Refresh token rejected - user missing', userId: sub });
@@ -132,6 +180,7 @@ let AuthService = AuthService_1 = class AuthService {
             role: user.role,
             phone: user.phone,
             email: user.email ?? undefined,
+            twoFaVerified: !user.twoFaEnabled,
         });
     }
     async logSession(userId, metadata) {
@@ -148,6 +197,51 @@ let AuthService = AuthService_1 = class AuthService {
         catch (error) {
             this.logger.warn(`Session log skipped for ${userId}: ${error.message}`);
         }
+    }
+    generateSecret() {
+        return (0, crypto_1.randomBytes)(20).toString('hex');
+    }
+    toBase32(buffer) {
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+        let bits = '';
+        let output = '';
+        for (const byte of buffer) {
+            bits += byte.toString(2).padStart(8, '0');
+            while (bits.length >= 5) {
+                const chunk = bits.slice(0, 5);
+                bits = bits.slice(5);
+                output += alphabet[parseInt(chunk, 2)];
+            }
+        }
+        if (bits.length) {
+            output += alphabet[parseInt(bits.padEnd(5, '0'), 2)];
+        }
+        return output;
+    }
+    verifyTotp(token, secretHex) {
+        if (!token || !secretHex)
+            return false;
+        const secret = Buffer.from(secretHex, 'hex');
+        const step = 30;
+        const counter = Math.floor(Date.now() / 1000 / step);
+        for (let i = -1; i <= 1; i++) {
+            const expected = this.generateTotp(secret, counter + i);
+            if (expected === token)
+                return true;
+        }
+        return false;
+    }
+    generateTotp(secret, counter) {
+        const buf = Buffer.alloc(8);
+        buf.writeBigInt64BE(BigInt(counter));
+        const hmac = (0, crypto_1.createHmac)('sha1', secret).update(buf).digest();
+        const offset = hmac[hmac.length - 1] & 0xf;
+        const code = ((hmac[offset] & 0x7f) << 24) |
+            ((hmac[offset + 1] & 0xff) << 16) |
+            ((hmac[offset + 2] & 0xff) << 8) |
+            (hmac[offset + 3] & 0xff);
+        const digits = code % 10 ** this.otpDigits;
+        return digits.toString().padStart(this.otpDigits, '0');
     }
 };
 exports.AuthService = AuthService;

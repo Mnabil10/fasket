@@ -23,71 +23,81 @@ let CartController = class CartController {
     constructor(service) {
         this.service = service;
     }
-    get(user, lang) {
-        return this.service.get(user.userId, lang);
+    get(user, lang, addressId) {
+        return this.service.get(user.userId, lang, addressId);
     }
-    add(user, dto, lang) {
-        return this.service.add(user.userId, dto, lang);
+    add(user, dto, lang, addressId) {
+        return this.service.add(user.userId, dto, lang, addressId);
     }
-    applyCoupon(user, dto, lang) {
-        return this.service.applyCoupon(user.userId, dto, lang);
+    applyCoupon(user, dto, lang, addressId) {
+        return this.service.applyCoupon(user.userId, dto, lang, addressId);
     }
-    update(user, id, dto, lang) {
-        return this.service.updateQty(user.userId, id, dto.qty, lang);
+    update(user, id, dto, lang, addressId) {
+        return this.service.updateQty(user.userId, id, dto.qty, lang, addressId);
     }
-    remove(user, id, lang) {
-        return this.service.remove(user.userId, id, lang);
+    remove(user, id, lang, addressId) {
+        return this.service.remove(user.userId, id, lang, addressId);
     }
 };
 exports.CartController = CartController;
 __decorate([
     (0, common_1.Get)(),
     (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
+    (0, swagger_1.ApiQuery)({ name: 'addressId', required: false }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(2, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:paramtypes", [Object, String, String]),
     __metadata("design:returntype", void 0)
 ], CartController.prototype, "get", null);
 __decorate([
     (0, common_1.Post)('items'),
     (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
+    (0, swagger_1.ApiQuery)({ name: 'addressId', required: false }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
     __param(2, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(3, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, dto_1.AddToCartDto, String]),
+    __metadata("design:paramtypes", [Object, dto_1.AddToCartDto, String, String]),
     __metadata("design:returntype", void 0)
 ], CartController.prototype, "add", null);
 __decorate([
     (0, common_1.Post)('apply-coupon'),
     (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
+    (0, swagger_1.ApiQuery)({ name: 'addressId', required: false }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
     __param(2, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(3, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, dto_1.ApplyCouponDto, String]),
+    __metadata("design:paramtypes", [Object, dto_1.ApplyCouponDto, String, String]),
     __metadata("design:returntype", void 0)
 ], CartController.prototype, "applyCoupon", null);
 __decorate([
     (0, common_1.Patch)('items/:id'),
     (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
+    (0, swagger_1.ApiQuery)({ name: 'addressId', required: false }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id')),
     __param(2, (0, common_1.Body)()),
     __param(3, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(4, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, dto_1.UpdateCartItemDto, String]),
+    __metadata("design:paramtypes", [Object, String, dto_1.UpdateCartItemDto, String, String]),
     __metadata("design:returntype", void 0)
 ], CartController.prototype, "update", null);
 __decorate([
     (0, common_1.Delete)('items/:id'),
     (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
+    (0, swagger_1.ApiQuery)({ name: 'addressId', required: false }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id')),
     __param(2, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(3, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:paramtypes", [Object, String, String, String]),
     __metadata("design:returntype", void 0)
 ], CartController.prototype, "remove", null);
 exports.CartController = CartController = __decorate([

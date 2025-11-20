@@ -18,6 +18,10 @@ const admin_service_1 = require("./admin.service");
 const coupons_controller_1 = require("./coupons.controller");
 const uploads_module_1 = require("../uploads/uploads.module");
 const products_bulk_service_1 = require("./products-bulk.service");
+const delivery_drivers_controller_1 = require("./delivery-drivers.controller");
+const delivery_drivers_module_1 = require("../delivery-drivers/delivery-drivers.module");
+const notifications_module_1 = require("../notifications/notifications.module");
+const orders_module_1 = require("../orders/orders.module");
 let AdminModule = class AdminModule {
 };
 exports.AdminModule = AdminModule;
@@ -31,9 +35,13 @@ exports.AdminModule = AdminModule = __decorate([
             settings_controller_1.AdminSettingsController,
             dashboard_controller_1.AdminDashboardController,
             coupons_controller_1.AdminCouponsController,
+            delivery_drivers_controller_1.AdminDeliveryDriversController,
         ],
         imports: [
             uploads_module_1.UploadsModule,
+            notifications_module_1.NotificationsModule,
+            orders_module_1.OrdersModule,
+            delivery_drivers_module_1.DeliveryDriversModule,
         ],
         providers: [admin_service_1.AdminService, products_bulk_service_1.ProductsBulkService],
     })
