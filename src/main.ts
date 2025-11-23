@@ -228,25 +228,43 @@ async function bootstrap() {
     /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
   ];
 
-  app.enableCors({
-    origin(origin, callback) {
-      if (!origin) return callback(null, true);
-      if (literalOrigins.has(origin)) return callback(null, true);
-      if (regexOrigins.some((rx) => rx.test(origin))) {
-        return callback(null, true);
-      }
-      if (allowLocalhostWildcard && localhostRegexes.some((rx) => rx.test(origin))) {
-        return callback(null, true);
-      }
-      logger.warn(`Rejected CORS origin "${origin}"`);
-      return callback(null, false);
-    },
-    credentials: true,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-User-Agent', 'x-user-agent'],
-    preflightContinue: false,
-    optionsSuccessStatus: 204,
-  });
+ app.enableCors({
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (literalOrigins.has(origin)) return callback(null, true);
+    if (regexOrigins.some((rx) => rx.test(origin))) {
+      return callback(null, true);
+    }
+    if (allowLocalhostWildcard && localhostRegexes.some((rx) => rx.test(origin))) {
+      return callback(null, true);
+    }
+    logger.warn(`Rejected CORS origin "${origin}"`);
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'X-User-Agent',
+    'x-user-agent',
+    'X-Refresh-Token',
+    'x-refresh-token',
+    'X-Correlation-Id',
+    'x-correlation-id',
+  ],
+  exposedHeaders: [
+    'X-Refresh-Token',
+    'x-refresh-token',
+    'X-Correlation-Id',
+    'x-correlation-id',
+  ],
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+});
+
   // ==== /CORS ====
 
   const port = configService.get<number>('PORT') ?? 4000;
