@@ -1,6 +1,7 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
+import { randomUUID } from 'crypto';
 import { RequestContextService } from '../context/request-context.service';
 import { DomainError, ErrorCode } from '../errors';
 
@@ -17,13 +18,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     const correlationId =
       this.context.get('correlationId') ||
-      (request.headers['x-correlation-id'] as string | undefined);
+      (request.headers['x-correlation-id'] as string | undefined) ||
+      randomUUID();
     const userId = this.context.get('userId');
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
     let details: any;
-    let code: ErrorCode = ErrorCode.INTERNAL_ERROR;
+    let code: ErrorCode | undefined = ErrorCode.INTERNAL_ERROR;
 
     if (exception instanceof DomainError) {
       status = exception.httpStatus;
@@ -36,16 +38,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       if (typeof res === 'string') {
         message = res;
       } else if (typeof res === 'object') {
-        let responseMessage = (res as any).message;
-        if (Array.isArray(responseMessage)) {
-          details = { errors: responseMessage };
-          responseMessage = 'Validation failed';
+        const responseBody = res as Record<string, any>;
+        const rawMessage = responseBody.message;
+        const validationErrors = Array.isArray(rawMessage) ? rawMessage : responseBody.errors;
+        if (Array.isArray(validationErrors) && validationErrors.length > 0) {
+          details = { errors: validationErrors };
+          message = 'Validation failed';
         } else {
-          details = (res as any).details ?? (res as any).errors;
+          details = responseBody.details ?? responseBody.errors;
+          message = (typeof rawMessage === 'string' && rawMessage) || message;
         }
-        message = responseMessage || message;
-        if ((res as any).code && Object.values(ErrorCode).includes((res as any).code)) {
-          code = (res as any).code as ErrorCode;
+        if (responseBody.code && Object.values(ErrorCode).includes(responseBody.code)) {
+          code = responseBody.code as ErrorCode;
         }
         if (!code && status === HttpStatus.BAD_REQUEST) {
           code = ErrorCode.VALIDATION_FAILED;
@@ -83,11 +87,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return;
     }
 
+    response.setHeader('x-correlation-id', correlationId);
     response.status(status).json({
       success: false,
-      error: { code, message },
-      code, // legacy field for backward compatibility
-      message, // legacy field for backward compatibility
+      code: code || ErrorCode.INTERNAL_ERROR,
+      message,
       details,
       correlationId,
     });

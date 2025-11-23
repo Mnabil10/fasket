@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Logger, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Param, Patch, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AdminOnly, StaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
@@ -6,13 +6,12 @@ import { UpdateOrderStatusDto } from './dto/order-status.dto';
 import { PaginationDto } from './dto/pagination.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CurrentUserPayload } from '../common/types/current-user.type';
-import { DeliveryDriversService } from '../delivery-drivers/delivery-drivers.service';
 import { AssignDriverDto } from '../delivery-drivers/dto/driver.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ReceiptService } from '../orders/receipt.service';
 import { OrderStatus } from '@prisma/client';
-import { LoyaltyService } from '../loyalty/loyalty.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
+import { OrdersService } from '../orders/orders.service';
 
 @ApiTags('Admin/Orders')
 @ApiBearerAuth()
@@ -23,11 +22,10 @@ export class AdminOrdersController {
 
   constructor(
     private readonly svc: AdminService,
-    private readonly drivers: DeliveryDriversService,
     private readonly notifications: NotificationsService,
     private readonly receipts: ReceiptService,
-    private readonly loyalty: LoyaltyService,
     private readonly audit: AuditLogService,
+    private readonly orders: OrdersService,
   ) {}
 
   @Get()
@@ -37,6 +35,7 @@ export class AdminOrdersController {
   @ApiQuery({ name: 'customer', required: false })
   @ApiQuery({ name: 'minTotalCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } })
+  @ApiQuery({ name: 'driverId', required: false })
   @ApiOkResponse({ description: 'Paginated orders with filters' })
   async list(
     @Query('status') status?: string,
@@ -45,6 +44,7 @@ export class AdminOrdersController {
     @Query('customer') customer?: string,
     @Query('minTotalCents') minTotalCents?: string,
     @Query('maxTotalCents') maxTotalCents?: string,
+    @Query('driverId') driverId?: string,
     @Query() page?: PaginationDto,
   ) {
     const where: any = {};
@@ -66,6 +66,9 @@ export class AdminOrdersController {
       if (minTotalCents) where.totalCents.gte = Number(minTotalCents);
       if (maxTotalCents) where.totalCents.lte = Number(maxTotalCents);
     }
+    if (driverId) {
+      where.driverId = driverId;
+    }
 
     const [items, total] = await this.svc.prisma.$transaction([
       this.svc.prisma.order.findMany({
@@ -73,6 +76,7 @@ export class AdminOrdersController {
         orderBy: { createdAt: 'desc' },
         include: {
           user: { select: { id: true, name: true, phone: true } },
+          driver: { select: { id: true, fullName: true, phone: true } },
         },
         skip: page?.skip, take: page?.take,
       }),
@@ -86,7 +90,20 @@ export class AdminOrdersController {
   one(@Param('id') id: string) {
     return this.svc.prisma.order.findUnique({
       where: { id },
-      include: { items: true, address: true, user: true, statusHistory: true },
+      include: {
+        items: true,
+        address: true,
+        user: true,
+        statusHistory: true,
+        driver: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            vehicle: { select: { type: true, plateNumber: true } },
+          },
+        },
+      },
     });
   }
 
@@ -109,23 +126,8 @@ export class AdminOrdersController {
       await tx.orderStatusHistory.create({
         data: { orderId: id, from: before.status as any, to: nextStatus as any, note: dto.note, actorId: user.userId },
       });
-      if (
-        nextStatus === OrderStatus.DELIVERED &&
-        before.status !== OrderStatus.DELIVERED &&
-        (before.loyaltyPointsEarned ?? 0) === 0
-      ) {
-        loyaltyEarned = await this.loyalty.awardPoints({
-          userId: before.userId,
-          subtotalCents: before.subtotalCents,
-          tx,
-          orderId: before.id,
-        });
-        if (loyaltyEarned > 0) {
-          await tx.order.update({
-            where: { id },
-            data: { loyaltyPointsEarned: { increment: loyaltyEarned } },
-          });
-        }
+      if (nextStatus === OrderStatus.DELIVERED) {
+        loyaltyEarned = await this.orders.awardLoyaltyForOrder(id, tx);
       }
     });
 
@@ -152,22 +154,14 @@ export class AdminOrdersController {
     return { ok: true };
   }
 
-  @Post(':id/assign-driver')
-  async assignDriver(@Param('id') id: string, @Body() dto: AssignDriverDto) {
-    const result = await this.drivers.assignDriverToOrder(id, dto.driverId);
-    await this.notifications.notify('order_assigned_driver', result.order.userId, {
-      orderId: id,
-      driverId: result.driver.id,
-      driverName: result.driver.fullName,
-      driverPhone: result.driver.phone,
-    });
-    await this.audit.log({
-      action: 'order.assign-driver',
-      entity: 'order',
-      entityId: id,
-      after: { driverId: result.driver.id },
-    });
+  @Patch(':id/assign-driver')
+  async assignDriver(
+    @Param('id') id: string,
+    @Body() dto: AssignDriverDto,
+    @CurrentUser() admin: CurrentUserPayload,
+  ) {
+    const result = await this.orders.assignDriverToOrder(id, dto.driverId, admin.userId);
     this.logger.log({ msg: 'Driver assigned', orderId: id, driverId: result.driver.id });
-    return { ok: true };
+    return { success: true, data: result };
   }
 }

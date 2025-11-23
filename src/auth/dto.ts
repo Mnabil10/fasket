@@ -34,7 +34,14 @@ export class LoginDto {
   @Transform(({ value, obj }) =>
     cleanString(
       String(
-        value ?? obj.identifier ?? obj.phone ?? obj.email ?? obj.username ?? obj.login ?? '',
+        value ??
+          obj.identifier ??
+          obj.phoneOrEmail ??
+          obj.phone ??
+          obj.email ??
+          obj.username ??
+          obj.login ??
+          '',
       ),
     ),
   )

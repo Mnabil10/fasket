@@ -9,9 +9,47 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AssignDriverDto = exports.UpsertVehicleDto = exports.UpdateDriverStatusDto = exports.UpdateDriverDto = exports.CreateDriverDto = void 0;
+exports.AssignDriverDto = exports.UpdateDriverStatusDto = exports.UpdateDriverDto = exports.CreateDriverDto = exports.UpsertVehicleDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
+const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
+const toBoolean = (value) => {
+    if (value === undefined || value === null)
+        return undefined;
+    if (typeof value === 'boolean')
+        return value;
+    const normalized = String(value).toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized))
+        return true;
+    if (['false', '0', 'no', 'off'].includes(normalized))
+        return false;
+    return value;
+};
+class UpsertVehicleDto {
+}
+exports.UpsertVehicleDto = UpsertVehicleDto;
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'bike, car, scooter, etc.' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpsertVehicleDto.prototype, "type", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpsertVehicleDto.prototype, "plateNumber", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpsertVehicleDto.prototype, "licenseImageUrl", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpsertVehicleDto.prototype, "color", void 0);
 class CreateDriverDto {
 }
 exports.CreateDriverDto = CreateDriverDto;
@@ -41,9 +79,17 @@ __decorate([
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
     (0, class_validator_1.IsOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => toBoolean(value)),
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], CreateDriverDto.prototype, "isActive", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => UpsertVehicleDto),
+    __metadata("design:type", UpsertVehicleDto)
+], CreateDriverDto.prototype, "vehicle", void 0);
 class UpdateDriverDto extends (0, swagger_1.PartialType)(CreateDriverDto) {
 }
 exports.UpdateDriverDto = UpdateDriverDto;
@@ -52,34 +98,10 @@ class UpdateDriverStatusDto {
 exports.UpdateDriverStatusDto = UpdateDriverStatusDto;
 __decorate([
     (0, swagger_1.ApiProperty)(),
+    (0, class_transformer_1.Transform)(({ value }) => toBoolean(value)),
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], UpdateDriverStatusDto.prototype, "isActive", void 0);
-class UpsertVehicleDto {
-}
-exports.UpsertVehicleDto = UpsertVehicleDto;
-__decorate([
-    (0, swagger_1.ApiProperty)({ description: 'bike, car, scooter, etc.' }),
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], UpsertVehicleDto.prototype, "type", void 0);
-__decorate([
-    (0, swagger_1.ApiProperty)(),
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], UpsertVehicleDto.prototype, "plateNumber", void 0);
-__decorate([
-    (0, swagger_1.ApiPropertyOptional)(),
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], UpsertVehicleDto.prototype, "licenseImageUrl", void 0);
-__decorate([
-    (0, swagger_1.ApiPropertyOptional)(),
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], UpsertVehicleDto.prototype, "color", void 0);
 class AssignDriverDto {
 }
 exports.AssignDriverDto = AssignDriverDto;

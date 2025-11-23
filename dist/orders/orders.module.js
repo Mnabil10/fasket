@@ -20,7 +20,7 @@ exports.OrdersModule = OrdersModule = __decorate([
         imports: [notifications_module_1.NotificationsModule],
         controllers: [orders_controller_1.OrdersController],
         providers: [orders_service_1.OrdersService, receipt_service_1.ReceiptService],
-        exports: [receipt_service_1.ReceiptService],
+        exports: [orders_service_1.OrdersService, receipt_service_1.ReceiptService],
     })
 ], OrdersModule);
 //# sourceMappingURL=orders.module.js.map

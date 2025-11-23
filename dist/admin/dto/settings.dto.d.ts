@@ -86,7 +86,9 @@ export declare class GeneralSettingsDto {
 }
 export declare class DeliverySettingsDto {
     deliveryFee?: number;
+    deliveryFeeCents?: number;
     freeDeliveryMinimum?: number;
+    freeDeliveryMinimumCents?: number;
     estimatedDeliveryTime?: string;
     maxDeliveryRadius?: number;
     deliveryZones?: DeliveryZoneDto[];

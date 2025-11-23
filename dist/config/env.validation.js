@@ -16,6 +16,7 @@ const baseSchema = zod_1.z.object({
     RATE_LIMIT_MAX: zod_1.z.coerce.number().int().positive().default(100),
     AUTH_BRUTE_TTL: zod_1.z.coerce.number().int().positive().default(300),
     AUTH_BRUTE_MAX: zod_1.z.coerce.number().int().positive().default(5),
+    REDIS_ENABLED: zod_1.z.enum(['true', 'false']).optional(),
     REDIS_URL: zod_1.z.string().url().optional(),
     CACHE_DEFAULT_TTL: zod_1.z.coerce.number().int().nonnegative().default(60),
     CATEGORIES_CACHE_TTL: zod_1.z.coerce.number().int().nonnegative().optional(),

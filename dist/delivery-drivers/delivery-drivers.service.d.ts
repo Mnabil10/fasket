@@ -6,8 +6,9 @@ export declare class DeliveryDriversService {
     list(params?: {
         search?: string;
         isActive?: boolean;
-        page?: number;
-        pageSize?: number;
+        page?: number | string;
+        pageSize?: number | string;
+        limit?: number | string;
     }): Promise<{
         items: ({
             vehicle: {
@@ -55,7 +56,18 @@ export declare class DeliveryDriversService {
         nationalId: string;
         nationalIdImageUrl: string | null;
     }>;
-    create(dto: CreateDriverDto): import(".prisma/client").Prisma.Prisma__DeliveryDriverClient<{
+    create(dto: CreateDriverDto): Promise<({
+        vehicle: {
+            type: string;
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            driverId: string;
+            plateNumber: string;
+            licenseImageUrl: string | null;
+            color: string | null;
+        } | null;
+    } & {
         id: string;
         phone: string;
         createdAt: Date;
@@ -64,7 +76,7 @@ export declare class DeliveryDriversService {
         fullName: string;
         nationalId: string;
         nationalIdImageUrl: string | null;
-    }, never, import("@prisma/client/runtime/library").DefaultArgs>;
+    }) | null>;
     update(id: string, dto: UpdateDriverDto): Promise<{
         id: string;
         phone: string;
@@ -85,21 +97,34 @@ export declare class DeliveryDriversService {
         nationalId: string;
         nationalIdImageUrl: string | null;
     }>;
-    upsertVehicle(driverId: string, dto: UpsertVehicleDto): Promise<{
-        type: string;
+    upsertVehicle(driverId: string, dto: UpsertVehicleDto): Promise<({
+        vehicle: {
+            type: string;
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            driverId: string;
+            plateNumber: string;
+            licenseImageUrl: string | null;
+            color: string | null;
+        } | null;
+    } & {
         id: string;
+        phone: string;
         createdAt: Date;
         updatedAt: Date;
-        driverId: string;
-        plateNumber: string;
-        licenseImageUrl: string | null;
-        color: string | null;
-    }>;
+        isActive: boolean;
+        fullName: string;
+        nationalId: string;
+        nationalIdImageUrl: string | null;
+    }) | null>;
     assignDriverToOrder(orderId: string, driverId: string): Promise<{
         order: {
             status: import(".prisma/client").$Enums.OrderStatus;
             id: string;
             userId: string;
+            driverAssignedAt: Date | null;
+            driverId: string | null;
         };
         driver: {
             id: string;

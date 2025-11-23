@@ -19,6 +19,7 @@ const cart_service_1 = require("./cart.service");
 const jwt_auth_guard_1 = require("../common/guards/jwt-auth.guard");
 const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
 const dto_1 = require("./dto");
+const lang_normalize_pipe_1 = require("../common/pipes/lang-normalize.pipe");
 let CartController = class CartController {
     constructor(service) {
         this.service = service;
@@ -45,7 +46,7 @@ __decorate([
     (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
     (0, swagger_1.ApiQuery)({ name: 'addressId', required: false }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(1, (0, common_1.Query)('lang', lang_normalize_pipe_1.LangNormalizePipe)),
     __param(2, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, String, String]),
@@ -57,7 +58,7 @@ __decorate([
     (0, swagger_1.ApiQuery)({ name: 'addressId', required: false }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
-    __param(2, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(2, (0, common_1.Query)('lang', lang_normalize_pipe_1.LangNormalizePipe)),
     __param(3, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, dto_1.AddToCartDto, String, String]),
@@ -69,7 +70,7 @@ __decorate([
     (0, swagger_1.ApiQuery)({ name: 'addressId', required: false }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
-    __param(2, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(2, (0, common_1.Query)('lang', lang_normalize_pipe_1.LangNormalizePipe)),
     __param(3, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, dto_1.ApplyCouponDto, String, String]),
@@ -82,7 +83,7 @@ __decorate([
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id')),
     __param(2, (0, common_1.Body)()),
-    __param(3, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(3, (0, common_1.Query)('lang', lang_normalize_pipe_1.LangNormalizePipe)),
     __param(4, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, String, dto_1.UpdateCartItemDto, String, String]),
@@ -94,7 +95,7 @@ __decorate([
     (0, swagger_1.ApiQuery)({ name: 'addressId', required: false }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id')),
-    __param(2, (0, common_1.Query)('lang', new common_1.ParseEnumPipe(['en', 'ar'], { optional: true }))),
+    __param(2, (0, common_1.Query)('lang', lang_normalize_pipe_1.LangNormalizePipe)),
     __param(3, (0, common_1.Query)('addressId')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, String, String, String]),

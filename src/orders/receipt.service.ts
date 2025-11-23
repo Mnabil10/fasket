@@ -17,7 +17,14 @@ export class ReceiptService {
       include: {
         user: { select: { id: true, name: true, phone: true } },
         address: true,
-        driver: { select: { id: true, fullName: true, phone: true } },
+        driver: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            vehicle: { select: { type: true, plateNumber: true } },
+          },
+        },
         items: {
           select: {
             productId: true,
@@ -41,7 +48,14 @@ export class ReceiptService {
       include: {
         user: { select: { id: true, name: true, phone: true } },
         address: true,
-        driver: { select: { id: true, fullName: true, phone: true } },
+        driver: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            vehicle: { select: { type: true, plateNumber: true } },
+          },
+        },
         items: {
           select: {
             productId: true,
@@ -71,8 +85,44 @@ export class ReceiptService {
       unitPriceCents: item.priceSnapshotCents,
       lineTotalCents: item.priceSnapshotCents * item.qty,
     }));
+    const deliveryZone = zone
+      ? {
+          id: zone.id,
+          name: zone.nameEn || zone.nameAr || order.deliveryZoneName || 'Delivery zone',
+          city: zone.city ?? undefined,
+          region: zone.region ?? undefined,
+          deliveryFeeCents: zone.feeCents,
+          freeDeliveryThresholdCents: zone.freeDeliveryThresholdCents ?? null,
+          minOrderCents: zone.minOrderAmountCents ?? null,
+          etaMinutes: zone.etaMinutes ?? null,
+          isActive: zone.isActive,
+        }
+      : order.deliveryZoneId || order.deliveryZoneName
+        ? {
+            id: order.deliveryZoneId ?? 'legacy',
+            name: order.deliveryZoneName ?? 'Delivery',
+            city: order.address?.city ?? undefined,
+            region: undefined,
+            deliveryFeeCents: order.shippingFeeCents ?? 0,
+            freeDeliveryThresholdCents: null,
+            minOrderCents: null,
+            etaMinutes: order.deliveryEtaMinutes ?? null,
+            isActive: true,
+          }
+        : null;
+    const driver = order.driver
+      ? {
+          id: order.driver.id,
+          fullName: order.driver.fullName,
+          phone: order.driver.phone,
+          vehicleType: order.driver.vehicle?.type,
+          plateNumber: order.driver.vehicle?.plateNumber,
+        }
+      : null;
+
     return {
-      orderId: order.id,
+      id: order.id,
+      code: order.code ?? order.id,
       createdAt: order.createdAt,
       status: order.status,
       customer: {
@@ -81,24 +131,24 @@ export class ReceiptService {
         phone: order.user?.phone ?? '',
       },
       address: {
-        label: order.address?.label ?? undefined,
         street: order.address?.street ?? undefined,
         city: order.address?.city ?? undefined,
-        region: order.address?.notes ?? undefined,
-        zoneId: order.deliveryZoneId ?? order.address?.zoneId ?? undefined,
-        zoneName: order.deliveryZoneName ?? zone?.nameEn ?? zone?.nameAr ?? undefined,
+        region: order.address?.region ?? order.address?.notes ?? undefined,
+        building: order.address?.building ?? undefined,
+        apartment: order.address?.apartment ?? undefined,
+        notes: order.address?.notes ?? undefined,
+        label: order.address?.label ?? undefined,
       },
-      driver: order.driver
-        ? { id: order.driver.id, fullName: order.driver.fullName, phone: order.driver.phone }
-        : undefined,
+      deliveryZone,
+      driver,
       items,
       subtotalCents: order.subtotalCents,
-      couponDiscountCents: order.discountCents ?? 0,
-      shippingFeeCents: order.shippingFeeCents ?? 0,
+      couponDiscountCents: order.couponDiscountCents ?? order.discountCents ?? 0,
       loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
+      shippingFeeCents: order.shippingFeeCents ?? 0,
       totalCents: order.totalCents,
       loyaltyPointsEarned: order.loyaltyPointsEarned ?? 0,
-      loyaltyPointsUsed: order.loyaltyPointsUsed ?? 0,
+      loyaltyPointsRedeemed: order.loyaltyPointsUsed ?? 0,
       currency: settings.currency,
     };
   }

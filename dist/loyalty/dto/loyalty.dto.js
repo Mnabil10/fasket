@@ -12,6 +12,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdjustLoyaltyPointsDto = exports.LoyaltyHistoryQueryDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
 const class_validator_1 = require("class-validator");
+const class_transformer_1 = require("class-transformer");
+const localize_util_1 = require("../../common/utils/localize.util");
 class LoyaltyHistoryQueryDto {
 }
 exports.LoyaltyHistoryQueryDto = LoyaltyHistoryQueryDto;
@@ -23,6 +25,15 @@ __decorate([
     (0, class_validator_1.Max)(50),
     __metadata("design:type", Number)
 ], LoyaltyHistoryQueryDto.prototype, "limit", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Optional language hint; ignored by service', enum: ['en', 'ar'] }),
+    (0, class_transformer_1.Transform)(({ value }) => {
+        return (0, localize_util_1.normalizeLang)(value);
+    }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], LoyaltyHistoryQueryDto.prototype, "lang", void 0);
 class AdjustLoyaltyPointsDto {
 }
 exports.AdjustLoyaltyPointsDto = AdjustLoyaltyPointsDto;

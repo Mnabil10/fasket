@@ -14,6 +14,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
+import { cleanNullableString } from '../../common/utils/sanitize.util';
 
 export class DayHoursDto {
   @ApiPropertyOptional()
@@ -329,21 +331,61 @@ export class DeliverySettingsDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
   deliveryFee?: number; // float from UI, stored as cents in DB on save
+
+  @ApiPropertyOptional({ description: 'Delivery fee in cents (alternative input)' })
+  @IsOptional()
+  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
+  deliveryFeeCents?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
   freeDeliveryMinimum?: number; // float from UI, stored as cents in DB on save
+
+  @ApiPropertyOptional({ description: 'Free delivery threshold in cents (alternative input)' })
+  @IsOptional()
+  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
+  freeDeliveryMinimumCents?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    return cleanNullableString(value) ?? undefined;
+  })
   estimatedDeliveryTime?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
   maxDeliveryRadius?: number;
 
   @ApiPropertyOptional({ type: [DeliveryZoneDto] })

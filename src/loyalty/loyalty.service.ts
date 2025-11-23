@@ -75,6 +75,8 @@ export class LoyaltyService {
       return { pointsUsed: 0, discountCents: 0 };
     }
 
+    const cycle = await this.ensureCycle(params.userId, config.resetThreshold, params.tx);
+
     await params.tx.user.update({
       where: { id: params.userId },
       data: { loyaltyPoints: { decrement: pointsUsed } },
@@ -86,6 +88,7 @@ export class LoyaltyService {
         type: 'REDEEM',
         points: pointsUsed,
         metadata: { discountCents },
+        cycleId: cycle?.id,
       },
     });
     return { pointsUsed, discountCents };
@@ -133,6 +136,7 @@ export class LoyaltyService {
           data: { loyaltyPoints: 0 },
         });
       }
+      await this.ensureCycle(params.userId, config.resetThreshold, params.tx);
     } else if (cycle) {
       await params.tx.loyaltyCycle.update({
         where: { id: cycle.id },

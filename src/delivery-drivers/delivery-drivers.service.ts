@@ -12,18 +12,26 @@ import { DomainError, ErrorCode } from '../common/errors';
 export class DeliveryDriversService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(params?: { search?: string; isActive?: boolean; page?: number; pageSize?: number }) {
+  async list(params?: {
+    search?: string;
+    isActive?: boolean;
+    page?: number | string;
+    pageSize?: number | string;
+    limit?: number | string;
+  }) {
     const where: any = {};
     if (params?.isActive !== undefined) where.isActive = params.isActive;
     if (params?.search) {
       where.OR = [
         { fullName: { contains: params.search, mode: 'insensitive' } },
-        { phone: { contains: params.search } },
+        { phone: { contains: params.search, mode: 'insensitive' } },
         { nationalId: { contains: params.search, mode: 'insensitive' } },
       ];
     }
-    const pageSize = Math.min(params?.pageSize ?? 20, 100);
-    const page = Math.max(params?.page ?? 1, 1);
+    const rawPage = Number(params?.page ?? 1);
+    const rawSize = Number(params?.pageSize ?? params?.limit ?? 20);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
+    const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(Math.floor(rawSize), 100) : 20;
     const skip = (page - 1) * pageSize;
     const [items, total] = await this.prisma.$transaction([
       this.prisma.deliveryDriver.findMany({
@@ -50,14 +58,40 @@ export class DeliveryDriversService {
   }
 
   create(dto: CreateDriverDto) {
-    return this.prisma.deliveryDriver.create({
-      data: {
-        fullName: dto.fullName,
-        phone: dto.phone,
-        nationalId: dto.nationalId,
-        nationalIdImageUrl: dto.nationalIdImageUrl,
-        isActive: dto.isActive ?? true,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const driver = await tx.deliveryDriver.create({
+        data: {
+          fullName: dto.fullName,
+          phone: dto.phone,
+          nationalId: dto.nationalId,
+          nationalIdImageUrl: dto.nationalIdImageUrl,
+          isActive: dto.isActive ?? true,
+        },
+      });
+
+      if (dto.vehicle) {
+        await tx.deliveryVehicle.upsert({
+          where: { driverId: driver.id },
+          update: {
+            type: dto.vehicle.type,
+            plateNumber: dto.vehicle.plateNumber,
+            licenseImageUrl: dto.vehicle.licenseImageUrl,
+            color: dto.vehicle.color,
+          },
+          create: {
+            driverId: driver.id,
+            type: dto.vehicle.type,
+            plateNumber: dto.vehicle.plateNumber,
+            licenseImageUrl: dto.vehicle.licenseImageUrl,
+            color: dto.vehicle.color,
+          },
+        });
+      }
+
+      return tx.deliveryDriver.findUnique({
+        where: { id: driver.id },
+        include: { vehicle: true },
+      });
     });
   }
 
@@ -85,7 +119,7 @@ export class DeliveryDriversService {
 
   async upsertVehicle(driverId: string, dto: UpsertVehicleDto) {
     await this.ensureDriver(driverId);
-    return this.prisma.deliveryVehicle.upsert({
+    await this.prisma.deliveryVehicle.upsert({
       where: { driverId },
       update: {
         type: dto.type,
@@ -100,6 +134,10 @@ export class DeliveryDriversService {
         licenseImageUrl: dto.licenseImageUrl,
         color: dto.color,
       },
+    });
+    return this.prisma.deliveryDriver.findUnique({
+      where: { id: driverId },
+      include: { vehicle: true },
     });
   }
 
@@ -116,7 +154,7 @@ export class DeliveryDriversService {
     }
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, userId: true, status: true },
+      select: { id: true, userId: true, status: true, driverId: true },
     });
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found');
@@ -124,11 +162,12 @@ export class DeliveryDriversService {
     if (order.status === 'DELIVERED' || order.status === 'CANCELED') {
       throw new DomainError(ErrorCode.ORDER_ALREADY_COMPLETED, 'Cannot assign driver to completed order');
     }
-    await this.prisma.order.update({
+    const updatedOrder = await this.prisma.order.update({
       where: { id: orderId },
       data: { driverId: driver.id, driverAssignedAt: new Date() },
+      select: { id: true, userId: true, status: true, driverAssignedAt: true, driverId: true },
     });
-    return { order, driver };
+    return { order: updatedOrder, driver };
   }
 
   private async ensureDriver(id: string) {

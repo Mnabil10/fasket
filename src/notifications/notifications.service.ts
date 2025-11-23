@@ -80,11 +80,16 @@ export class NotificationsService {
   }
 
   private async enqueue(payload: NotificationJob) {
-    await this.queue.add('send', payload, {
-      removeOnComplete: 50,
-      removeOnFail: 25,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
-    });
+    try {
+      await this.queue.add('send', payload, {
+        removeOnComplete: 50,
+        removeOnFail: 25,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+      });
+    } catch (err) {
+      const msg = (err as Error).message;
+      this.logger.warn({ msg: 'Notification queue unavailable, dropping job', error: msg, payload });
+    }
   }
 }

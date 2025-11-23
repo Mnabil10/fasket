@@ -13,12 +13,17 @@ export class HealthController {
     private readonly config: ConfigService,
   ) {}
 
+  private redisEnabled() {
+    return (this.config.get<string>('REDIS_ENABLED') ?? 'true') !== 'false';
+  }
+
   private async prismaCheck(): Promise<HealthIndicatorResult> {
     await this.prisma.$queryRaw`SELECT 1`;
     return { postgres: { status: 'up' } };
   }
 
   private async redisCheck(): Promise<HealthIndicatorResult> {
+    if (!this.redisEnabled()) return { redis: { status: 'down', message: 'disabled' } };
     const redisUrl = this.config.get<string>('REDIS_URL');
     if (!redisUrl) return { redis: { status: 'down', message: 'REDIS_URL missing' } };
     const client = new Redis(redisUrl, { lazyConnect: true });
@@ -32,6 +37,7 @@ export class HealthController {
   }
 
   private async queueCheck(): Promise<HealthIndicatorResult> {
+    if (!this.redisEnabled()) return { notificationsQueue: { status: 'down', message: 'disabled' } };
     const redisUrl = this.config.get<string>('REDIS_URL');
     if (!redisUrl) return { notificationsQueue: { status: 'down', message: 'REDIS_URL missing' } };
     const queue = new Queue('notifications', { connection: { url: redisUrl } });

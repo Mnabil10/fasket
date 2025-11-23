@@ -154,6 +154,7 @@ model CartItem {
 
 model Order {
   id               String               @id @default(cuid())
+  code             String               @default(cuid()) @unique
   userId           String
   user             User                 @relation(fields: [userId], references: [id])
   cartId           String?
@@ -227,7 +228,11 @@ model DeliveryDriver {
   orders              Order[]
 
   @@index([isActive, createdAt])
+  @@index([isActive])
   @@index([fullName])
+  @@index([phone])
+  @@index([nationalId])
+  @@index([createdAt])
 }
 
 model DeliveryVehicle {
@@ -242,6 +247,25 @@ model DeliveryVehicle {
   updatedAt       DateTime @updatedAt
 
   @@index([plateNumber])
+}
+
+model DeliveryZone {
+  id                         String   @id @default(cuid())
+  nameEn                     String
+  nameAr                     String?
+  city                       String?
+  region                     String?
+  feeCents                   Int
+  etaMinutes                 Int?
+  freeDeliveryThresholdCents Int?
+  minOrderAmountCents        Int?
+  isActive                   Boolean  @default(true)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  @@index([isActive, nameEn])
+  @@index([city])
+  @@index([region])
 }
 
 model LoyaltyCycle {

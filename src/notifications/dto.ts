@@ -1,11 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength, MinLength, IsObject } from 'class-validator';
 import { cleanString } from '../common/utils/sanitize.util';
 
 export class RegisterDeviceDto {
   @ApiProperty({ description: 'Push token from FCM/OneSignal/APNS' })
-  @Transform(({ value }) => cleanString(value))
+  @Transform(({ value, obj }) => {
+    const source =
+      value ??
+      (obj as any)?.token ??
+      (obj as any)?.deviceToken ??
+      (obj as any)?.fcmToken ??
+      (obj as any)?.pushToken;
+    return cleanString(source);
+  })
   @IsString()
   @MinLength(10)
   token!: string;
@@ -46,6 +54,17 @@ export class RegisterDeviceDto {
   @IsString()
   @MaxLength(64)
   deviceModel?: string;
+
+  @ApiPropertyOptional({ description: 'Client-side preferences payload (optional)' })
+  @IsOptional()
+  @IsObject()
+  preferences?: Record<string, any>;
+
+  // Accepted for compatibility with some clients; ignored by service
+  @ApiPropertyOptional({ description: 'Optional userId (ignored; derived from auth)' })
+  @IsOptional()
+  @IsString()
+  userId?: string;
 }
 
 export class UnregisterDeviceDto {

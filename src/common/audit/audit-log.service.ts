@@ -15,7 +15,9 @@ export class AuditLogService {
     entityId?: string;
     before?: Record<string, any> | null;
     after?: Record<string, any> | null;
+    actorId?: string;
   }) {
+    const actorId = params.actorId ?? this.context.get('userId');
     await this.prisma.auditLog.create({
       data: {
         action: params.action,
@@ -23,7 +25,7 @@ export class AuditLogService {
         entityId: params.entityId,
         before: params.before as any,
         after: params.after as any,
-        actorId: this.context.get('userId'),
+        actorId,
         ip: this.context.get('ip'),
         userAgent: this.context.get('userAgent'),
         correlationId: this.context.get('correlationId'),

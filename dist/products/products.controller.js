@@ -16,6 +16,7 @@ exports.ProductsController = void 0;
 const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
 const products_service_1 = require("./products.service");
+const lang_normalize_pipe_1 = require("../common/pipes/lang-normalize.pipe");
 const public_product_query_dto_1 = require("./dto/public-product-query.dto");
 let ProductsController = class ProductsController {
     constructor(service) {
@@ -62,7 +63,7 @@ __decorate([
     (0, common_1.Get)(':idOrSlug'),
     (0, swagger_1.ApiQuery)({ name: 'lang', required: false, enum: ['en', 'ar'] }),
     __param(0, (0, common_1.Param)('idOrSlug')),
-    __param(1, (0, common_1.Query)('lang')),
+    __param(1, (0, common_1.Query)('lang', lang_normalize_pipe_1.LangNormalizePipe)),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", void 0)

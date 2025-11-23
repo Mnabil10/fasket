@@ -60,6 +60,7 @@ let LoyaltyService = class LoyaltyService {
         if (pointsUsed <= 0 || discountCents <= 0) {
             return { pointsUsed: 0, discountCents: 0 };
         }
+        const cycle = await this.ensureCycle(params.userId, config.resetThreshold, params.tx);
         await params.tx.user.update({
             where: { id: params.userId },
             data: { loyaltyPoints: { decrement: pointsUsed } },
@@ -71,6 +72,7 @@ let LoyaltyService = class LoyaltyService {
                 type: 'REDEEM',
                 points: pointsUsed,
                 metadata: { discountCents },
+                cycleId: cycle?.id,
             },
         });
         return { pointsUsed, discountCents };
@@ -115,6 +117,7 @@ let LoyaltyService = class LoyaltyService {
                     data: { loyaltyPoints: 0 },
                 });
             }
+            await this.ensureCycle(params.userId, config.resetThreshold, params.tx);
         }
         else if (cycle) {
             await params.tx.loyaltyCycle.update({

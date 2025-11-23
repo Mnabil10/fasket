@@ -8,6 +8,6 @@ import { ReceiptService } from './receipt.service';
   imports: [NotificationsModule],
   controllers: [OrdersController],
   providers: [OrdersService, ReceiptService],
-  exports: [ReceiptService],
+  exports: [OrdersService, ReceiptService],
 })
 export class OrdersModule {}

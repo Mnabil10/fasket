@@ -17,6 +17,7 @@ const baseSchema = z.object({
   AUTH_BRUTE_TTL: z.coerce.number().int().positive().default(300),
   AUTH_BRUTE_MAX: z.coerce.number().int().positive().default(5),
 
+  REDIS_ENABLED: z.enum(['true','false']).optional(),
   REDIS_URL: z.string().url().optional(),
   CACHE_DEFAULT_TTL: z.coerce.number().int().nonnegative().default(60),
   CATEGORIES_CACHE_TTL: z.coerce.number().int().nonnegative().optional(),

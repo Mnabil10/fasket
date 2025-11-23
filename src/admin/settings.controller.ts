@@ -31,7 +31,8 @@ export class AdminSettingsController {
   }
 
   /** Transform DB -> UI */
-  private toUi(setting: any) {
+  private toUi(setting: any, zones?: DeliveryZone[]) {
+    const deliveryZones = zones ?? this.settingsService.deserializeDeliveryZones(setting.deliveryZones);
     return {
       general: {
         storeName: setting.storeName,
@@ -46,13 +47,17 @@ export class AdminSettingsController {
         freeDeliveryMinimum: (setting.freeDeliveryMinimumCents ?? 0) / 100,
         estimatedDeliveryTime: setting.estimatedDeliveryTime ?? null,
         maxDeliveryRadius: setting.maxDeliveryRadiusKm ?? null,
-        deliveryZones: this.settingsService.deserializeDeliveryZones(setting.deliveryZones).map((zone) => ({
+        deliveryZones: deliveryZones.map((zone) => ({
           id: zone.id,
           nameEn: zone.nameEn,
           nameAr: zone.nameAr,
+          city: (zone as any).city,
+          region: (zone as any).region,
           fee: zone.feeCents / 100,
           feeCents: zone.feeCents,
           etaMinutes: zone.etaMinutes,
+          freeDeliveryThresholdCents: (zone as any).freeDeliveryThresholdCents,
+          minOrderAmountCents: (zone as any).minOrderAmountCents,
           isActive: zone.isActive,
         })),
       },
@@ -103,13 +108,25 @@ export class AdminSettingsController {
 
     if (data.delivery) {
       const d = data.delivery as DeliverySettingsDto;
-      // AFTER (correct)
-if (d.deliveryFee !== undefined)             upd.deliveryFeeCents = Math.round((d.deliveryFee ?? 0) * 100);
-if (d.freeDeliveryMinimum !== undefined)     upd.freeDeliveryMinimumCents = Math.round((d.freeDeliveryMinimum ?? 0) * 100);
+      const toNonNegativeInt = (value: any) => {
+        const num = Number(value ?? 0);
+        if (!Number.isFinite(num)) return 0;
+        return Math.max(0, Math.round(num));
+      };
+      // Prefer cents fields if provided; otherwise use float fields converted to cents
+      if (d.deliveryFeeCents !== undefined) {
+        upd.deliveryFeeCents = toNonNegativeInt(d.deliveryFeeCents);
+      } else if (d.deliveryFee !== undefined) {
+        upd.deliveryFeeCents = toNonNegativeInt((d.deliveryFee ?? 0) * 100);
+      }
+      if (d.freeDeliveryMinimumCents !== undefined) {
+        upd.freeDeliveryMinimumCents = toNonNegativeInt(d.freeDeliveryMinimumCents);
+      } else if (d.freeDeliveryMinimum !== undefined) {
+        upd.freeDeliveryMinimumCents = toNonNegativeInt((d.freeDeliveryMinimum ?? 0) * 100);
+      }
 
       if (d.estimatedDeliveryTime !== undefined)   upd.estimatedDeliveryTime = d.estimatedDeliveryTime;
       if (d.maxDeliveryRadius !== undefined)       upd.maxDeliveryRadiusKm = d.maxDeliveryRadius!;
-      if (d.deliveryZones !== undefined)           upd.deliveryZones = this.transformDeliveryZones(d.deliveryZones) as any;
     }
 
     if (data.payment)       upd.payment = data.payment as any;
@@ -176,8 +193,18 @@ if (d.freeDeliveryMinimum !== undefined)     upd.freeDeliveryMinimumCents = Math
         id,
         nameEn,
         nameAr,
+        city: (zone as any).city ?? undefined,
+        region: (zone as any).region ?? undefined,
         feeCents,
         etaMinutes,
+        freeDeliveryThresholdCents:
+          (zone as any).freeDeliveryThresholdCents === undefined
+            ? undefined
+            : Math.max(0, Math.round(Number((zone as any).freeDeliveryThresholdCents ?? 0))),
+        minOrderAmountCents:
+          (zone as any).minOrderAmountCents === undefined
+            ? undefined
+            : Math.max(0, Math.round(Number((zone as any).minOrderAmountCents ?? 0))),
         isActive: zone.isActive ?? true,
       };
     });
@@ -188,18 +215,26 @@ if (d.freeDeliveryMinimum !== undefined)     upd.freeDeliveryMinimumCents = Math
   @ApiOkResponse({ description: 'Full settings payload (sectioned for the UI)' })
   async get() {
     const s = await this.getOrCreate();
-    return this.toUi(s);
+    const zones = await this.settingsService.getDeliveryZones({ includeInactive: true });
+    return this.toUi(s, zones);
   }
 
   @Patch()
   @ApiOkResponse({ description: 'Partial update, accept any sections' })
   async update(@Body() dto: UpdateSettingsDto) {
     const s = await this.getOrCreate();
+    if (dto.delivery?.deliveryZones) {
+      const zones = this.transformDeliveryZones(dto.delivery.deliveryZones);
+      if (zones) {
+        await this.settingsService.replaceZones(zones);
+      }
+    }
     const data = this.toUpdate(dto);
     const updated = await this.svc.prisma.setting.update({ where: { id: s.id }, data });
     this.logger.log({ msg: 'Settings updated', settingId: s.id });
     await this.settingsService.clearCache();
-    return this.toUi(updated);
+    const zones = await this.settingsService.getDeliveryZones({ includeInactive: true });
+    return this.toUi(updated, zones);
   }
 
   // Optional: dedicated section endpoints (useful for the Save buttons per tab)

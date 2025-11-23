@@ -19,6 +19,7 @@ let AuditLogService = class AuditLogService {
         this.context = context;
     }
     async log(params) {
+        const actorId = params.actorId ?? this.context.get('userId');
         await this.prisma.auditLog.create({
             data: {
                 action: params.action,
@@ -26,7 +27,7 @@ let AuditLogService = class AuditLogService {
                 entityId: params.entityId,
                 before: params.before,
                 after: params.after,
-                actorId: this.context.get('userId'),
+                actorId,
                 ip: this.context.get('ip'),
                 userAgent: this.context.get('userAgent'),
                 correlationId: this.context.get('correlationId'),

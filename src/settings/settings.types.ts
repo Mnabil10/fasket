@@ -2,8 +2,12 @@ export interface DeliveryZone {
   id: string;
   nameEn: string;
   nameAr: string;
+  city?: string;
+  region?: string;
   feeCents: number;
   etaMinutes?: number;
+  freeDeliveryThresholdCents?: number;
+  minOrderAmountCents?: number;
   isActive: boolean;
 }
 

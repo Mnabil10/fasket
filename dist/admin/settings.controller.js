@@ -33,7 +33,8 @@ let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsCon
             return found;
         return this.svc.prisma.setting.create({ data: { currency: 'EGP' } });
     }
-    toUi(setting) {
+    toUi(setting, zones) {
+        const deliveryZones = zones ?? this.settingsService.deserializeDeliveryZones(setting.deliveryZones);
         return {
             general: {
                 storeName: setting.storeName,
@@ -48,13 +49,17 @@ let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsCon
                 freeDeliveryMinimum: (setting.freeDeliveryMinimumCents ?? 0) / 100,
                 estimatedDeliveryTime: setting.estimatedDeliveryTime ?? null,
                 maxDeliveryRadius: setting.maxDeliveryRadiusKm ?? null,
-                deliveryZones: this.settingsService.deserializeDeliveryZones(setting.deliveryZones).map((zone) => ({
+                deliveryZones: deliveryZones.map((zone) => ({
                     id: zone.id,
                     nameEn: zone.nameEn,
                     nameAr: zone.nameAr,
+                    city: zone.city,
+                    region: zone.region,
                     fee: zone.feeCents / 100,
                     feeCents: zone.feeCents,
                     etaMinutes: zone.etaMinutes,
+                    freeDeliveryThresholdCents: zone.freeDeliveryThresholdCents,
+                    minOrderAmountCents: zone.minOrderAmountCents,
                     isActive: zone.isActive,
                 })),
             },
@@ -107,16 +112,28 @@ let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsCon
         }
         if (data.delivery) {
             const d = data.delivery;
-            if (d.deliveryFee !== undefined)
-                upd.deliveryFeeCents = Math.round((d.deliveryFee ?? 0) * 100);
-            if (d.freeDeliveryMinimum !== undefined)
-                upd.freeDeliveryMinimumCents = Math.round((d.freeDeliveryMinimum ?? 0) * 100);
+            const toNonNegativeInt = (value) => {
+                const num = Number(value ?? 0);
+                if (!Number.isFinite(num))
+                    return 0;
+                return Math.max(0, Math.round(num));
+            };
+            if (d.deliveryFeeCents !== undefined) {
+                upd.deliveryFeeCents = toNonNegativeInt(d.deliveryFeeCents);
+            }
+            else if (d.deliveryFee !== undefined) {
+                upd.deliveryFeeCents = toNonNegativeInt((d.deliveryFee ?? 0) * 100);
+            }
+            if (d.freeDeliveryMinimumCents !== undefined) {
+                upd.freeDeliveryMinimumCents = toNonNegativeInt(d.freeDeliveryMinimumCents);
+            }
+            else if (d.freeDeliveryMinimum !== undefined) {
+                upd.freeDeliveryMinimumCents = toNonNegativeInt((d.freeDeliveryMinimum ?? 0) * 100);
+            }
             if (d.estimatedDeliveryTime !== undefined)
                 upd.estimatedDeliveryTime = d.estimatedDeliveryTime;
             if (d.maxDeliveryRadius !== undefined)
                 upd.maxDeliveryRadiusKm = d.maxDeliveryRadius;
-            if (d.deliveryZones !== undefined)
-                upd.deliveryZones = this.transformDeliveryZones(d.deliveryZones);
         }
         if (data.payment)
             upd.payment = data.payment;
@@ -201,8 +218,16 @@ let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsCon
                 id,
                 nameEn,
                 nameAr,
+                city: zone.city ?? undefined,
+                region: zone.region ?? undefined,
                 feeCents,
                 etaMinutes,
+                freeDeliveryThresholdCents: zone.freeDeliveryThresholdCents === undefined
+                    ? undefined
+                    : Math.max(0, Math.round(Number(zone.freeDeliveryThresholdCents ?? 0))),
+                minOrderAmountCents: zone.minOrderAmountCents === undefined
+                    ? undefined
+                    : Math.max(0, Math.round(Number(zone.minOrderAmountCents ?? 0))),
                 isActive: zone.isActive ?? true,
             };
         });
@@ -210,15 +235,23 @@ let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsCon
     }
     async get() {
         const s = await this.getOrCreate();
-        return this.toUi(s);
+        const zones = await this.settingsService.getDeliveryZones({ includeInactive: true });
+        return this.toUi(s, zones);
     }
     async update(dto) {
         const s = await this.getOrCreate();
+        if (dto.delivery?.deliveryZones) {
+            const zones = this.transformDeliveryZones(dto.delivery.deliveryZones);
+            if (zones) {
+                await this.settingsService.replaceZones(zones);
+            }
+        }
         const data = this.toUpdate(dto);
         const updated = await this.svc.prisma.setting.update({ where: { id: s.id }, data });
         this.logger.log({ msg: 'Settings updated', settingId: s.id });
         await this.settingsService.clearCache();
-        return this.toUi(updated);
+        const zones = await this.settingsService.getDeliveryZones({ includeInactive: true });
+        return this.toUi(updated, zones);
     }
     async updateGeneral(dto) {
         return this.update({ general: dto });

@@ -13,6 +13,8 @@ exports.UpdateSettingsDto = exports.SystemSettingsDto = exports.LoyaltySettingsD
 const swagger_1 = require("@nestjs/swagger");
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
+const class_transformer_2 = require("class-transformer");
+const sanitize_util_1 = require("../../common/utils/sanitize.util");
 class DayHoursDto {
 }
 exports.DayHoursDto = DayHoursDto;
@@ -397,24 +399,73 @@ __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsNumber)(),
+    (0, class_transformer_2.Transform)(({ value }) => {
+        if (value === '' || value === null || value === undefined)
+            return undefined;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : value;
+    }),
     __metadata("design:type", Number)
 ], DeliverySettingsDto.prototype, "deliveryFee", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Delivery fee in cents (alternative input)' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumber)(),
+    (0, class_transformer_2.Transform)(({ value }) => {
+        if (value === '' || value === null || value === undefined)
+            return undefined;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : value;
+    }),
+    __metadata("design:type", Number)
+], DeliverySettingsDto.prototype, "deliveryFeeCents", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsNumber)(),
+    (0, class_transformer_2.Transform)(({ value }) => {
+        if (value === '' || value === null || value === undefined)
+            return undefined;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : value;
+    }),
     __metadata("design:type", Number)
 ], DeliverySettingsDto.prototype, "freeDeliveryMinimum", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Free delivery threshold in cents (alternative input)' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumber)(),
+    (0, class_transformer_2.Transform)(({ value }) => {
+        if (value === '' || value === null || value === undefined)
+            return undefined;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : value;
+    }),
+    __metadata("design:type", Number)
+], DeliverySettingsDto.prototype, "freeDeliveryMinimumCents", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
+    (0, class_transformer_2.Transform)(({ value }) => {
+        if (value === undefined || value === null || value === '')
+            return undefined;
+        if (typeof value === 'number' && Number.isFinite(value))
+            return String(value);
+        return (0, sanitize_util_1.cleanNullableString)(value) ?? undefined;
+    }),
     __metadata("design:type", String)
 ], DeliverySettingsDto.prototype, "estimatedDeliveryTime", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsInt)(),
+    (0, class_transformer_2.Transform)(({ value }) => {
+        if (value === '' || value === null || value === undefined)
+            return undefined;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : value;
+    }),
     __metadata("design:type", Number)
 ], DeliverySettingsDto.prototype, "maxDeliveryRadius", void 0);
 __decorate([

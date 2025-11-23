@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, OrderStatus, PaymentMethod, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -6,6 +6,7 @@ import { CreateOrderDto, PaymentMethodDto } from './dto';
 import { SettingsService } from '../settings/settings.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { DomainError, ErrorCode } from '../common/errors';
+import { AuditLogService } from '../common/audit/audit-log.service';
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
@@ -40,19 +41,33 @@ export class OrdersService {
     private readonly notify: NotificationsService,
     private readonly settings: SettingsService,
     private readonly loyalty: LoyaltyService,
+    private readonly audit: AuditLogService,
   ) {}
 
   async list(userId: string) {
     const orders = await this.prisma.order.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, totalCents: true, status: true, createdAt: true },
+      select: {
+        id: true,
+        code: true,
+        totalCents: true,
+        status: true,
+        createdAt: true,
+        loyaltyPointsUsed: true,
+        loyaltyDiscountCents: true,
+        loyaltyPointsEarned: true,
+      },
     });
     return orders.map((order) => ({
       id: order.id,
+      code: order.code,
       totalCents: order.totalCents,
       status: this.toPublicStatus(order.status),
       createdAt: order.createdAt,
+      loyaltyPointsUsed: order.loyaltyPointsUsed ?? 0,
+      loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
+      loyaltyPointsEarned: order.loyaltyPointsEarned ?? 0,
     }));
   }
 
@@ -77,9 +92,12 @@ export class OrdersService {
       },
     });
     if (!order) {
-      throw new NotFoundException('Order not found');
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
     }
-    return this.toOrderDetail(order);
+    const zone = order.deliveryZoneId
+      ? await this.settings.getZoneById(order.deliveryZoneId, { includeInactive: true })
+      : undefined;
+    return this.toOrderDetail(order, zone);
   }
 
   async create(userId: string, payload: CreateOrderDto) {
@@ -190,9 +208,11 @@ export class OrdersService {
 
       let totalCents = subtotalCents + shippingFeeCents - discountCents;
       const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
+      const code = await this.generateOrderCode(tx);
       const order = await tx.order.create({
         data: {
           userId,
+          code,
           status: OrderStatus.PENDING,
           paymentMethod: paymentMethod as PaymentMethod,
           subtotalCents,
@@ -263,6 +283,142 @@ export class OrdersService {
     return this.detail(userId, orderId);
   }
 
+  async awardLoyaltyForOrder(orderId: string, tx?: Prisma.TransactionClient): Promise<number> {
+    const config = await this.settings.getLoyaltyConfig();
+    if (!config.enabled || config.earnRate <= 0) {
+      return 0;
+    }
+
+    const runner = async (client: Prisma.TransactionClient) => {
+      const order = await client.order.findUnique({
+        where: { id: orderId },
+        select: { id: true, userId: true, status: true, subtotalCents: true, loyaltyPointsEarned: true },
+      });
+      if (!order) return 0;
+      if (order.status !== OrderStatus.DELIVERED) return 0;
+
+      const existingTxn = await client.loyaltyTransaction.findFirst({
+        where: { orderId, type: 'EARN' },
+      });
+      if (existingTxn) {
+        if ((order.loyaltyPointsEarned ?? 0) === 0 && existingTxn.points > 0) {
+          await client.order.update({
+            where: { id: orderId },
+            data: { loyaltyPointsEarned: existingTxn.points },
+          });
+        }
+        return existingTxn.points ?? 0;
+      }
+
+      if ((order.loyaltyPointsEarned ?? 0) > 0) {
+        return order.loyaltyPointsEarned ?? 0;
+      }
+
+      const earned = await this.loyalty.awardPoints({
+        userId: order.userId,
+        subtotalCents: order.subtotalCents,
+        tx: client,
+        orderId: order.id,
+      });
+      if (earned > 0) {
+        await client.order.update({
+          where: { id: order.id },
+          data: { loyaltyPointsEarned: earned },
+        });
+      }
+      return earned;
+    };
+
+    if (tx) {
+      return runner(tx);
+    }
+    return this.prisma.$transaction(runner);
+  }
+
+  async assignDriverToOrder(orderId: string, driverId: string, actorId?: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, userId: true, status: true, driverId: true },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    if (order.status === OrderStatus.DELIVERED || order.status === OrderStatus.CANCELED) {
+      throw new DomainError(ErrorCode.ORDER_ALREADY_COMPLETED, 'Cannot assign driver to completed order');
+    }
+
+    const driver = await this.prisma.deliveryDriver.findUnique({
+      where: { id: driverId },
+      select: {
+        id: true,
+        fullName: true,
+        phone: true,
+        isActive: true,
+        vehicle: { select: { type: true, plateNumber: true } },
+      },
+    });
+    if (!driver) {
+      throw new DomainError(ErrorCode.DRIVER_NOT_FOUND, 'Driver not found');
+    }
+    if (!driver.isActive) {
+      throw new DomainError(ErrorCode.DRIVER_INACTIVE, 'Driver is inactive');
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: { driverId: driver.id, driverAssignedAt: new Date() },
+      select: {
+        id: true,
+        userId: true,
+        driverAssignedAt: true,
+        driver: {
+          select: { id: true, fullName: true, phone: true, vehicle: { select: { type: true, plateNumber: true } } },
+        },
+      },
+    });
+
+    await this.audit.log({
+      action: 'order.assign-driver',
+      entity: 'order',
+      entityId: orderId,
+      actorId,
+      before: { driverId: order.driverId ?? null },
+      after: { driverId: driver.id },
+    });
+
+    await this.notify.notify('order_assigned_driver', updated.userId, {
+      orderId: orderId,
+      driverId: driver.id,
+      driverName: driver.fullName,
+      driverPhone: driver.phone,
+    });
+
+    return {
+      orderId: updated.id,
+      driverAssignedAt: updated.driverAssignedAt,
+      driver: {
+        id: updated.driver?.id ?? driver.id,
+        fullName: updated.driver?.fullName ?? driver.fullName,
+        phone: updated.driver?.phone ?? driver.phone,
+        vehicleType: updated.driver?.vehicle?.type,
+        plateNumber: updated.driver?.vehicle?.plateNumber,
+      },
+    };
+  }
+
+  private async generateOrderCode(tx: Prisma.TransactionClient): Promise<string> {
+    let attempts = 0;
+    while (attempts < 5) {
+      const code = `ORD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      const exists = await tx.order.findUnique({ where: { code } });
+      if (!exists) {
+        return code;
+      }
+      attempts += 1;
+    }
+    return `ORD-${Date.now().toString(36).toUpperCase()}`;
+  }
+
   private toPublicStatus(status: OrderStatus): PublicStatus {
     switch (status) {
       case OrderStatus.PROCESSING:
@@ -278,9 +434,10 @@ export class OrdersService {
     }
   }
 
-  private toOrderDetail(order: OrderWithRelations) {
+  private toOrderDetail(order: OrderWithRelations, zone?: any) {
     return {
       id: order.id,
+      code: order.code ?? order.id,
       userId: order.userId,
       status: this.toPublicStatus(order.status),
       paymentMethod: order.paymentMethod,
@@ -289,6 +446,7 @@ export class OrdersService {
       discountCents: order.discountCents,
       loyaltyDiscountCents: order.loyaltyDiscountCents,
       loyaltyPointsUsed: order.loyaltyPointsUsed,
+      loyaltyPointsEarned: (order as any).loyaltyPointsEarned ?? 0,
       totalCents: order.totalCents,
       createdAt: order.createdAt,
       note: order.notes ?? undefined,
@@ -296,6 +454,20 @@ export class OrdersService {
       deliveryEtaMinutes: order.deliveryEtaMinutes ?? undefined,
       deliveryZoneId: order.deliveryZoneId ?? undefined,
       deliveryZoneName: order.deliveryZoneName ?? undefined,
+      deliveryZone: zone
+        ? {
+            id: zone.id,
+            nameEn: zone.nameEn,
+            nameAr: zone.nameAr,
+            city: zone.city,
+            region: zone.region,
+            feeCents: zone.feeCents,
+            etaMinutes: zone.etaMinutes,
+            isActive: zone.isActive,
+            freeDeliveryThresholdCents: zone.freeDeliveryThresholdCents,
+            minOrderAmountCents: zone.minOrderAmountCents,
+          }
+        : undefined,
       address: order.address
         ? {
             id: order.address.id,

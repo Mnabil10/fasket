@@ -11,6 +11,7 @@ const common_1 = require("@nestjs/common");
 const settings_service_1 = require("./settings.service");
 const prisma_module_1 = require("../prisma/prisma.module");
 const settings_controller_1 = require("./settings.controller");
+const app_config_controller_1 = require("./app-config.controller");
 let SettingsModule = class SettingsModule {
 };
 exports.SettingsModule = SettingsModule;
@@ -19,7 +20,7 @@ exports.SettingsModule = SettingsModule = __decorate([
     (0, common_1.Module)({
         imports: [prisma_module_1.PrismaModule],
         providers: [settings_service_1.SettingsService],
-        controllers: [settings_controller_1.SettingsController],
+        controllers: [settings_controller_1.SettingsController, app_config_controller_1.AppConfigController],
         exports: [settings_service_1.SettingsService],
     })
 ], SettingsModule);

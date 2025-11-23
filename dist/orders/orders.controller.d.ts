@@ -8,12 +8,17 @@ export declare class OrdersController {
     constructor(service: OrdersService, receipts: ReceiptService);
     list(user: CurrentUserPayload): Promise<{
         id: string;
+        code: string;
         totalCents: number;
         status: "PENDING" | "CANCELED" | "CONFIRMED" | "DELIVERING" | "COMPLETED";
         createdAt: Date;
+        loyaltyPointsUsed: number;
+        loyaltyDiscountCents: number;
+        loyaltyPointsEarned: number;
     }[]>;
     detail(user: CurrentUserPayload, id: string): Promise<{
         id: string;
+        code: string;
         userId: string;
         status: "PENDING" | "CANCELED" | "CONFIRMED" | "DELIVERING" | "COMPLETED";
         paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
@@ -22,6 +27,7 @@ export declare class OrdersController {
         discountCents: number;
         loyaltyDiscountCents: number;
         loyaltyPointsUsed: number;
+        loyaltyPointsEarned: any;
         totalCents: number;
         createdAt: Date;
         note: string | undefined;
@@ -29,6 +35,18 @@ export declare class OrdersController {
         deliveryEtaMinutes: number | undefined;
         deliveryZoneId: string | undefined;
         deliveryZoneName: string | undefined;
+        deliveryZone: {
+            id: any;
+            nameEn: any;
+            nameAr: any;
+            city: any;
+            region: any;
+            feeCents: any;
+            etaMinutes: any;
+            isActive: any;
+            freeDeliveryThresholdCents: any;
+            minOrderAmountCents: any;
+        } | undefined;
         address: {
             id: string;
             label: string | null;
@@ -53,6 +71,7 @@ export declare class OrdersController {
     }>;
     create(user: CurrentUserPayload, dto: CreateOrderDto): Promise<{
         id: string;
+        code: string;
         userId: string;
         status: "PENDING" | "CANCELED" | "CONFIRMED" | "DELIVERING" | "COMPLETED";
         paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
@@ -61,6 +80,7 @@ export declare class OrdersController {
         discountCents: number;
         loyaltyDiscountCents: number;
         loyaltyPointsUsed: number;
+        loyaltyPointsEarned: any;
         totalCents: number;
         createdAt: Date;
         note: string | undefined;
@@ -68,6 +88,18 @@ export declare class OrdersController {
         deliveryEtaMinutes: number | undefined;
         deliveryZoneId: string | undefined;
         deliveryZoneName: string | undefined;
+        deliveryZone: {
+            id: any;
+            nameEn: any;
+            nameAr: any;
+            city: any;
+            region: any;
+            feeCents: any;
+            etaMinutes: any;
+            isActive: any;
+            freeDeliveryThresholdCents: any;
+            minOrderAmountCents: any;
+        } | undefined;
         address: {
             id: string;
             label: string | null;

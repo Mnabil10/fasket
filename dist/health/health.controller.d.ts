@@ -6,6 +6,7 @@ export declare class HealthController {
     private readonly prisma;
     private readonly config;
     constructor(health: HealthCheckService, prisma: PrismaService, config: ConfigService);
+    private redisEnabled;
     private prismaCheck;
     private redisCheck;
     private queueCheck;

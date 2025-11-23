@@ -61,8 +61,9 @@ exports.AppModule = AppModule = __decorate([
                 useFactory: async (config) => {
                     const logger = new common_1.Logger('Cache');
                     const ttl = Number(config.get('CACHE_DEFAULT_TTL') ?? 60);
-                    const redisUrl = config.get('REDIS_URL');
-                    if (redisUrl) {
+                    const redisEnabled = (config.get('REDIS_ENABLED') ?? 'true') !== 'false';
+                    const redisUrl = redisEnabled ? config.get('REDIS_URL') : undefined;
+                    if (redisEnabled && redisUrl) {
                         let client = null;
                         try {
                             client = new ioredis_1.default(redisUrl, {
@@ -87,6 +88,9 @@ exports.AppModule = AppModule = __decorate([
                                 }
                             }
                         }
+                    }
+                    else if (!redisEnabled) {
+                        logger.warn('Redis cache disabled via REDIS_ENABLED=false');
                     }
                     return { ttl };
                 },

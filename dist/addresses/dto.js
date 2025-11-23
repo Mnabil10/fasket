@@ -11,59 +11,92 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UpdateAddressDto = exports.CreateAddressDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
+const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
 class CreateAddressDto {
 }
 exports.CreateAddressDto = CreateAddressDto;
 __decorate([
     (0, swagger_1.ApiProperty)({ description: 'Delivery zone identifier selected from backend-provided dropdown' }),
+    (0, class_transformer_1.Transform)(({ value }) => (value === undefined || value === null ? undefined : String(value).trim())),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateAddressDto.prototype, "zoneId", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (value === undefined || value === null ? undefined : String(value))),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateAddressDto.prototype, "label", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (value === undefined || value === null ? undefined : String(value))),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateAddressDto.prototype, "city", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (value === undefined || value === null ? undefined : String(value))),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateAddressDto.prototype, "region", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (value === undefined || value === null ? undefined : String(value))),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateAddressDto.prototype, "street", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (value === undefined || value === null ? undefined : String(value))),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateAddressDto.prototype, "building", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (value === undefined || value === null ? undefined : String(value))),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateAddressDto.prototype, "apartment", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (value === undefined || value === null ? undefined : String(value))),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateAddressDto.prototype, "notes", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => {
+        if (value === undefined || value === null || value === '')
+            return undefined;
+        if (typeof value === 'boolean')
+            return value;
+        const normalized = String(value).toLowerCase();
+        if (['true', '1', 'yes', 'on'].includes(normalized))
+            return true;
+        if (['false', '0', 'no', 'off'].includes(normalized))
+            return false;
+        return value;
+    }),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], CreateAddressDto.prototype, "isDefault", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => {
+        if (value === undefined || value === null || value === '')
+            return undefined;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : value;
+    }),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsNumber)(),
     (0, class_validator_1.Min)(-90),
@@ -72,6 +105,12 @@ __decorate([
 ], CreateAddressDto.prototype, "lat", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => {
+        if (value === undefined || value === null || value === '')
+            return undefined;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : value;
+    }),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsNumber)(),
     (0, class_validator_1.Min)(-180),

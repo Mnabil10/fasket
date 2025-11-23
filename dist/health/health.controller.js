@@ -22,11 +22,16 @@ let HealthController = class HealthController {
         this.prisma = prisma;
         this.config = config;
     }
+    redisEnabled() {
+        return (this.config.get('REDIS_ENABLED') ?? 'true') !== 'false';
+    }
     async prismaCheck() {
         await this.prisma.$queryRaw `SELECT 1`;
         return { postgres: { status: 'up' } };
     }
     async redisCheck() {
+        if (!this.redisEnabled())
+            return { redis: { status: 'down', message: 'disabled' } };
         const redisUrl = this.config.get('REDIS_URL');
         if (!redisUrl)
             return { redis: { status: 'down', message: 'REDIS_URL missing' } };
@@ -41,6 +46,8 @@ let HealthController = class HealthController {
         }
     }
     async queueCheck() {
+        if (!this.redisEnabled())
+            return { notificationsQueue: { status: 'down', message: 'disabled' } };
         const redisUrl = this.config.get('REDIS_URL');
         if (!redisUrl)
             return { notificationsQueue: { status: 'down', message: 'REDIS_URL missing' } };

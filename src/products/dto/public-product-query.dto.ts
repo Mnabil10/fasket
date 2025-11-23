@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { normalizeLang } from '../../common/utils/localize.util';
 
 export class PublicProductListDto extends PaginationDto {
   @ApiPropertyOptional()
@@ -34,6 +35,9 @@ export class PublicProductListDto extends PaginationDto {
   @ApiPropertyOptional({ enum: ['en', 'ar'] })
   @IsOptional()
   @IsIn(['en', 'ar'])
+  @Transform(({ value }) => {
+    return normalizeLang(value);
+  })
   lang?: 'en' | 'ar';
 
   @ApiPropertyOptional({ enum: ['createdAt', 'priceCents', 'name'], default: 'createdAt' })
@@ -51,5 +55,8 @@ export class PublicProductFeedDto extends PaginationDto {
   @ApiPropertyOptional({ enum: ['en', 'ar'] })
   @IsOptional()
   @IsIn(['en', 'ar'])
+  @Transform(({ value }) => {
+    return normalizeLang(value);
+  })
   lang?: 'en' | 'ar';
 }

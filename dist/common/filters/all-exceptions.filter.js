@@ -13,6 +13,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AllExceptionsFilter = void 0;
 const common_1 = require("@nestjs/common");
 const Sentry = require("@sentry/node");
+const crypto_1 = require("crypto");
 const request_context_service_1 = require("../context/request-context.service");
 const errors_1 = require("../errors");
 let AllExceptionsFilter = AllExceptionsFilter_1 = class AllExceptionsFilter {
@@ -25,7 +26,8 @@ let AllExceptionsFilter = AllExceptionsFilter_1 = class AllExceptionsFilter {
         const response = ctx.getResponse();
         const request = ctx.getRequest();
         const correlationId = this.context.get('correlationId') ||
-            request.headers['x-correlation-id'];
+            request.headers['x-correlation-id'] ||
+            (0, crypto_1.randomUUID)();
         const userId = this.context.get('userId');
         let status = common_1.HttpStatus.INTERNAL_SERVER_ERROR;
         let message = 'Internal server error';
@@ -44,17 +46,19 @@ let AllExceptionsFilter = AllExceptionsFilter_1 = class AllExceptionsFilter {
                 message = res;
             }
             else if (typeof res === 'object') {
-                let responseMessage = res.message;
-                if (Array.isArray(responseMessage)) {
-                    details = { errors: responseMessage };
-                    responseMessage = 'Validation failed';
+                const responseBody = res;
+                const rawMessage = responseBody.message;
+                const validationErrors = Array.isArray(rawMessage) ? rawMessage : responseBody.errors;
+                if (Array.isArray(validationErrors) && validationErrors.length > 0) {
+                    details = { errors: validationErrors };
+                    message = 'Validation failed';
                 }
                 else {
-                    details = res.details ?? res.errors;
+                    details = responseBody.details ?? responseBody.errors;
+                    message = (typeof rawMessage === 'string' && rawMessage) || message;
                 }
-                message = responseMessage || message;
-                if (res.code && Object.values(errors_1.ErrorCode).includes(res.code)) {
-                    code = res.code;
+                if (responseBody.code && Object.values(errors_1.ErrorCode).includes(responseBody.code)) {
+                    code = responseBody.code;
                 }
                 if (!code && status === common_1.HttpStatus.BAD_REQUEST) {
                     code = errors_1.ErrorCode.VALIDATION_FAILED;
@@ -91,10 +95,10 @@ let AllExceptionsFilter = AllExceptionsFilter_1 = class AllExceptionsFilter {
         if (response.headersSent) {
             return;
         }
+        response.setHeader('x-correlation-id', correlationId);
         response.status(status).json({
             success: false,
-            error: { code, message },
-            code,
+            code: code || errors_1.ErrorCode.INTERNAL_ERROR,
             message,
             details,
             correlationId,

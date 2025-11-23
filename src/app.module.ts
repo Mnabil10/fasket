@@ -50,9 +50,10 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
       useFactory: async (config: ConfigService) => {
         const logger = new Logger('Cache');
         const ttl = Number(config.get('CACHE_DEFAULT_TTL') ?? 60);
-        const redisUrl = config.get<string>('REDIS_URL');
+        const redisEnabled = (config.get<string>('REDIS_ENABLED') ?? 'true') !== 'false';
+        const redisUrl = redisEnabled ? config.get<string>('REDIS_URL') : undefined;
 
-        if (redisUrl) {
+        if (redisEnabled && redisUrl) {
           let client: Redis | null = null;
           try {
             client = new Redis(redisUrl, {
@@ -77,6 +78,8 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
               }
             }
           }
+        } else if (!redisEnabled) {
+          logger.warn('Redis cache disabled via REDIS_ENABLED=false');
         }
 
         return { ttl };

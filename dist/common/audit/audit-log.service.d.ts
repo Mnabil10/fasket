@@ -10,5 +10,6 @@ export declare class AuditLogService {
         entityId?: string;
         before?: Record<string, any> | null;
         after?: Record<string, any> | null;
+        actorId?: string;
     }): Promise<void>;
 }

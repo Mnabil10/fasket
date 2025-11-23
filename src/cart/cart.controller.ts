@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Param, ParseEnumPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CartService } from './cart.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AddToCartDto, ApplyCouponDto, UpdateCartItemDto } from './dto';
 import { CurrentUserPayload } from '../common/types/current-user.type';
+import { LangNormalizePipe } from '../common/pipes/lang-normalize.pipe';
 
 @ApiTags('Cart')
 @ApiBearerAuth() 
@@ -18,7 +19,7 @@ export class CartController {
   @ApiQuery({ name: 'addressId', required: false })
   get(
     @CurrentUser() user: CurrentUserPayload,
-    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('lang', LangNormalizePipe) lang?: 'en' | 'ar',
     @Query('addressId') addressId?: string,
   ) {
     return this.service.get(user.userId, lang, addressId);
@@ -30,7 +31,7 @@ export class CartController {
   add(
     @CurrentUser() user: CurrentUserPayload,
     @Body() dto: AddToCartDto,
-    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('lang', LangNormalizePipe) lang?: 'en' | 'ar',
     @Query('addressId') addressId?: string,
   ) {
     return this.service.add(user.userId, dto, lang, addressId);
@@ -42,7 +43,7 @@ export class CartController {
   applyCoupon(
     @CurrentUser() user: CurrentUserPayload,
     @Body() dto: ApplyCouponDto,
-    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('lang', LangNormalizePipe) lang?: 'en' | 'ar',
     @Query('addressId') addressId?: string,
   ) {
     return this.service.applyCoupon(user.userId, dto, lang, addressId);
@@ -55,7 +56,7 @@ export class CartController {
     @CurrentUser() user: CurrentUserPayload,
     @Param('id') id: string,
     @Body() dto: UpdateCartItemDto,
-    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('lang', LangNormalizePipe) lang?: 'en' | 'ar',
     @Query('addressId') addressId?: string,
   ) {
     return this.service.updateQty(user.userId, id, dto.qty, lang, addressId);
@@ -67,7 +68,7 @@ export class CartController {
   remove(
     @CurrentUser() user: CurrentUserPayload,
     @Param('id') id: string,
-    @Query('lang', new ParseEnumPipe(['en', 'ar'], { optional: true })) lang?: 'en' | 'ar',
+    @Query('lang', LangNormalizePipe) lang?: 'en' | 'ar',
     @Query('addressId') addressId?: string,
   ) {
     return this.service.remove(user.userId, id, lang, addressId);

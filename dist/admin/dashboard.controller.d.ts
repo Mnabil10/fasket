@@ -13,6 +13,7 @@ export declare class AdminDashboardController {
         byStatus: (Prisma.PickEnumerable<Prisma.OrderGroupByOutputType, Prisma.OrderScalarFieldEnum | Prisma.OrderScalarFieldEnum[]> & {
             _count: true | {
                 id?: number | undefined;
+                code?: number | undefined;
                 userId?: number | undefined;
                 cartId?: number | undefined;
                 addressId?: number | undefined;
@@ -59,6 +60,7 @@ export declare class AdminDashboardController {
             } | undefined;
             _min: {
                 id?: string | null | undefined;
+                code?: string | null | undefined;
                 userId?: string | null | undefined;
                 cartId?: string | null | undefined;
                 addressId?: string | null | undefined;
@@ -84,6 +86,7 @@ export declare class AdminDashboardController {
             } | undefined;
             _max: {
                 id?: string | null | undefined;
+                code?: string | null | undefined;
                 userId?: string | null | undefined;
                 cartId?: string | null | undefined;
                 addressId?: string | null | undefined;

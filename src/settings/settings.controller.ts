@@ -12,4 +12,33 @@ export class SettingsController {
     const zones = await this.settings.getActiveDeliveryZones();
     return zones;
   }
+
+  @Get('app')
+  async getAppSettings() {
+    const [settings, delivery, loyalty] = await Promise.all([
+      this.settings.getSettings(),
+      this.settings.getDeliveryConfig(),
+      this.settings.getLoyaltyConfig(),
+    ]);
+    return {
+      store: {
+        name: settings.storeName,
+        nameAr: settings.storeNameAr ?? undefined,
+        description: settings.storeDescription ?? undefined,
+        descriptionAr: settings.storeDescriptionAr ?? undefined,
+        contactEmail: settings.contactEmail ?? undefined,
+        contactPhone: settings.contactPhone ?? undefined,
+        address: settings.storeAddress ?? undefined,
+        currency: settings.currency,
+        timezone: settings.timezone,
+        language: settings.language,
+        maintenanceMode: settings.maintenanceMode ?? false,
+      },
+      delivery,
+      loyalty,
+      payment: settings.payment ?? undefined,
+      notifications: settings.notifications ?? undefined,
+      businessHours: settings.businessHours ?? undefined,
+    };
+  }
 }

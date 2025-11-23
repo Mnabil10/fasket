@@ -1,8 +1,10 @@
 import { DeliveryDriversService } from '../delivery-drivers/delivery-drivers.service';
-import { CreateDriverDto, UpdateDriverDto, UpdateDriverStatusDto, UpsertVehicleDto } from '../delivery-drivers/dto/driver.dto';
+import { UpdateDriverDto, UpdateDriverStatusDto, UpsertVehicleDto } from '../delivery-drivers/dto/driver.dto';
+import { UploadsService } from 'src/uploads/uploads.service';
 export declare class AdminDeliveryDriversController {
     private readonly drivers;
-    constructor(drivers: DeliveryDriversService);
+    private readonly uploads;
+    constructor(drivers: DeliveryDriversService, uploads: UploadsService);
     list(search?: string, isActive?: string, page?: number, pageSize?: number): Promise<{
         items: ({
             vehicle: {
@@ -50,7 +52,22 @@ export declare class AdminDeliveryDriversController {
         nationalId: string;
         nationalIdImageUrl: string | null;
     }>;
-    create(dto: CreateDriverDto): import(".prisma/client").Prisma.Prisma__DeliveryDriverClient<{
+    create(body: any, files: {
+        nationalIdImage?: Express.Multer.File[];
+        'vehicle.licenseImage'?: Express.Multer.File[];
+        vehicleLicenseImage?: Express.Multer.File[];
+    }): Promise<({
+        vehicle: {
+            type: string;
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            driverId: string;
+            plateNumber: string;
+            licenseImageUrl: string | null;
+            color: string | null;
+        } | null;
+    } & {
         id: string;
         phone: string;
         createdAt: Date;
@@ -59,7 +76,7 @@ export declare class AdminDeliveryDriversController {
         fullName: string;
         nationalId: string;
         nationalIdImageUrl: string | null;
-    }, never, import("@prisma/client/runtime/library").DefaultArgs>;
+    }) | null>;
     update(id: string, dto: UpdateDriverDto): Promise<{
         id: string;
         phone: string;
@@ -80,14 +97,30 @@ export declare class AdminDeliveryDriversController {
         nationalId: string;
         nationalIdImageUrl: string | null;
     }>;
-    upsertVehicle(id: string, dto: UpsertVehicleDto): Promise<{
-        type: string;
+    upsertVehicle(id: string, dto: UpsertVehicleDto): Promise<({
+        vehicle: {
+            type: string;
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            driverId: string;
+            plateNumber: string;
+            licenseImageUrl: string | null;
+            color: string | null;
+        } | null;
+    } & {
         id: string;
+        phone: string;
         createdAt: Date;
         updatedAt: Date;
-        driverId: string;
-        plateNumber: string;
-        licenseImageUrl: string | null;
-        color: string | null;
-    }>;
+        isActive: boolean;
+        fullName: string;
+        nationalId: string;
+        nationalIdImageUrl: string | null;
+    }) | null>;
+    private normalizeCreatePayload;
+    private extractVehicle;
+    private pickFirst;
+    private ensureFileAllowed;
+    private validateCreateDto;
 }

@@ -1,19 +1,38 @@
 import { OrderStatus } from '@prisma/client';
 
 export class OrderReceiptDto {
-  orderId!: string;
+  id!: string;
+  code!: string;
   createdAt!: Date;
   status!: OrderStatus;
   customer!: { id: string; name: string; phone: string };
   address!: {
-    label?: string;
     street?: string;
     city?: string;
     region?: string;
-    zoneId?: string;
-    zoneName?: string;
+    building?: string;
+    apartment?: string;
+    notes?: string;
+    label?: string;
   };
-  driver?: { id: string; fullName: string; phone: string };
+  deliveryZone!: {
+    id: string;
+    name: string;
+    city?: string;
+    region?: string;
+    deliveryFeeCents: number;
+    freeDeliveryThresholdCents?: number | null;
+    minOrderCents?: number | null;
+    etaMinutes?: number | null;
+    isActive?: boolean;
+  } | null;
+  driver!: {
+    id: string;
+    fullName: string;
+    phone?: string | null;
+    vehicleType?: string | null;
+    plateNumber?: string | null;
+  } | null;
   items!: {
     productId: string;
     productName: string;
@@ -26,7 +45,7 @@ export class OrderReceiptDto {
   loyaltyDiscountCents!: number;
   shippingFeeCents!: number;
   totalCents!: number;
-  loyaltyPointsUsed!: number;
+  loyaltyPointsRedeemed!: number;
   loyaltyPointsEarned!: number;
   currency!: string;
 }

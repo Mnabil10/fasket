@@ -2,6 +2,7 @@ export declare class CreateAddressDto {
     zoneId: string;
     label?: string;
     city?: string;
+    region?: string;
     street?: string;
     building?: string;
     apartment?: string;

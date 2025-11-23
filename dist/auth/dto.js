@@ -49,7 +49,14 @@ class LoginDto {
 exports.LoginDto = LoginDto;
 __decorate([
     (0, swagger_1.ApiProperty)({ description: 'Phone number or email address', example: '+201234567890 or user@fasket.com' }),
-    (0, class_transformer_1.Transform)(({ value, obj }) => (0, sanitize_util_1.cleanString)(String(value ?? obj.identifier ?? obj.phone ?? obj.email ?? obj.username ?? obj.login ?? ''))),
+    (0, class_transformer_1.Transform)(({ value, obj }) => (0, sanitize_util_1.cleanString)(String(value ??
+        obj.identifier ??
+        obj.phoneOrEmail ??
+        obj.phone ??
+        obj.email ??
+        obj.username ??
+        obj.login ??
+        ''))),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], LoginDto.prototype, "identifier", void 0);

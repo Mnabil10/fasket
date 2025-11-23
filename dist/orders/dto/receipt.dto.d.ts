@@ -1,6 +1,7 @@
 import { OrderStatus } from '@prisma/client';
 export declare class OrderReceiptDto {
-    orderId: string;
+    id: string;
+    code: string;
     createdAt: Date;
     status: OrderStatus;
     customer: {
@@ -9,18 +10,32 @@ export declare class OrderReceiptDto {
         phone: string;
     };
     address: {
-        label?: string;
         street?: string;
         city?: string;
         region?: string;
-        zoneId?: string;
-        zoneName?: string;
+        building?: string;
+        apartment?: string;
+        notes?: string;
+        label?: string;
     };
-    driver?: {
+    deliveryZone: {
+        id: string;
+        name: string;
+        city?: string;
+        region?: string;
+        deliveryFeeCents: number;
+        freeDeliveryThresholdCents?: number | null;
+        minOrderCents?: number | null;
+        etaMinutes?: number | null;
+        isActive?: boolean;
+    } | null;
+    driver: {
         id: string;
         fullName: string;
-        phone: string;
-    };
+        phone?: string | null;
+        vehicleType?: string | null;
+        plateNumber?: string | null;
+    } | null;
     items: {
         productId: string;
         productName: string;
@@ -33,7 +48,7 @@ export declare class OrderReceiptDto {
     loyaltyDiscountCents: number;
     shippingFeeCents: number;
     totalCents: number;
-    loyaltyPointsUsed: number;
+    loyaltyPointsRedeemed: number;
     loyaltyPointsEarned: number;
     currency: string;
 }

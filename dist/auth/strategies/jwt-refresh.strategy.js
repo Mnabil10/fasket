@@ -20,12 +20,21 @@ let JwtRefreshStrategy = class JwtRefreshStrategy extends (0, passport_1.Passpor
         if (!secret) {
             throw new Error('JWT_REFRESH_SECRET is not configured');
         }
+        const refreshTokenExtractor = (req) => {
+            if (!req)
+                return null;
+            const headerToken = req.headers['x-refresh-token'];
+            const cookieToken = req?.cookies?.refreshToken ?? req?.signedCookies?.refreshToken;
+            const bodyToken = req.body?.refreshToken;
+            const bearerToken = passport_jwt_1.ExtractJwt.fromAuthHeaderAsBearerToken()(req);
+            if (typeof headerToken === 'string')
+                return headerToken;
+            if (Array.isArray(headerToken))
+                return headerToken[0];
+            return bodyToken || cookieToken || bearerToken;
+        };
         super({
-            jwtFromRequest: passport_jwt_1.ExtractJwt.fromExtractors([
-                passport_jwt_1.ExtractJwt.fromAuthHeaderAsBearerToken(),
-                passport_jwt_1.ExtractJwt.fromBodyField('refreshToken'),
-                passport_jwt_1.ExtractJwt.fromHeader('x-refresh-token'),
-            ]),
+            jwtFromRequest: passport_jwt_1.ExtractJwt.fromExtractors([refreshTokenExtractor]),
             secretOrKey: secret,
             ignoreExpiration: false,
         });

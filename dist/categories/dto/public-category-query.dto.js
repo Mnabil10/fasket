@@ -11,8 +11,10 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PublicCategoryListDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
+const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
 const pagination_dto_1 = require("../../common/dto/pagination.dto");
+const localize_util_1 = require("../../common/utils/localize.util");
 class PublicCategoryListDto extends pagination_dto_1.PaginationDto {
     constructor() {
         super(...arguments);
@@ -24,6 +26,9 @@ __decorate([
     (0, swagger_1.ApiPropertyOptional)({ enum: ['en', 'ar'] }),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsIn)(['en', 'ar']),
+    (0, class_transformer_1.Transform)(({ value }) => {
+        return (0, localize_util_1.normalizeLang)(value);
+    }),
     __metadata("design:type", String)
 ], PublicCategoryListDto.prototype, "lang", void 0);
 __decorate([

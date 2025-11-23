@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { normalizeLang } from '../../common/utils/localize.util';
 
 export class LoyaltyHistoryQueryDto {
   @ApiPropertyOptional({ description: 'Number of recent transactions to return', minimum: 1, maximum: 50 })
@@ -8,6 +10,14 @@ export class LoyaltyHistoryQueryDto {
   @Min(1)
   @Max(50)
   limit?: number;
+
+  @ApiPropertyOptional({ description: 'Optional language hint; ignored by service', enum: ['en', 'ar'] })
+  @Transform(({ value }) => {
+    return normalizeLang(value);
+  })
+  @IsOptional()
+  @IsString()
+  lang?: string;
 }
 
 export class AdjustLoyaltyPointsDto {

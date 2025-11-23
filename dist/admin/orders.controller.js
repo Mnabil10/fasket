@@ -21,24 +21,22 @@ const admin_service_1 = require("./admin.service");
 const order_status_dto_1 = require("./dto/order-status.dto");
 const pagination_dto_1 = require("./dto/pagination.dto");
 const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
-const delivery_drivers_service_1 = require("../delivery-drivers/delivery-drivers.service");
 const driver_dto_1 = require("../delivery-drivers/dto/driver.dto");
 const notifications_service_1 = require("../notifications/notifications.service");
 const receipt_service_1 = require("../orders/receipt.service");
 const client_1 = require("@prisma/client");
-const loyalty_service_1 = require("../loyalty/loyalty.service");
 const audit_log_service_1 = require("../common/audit/audit-log.service");
+const orders_service_1 = require("../orders/orders.service");
 let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersController {
-    constructor(svc, drivers, notifications, receipts, loyalty, audit) {
+    constructor(svc, notifications, receipts, audit, orders) {
         this.svc = svc;
-        this.drivers = drivers;
         this.notifications = notifications;
         this.receipts = receipts;
-        this.loyalty = loyalty;
         this.audit = audit;
+        this.orders = orders;
         this.logger = new common_1.Logger(AdminOrdersController_1.name);
     }
-    async list(status, from, to, customer, minTotalCents, maxTotalCents, page) {
+    async list(status, from, to, customer, minTotalCents, maxTotalCents, driverId, page) {
         const where = {};
         if (status)
             where.status = status;
@@ -64,12 +62,16 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
             if (maxTotalCents)
                 where.totalCents.lte = Number(maxTotalCents);
         }
+        if (driverId) {
+            where.driverId = driverId;
+        }
         const [items, total] = await this.svc.prisma.$transaction([
             this.svc.prisma.order.findMany({
                 where,
                 orderBy: { createdAt: 'desc' },
                 include: {
                     user: { select: { id: true, name: true, phone: true } },
+                    driver: { select: { id: true, fullName: true, phone: true } },
                 },
                 skip: page?.skip, take: page?.take,
             }),
@@ -80,7 +82,20 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
     one(id) {
         return this.svc.prisma.order.findUnique({
             where: { id },
-            include: { items: true, address: true, user: true, statusHistory: true },
+            include: {
+                items: true,
+                address: true,
+                user: true,
+                statusHistory: true,
+                driver: {
+                    select: {
+                        id: true,
+                        fullName: true,
+                        phone: true,
+                        vehicle: { select: { type: true, plateNumber: true } },
+                    },
+                },
+            },
         });
     }
     getReceipt(id) {
@@ -98,21 +113,8 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
             await tx.orderStatusHistory.create({
                 data: { orderId: id, from: before.status, to: nextStatus, note: dto.note, actorId: user.userId },
             });
-            if (nextStatus === client_1.OrderStatus.DELIVERED &&
-                before.status !== client_1.OrderStatus.DELIVERED &&
-                (before.loyaltyPointsEarned ?? 0) === 0) {
-                loyaltyEarned = await this.loyalty.awardPoints({
-                    userId: before.userId,
-                    subtotalCents: before.subtotalCents,
-                    tx,
-                    orderId: before.id,
-                });
-                if (loyaltyEarned > 0) {
-                    await tx.order.update({
-                        where: { id },
-                        data: { loyaltyPointsEarned: { increment: loyaltyEarned } },
-                    });
-                }
+            if (nextStatus === client_1.OrderStatus.DELIVERED) {
+                loyaltyEarned = await this.orders.awardLoyaltyForOrder(id, tx);
             }
         });
         const statusKey = nextStatus === client_1.OrderStatus.OUT_FOR_DELIVERY
@@ -136,22 +138,10 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
         this.logger.log({ msg: 'Order status updated', orderId: id, from: before.status, to: dto.to, actorId: user.userId });
         return { ok: true };
     }
-    async assignDriver(id, dto) {
-        const result = await this.drivers.assignDriverToOrder(id, dto.driverId);
-        await this.notifications.notify('order_assigned_driver', result.order.userId, {
-            orderId: id,
-            driverId: result.driver.id,
-            driverName: result.driver.fullName,
-            driverPhone: result.driver.phone,
-        });
-        await this.audit.log({
-            action: 'order.assign-driver',
-            entity: 'order',
-            entityId: id,
-            after: { driverId: result.driver.id },
-        });
+    async assignDriver(id, dto, admin) {
+        const result = await this.orders.assignDriverToOrder(id, dto.driverId, admin.userId);
         this.logger.log({ msg: 'Driver assigned', orderId: id, driverId: result.driver.id });
-        return { ok: true };
+        return { success: true, data: result };
     }
 };
 exports.AdminOrdersController = AdminOrdersController;
@@ -163,6 +153,7 @@ __decorate([
     (0, swagger_1.ApiQuery)({ name: 'customer', required: false }),
     (0, swagger_1.ApiQuery)({ name: 'minTotalCents', required: false, schema: { type: 'integer' } }),
     (0, swagger_1.ApiQuery)({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } }),
+    (0, swagger_1.ApiQuery)({ name: 'driverId', required: false }),
     (0, swagger_1.ApiOkResponse)({ description: 'Paginated orders with filters' }),
     __param(0, (0, common_1.Query)('status')),
     __param(1, (0, common_1.Query)('from')),
@@ -170,9 +161,10 @@ __decorate([
     __param(3, (0, common_1.Query)('customer')),
     __param(4, (0, common_1.Query)('minTotalCents')),
     __param(5, (0, common_1.Query)('maxTotalCents')),
-    __param(6, (0, common_1.Query)()),
+    __param(6, (0, common_1.Query)('driverId')),
+    __param(7, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, String, String, String, String, pagination_dto_1.PaginationDto]),
+    __metadata("design:paramtypes", [String, String, String, String, String, String, String, pagination_dto_1.PaginationDto]),
     __metadata("design:returntype", Promise)
 ], AdminOrdersController.prototype, "list", null);
 __decorate([
@@ -199,11 +191,12 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], AdminOrdersController.prototype, "updateStatus", null);
 __decorate([
-    (0, common_1.Post)(':id/assign-driver'),
+    (0, common_1.Patch)(':id/assign-driver'),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
+    __param(2, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, driver_dto_1.AssignDriverDto]),
+    __metadata("design:paramtypes", [String, driver_dto_1.AssignDriverDto, Object]),
     __metadata("design:returntype", Promise)
 ], AdminOrdersController.prototype, "assignDriver", null);
 exports.AdminOrdersController = AdminOrdersController = AdminOrdersController_1 = __decorate([
@@ -212,10 +205,9 @@ exports.AdminOrdersController = AdminOrdersController = AdminOrdersController_1 
     (0, _admin_guards_1.StaffOrAdmin)(),
     (0, common_1.Controller)({ path: 'admin/orders', version: ['1'] }),
     __metadata("design:paramtypes", [admin_service_1.AdminService,
-        delivery_drivers_service_1.DeliveryDriversService,
         notifications_service_1.NotificationsService,
         receipt_service_1.ReceiptService,
-        loyalty_service_1.LoyaltyService,
-        audit_log_service_1.AuditLogService])
+        audit_log_service_1.AuditLogService,
+        orders_service_1.OrdersService])
 ], AdminOrdersController);
 //# sourceMappingURL=orders.controller.js.map

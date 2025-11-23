@@ -4,6 +4,8 @@ export declare class RegisterDeviceDto {
     language?: string;
     appVersion?: string;
     deviceModel?: string;
+    preferences?: Record<string, any>;
+    userId?: string;
 }
 export declare class UnregisterDeviceDto {
     token: string;

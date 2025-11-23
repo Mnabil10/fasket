@@ -2,30 +2,34 @@ import { AdminService } from './admin.service';
 import { UpdateOrderStatusDto } from './dto/order-status.dto';
 import { PaginationDto } from './dto/pagination.dto';
 import { CurrentUserPayload } from '../common/types/current-user.type';
-import { DeliveryDriversService } from '../delivery-drivers/delivery-drivers.service';
 import { AssignDriverDto } from '../delivery-drivers/dto/driver.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ReceiptService } from '../orders/receipt.service';
-import { LoyaltyService } from '../loyalty/loyalty.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
+import { OrdersService } from '../orders/orders.service';
 export declare class AdminOrdersController {
     private readonly svc;
-    private readonly drivers;
     private readonly notifications;
     private readonly receipts;
-    private readonly loyalty;
     private readonly audit;
+    private readonly orders;
     private readonly logger;
-    constructor(svc: AdminService, drivers: DeliveryDriversService, notifications: NotificationsService, receipts: ReceiptService, loyalty: LoyaltyService, audit: AuditLogService);
-    list(status?: string, from?: string, to?: string, customer?: string, minTotalCents?: string, maxTotalCents?: string, page?: PaginationDto): Promise<{
+    constructor(svc: AdminService, notifications: NotificationsService, receipts: ReceiptService, audit: AuditLogService, orders: OrdersService);
+    list(status?: string, from?: string, to?: string, customer?: string, minTotalCents?: string, maxTotalCents?: string, driverId?: string, page?: PaginationDto): Promise<{
         items: ({
             user: {
                 id: string;
                 phone: string;
                 name: string;
             };
+            driver: {
+                id: string;
+                phone: string;
+                fullName: string;
+            } | null;
         } & {
             status: import(".prisma/client").$Enums.OrderStatus;
+            code: string;
             id: string;
             createdAt: Date;
             updatedAt: Date;
@@ -91,6 +95,15 @@ export declare class AdminOrdersController {
             lng: number | null;
             isDefault: boolean;
         } | null;
+        driver: {
+            id: string;
+            phone: string;
+            fullName: string;
+            vehicle: {
+                type: string;
+                plateNumber: string;
+            } | null;
+        } | null;
         statusHistory: {
             id: string;
             createdAt: Date;
@@ -102,6 +115,7 @@ export declare class AdminOrdersController {
         }[];
     } & {
         status: import(".prisma/client").$Enums.OrderStatus;
+        code: string;
         id: string;
         createdAt: Date;
         updatedAt: Date;
@@ -133,7 +147,18 @@ export declare class AdminOrdersController {
         ok: boolean;
         message?: undefined;
     }>;
-    assignDriver(id: string, dto: AssignDriverDto): Promise<{
-        ok: boolean;
+    assignDriver(id: string, dto: AssignDriverDto, admin: CurrentUserPayload): Promise<{
+        success: boolean;
+        data: {
+            orderId: string;
+            driverAssignedAt: Date | null;
+            driver: {
+                id: string;
+                fullName: string;
+                phone: string;
+                vehicleType: string | undefined;
+                plateNumber: string | undefined;
+            };
+        };
     }>;
 }

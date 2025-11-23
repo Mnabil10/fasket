@@ -13,6 +13,7 @@ declare const baseSchema: z.ZodObject<{
     RATE_LIMIT_MAX: z.ZodDefault<z.ZodNumber>;
     AUTH_BRUTE_TTL: z.ZodDefault<z.ZodNumber>;
     AUTH_BRUTE_MAX: z.ZodDefault<z.ZodNumber>;
+    REDIS_ENABLED: z.ZodOptional<z.ZodEnum<["true", "false"]>>;
     REDIS_URL: z.ZodOptional<z.ZodString>;
     CACHE_DEFAULT_TTL: z.ZodDefault<z.ZodNumber>;
     CATEGORIES_CACHE_TTL: z.ZodOptional<z.ZodNumber>;
@@ -62,6 +63,7 @@ declare const baseSchema: z.ZodObject<{
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
+    REDIS_ENABLED?: "true" | "false" | undefined;
     REDIS_URL?: string | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
@@ -102,6 +104,7 @@ declare const baseSchema: z.ZodObject<{
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
+    REDIS_ENABLED?: "true" | "false" | undefined;
     REDIS_URL?: string | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
@@ -152,6 +155,7 @@ export declare function validateEnv(config: Record<string, unknown>): {
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
+    REDIS_ENABLED?: "true" | "false" | undefined;
     REDIS_URL?: string | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;

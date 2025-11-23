@@ -16,12 +16,14 @@ const settings_controller_1 = require("./settings.controller");
 const dashboard_controller_1 = require("./dashboard.controller");
 const admin_service_1 = require("./admin.service");
 const coupons_controller_1 = require("./coupons.controller");
+const loyalty_controller_1 = require("./loyalty.controller");
 const uploads_module_1 = require("../uploads/uploads.module");
 const products_bulk_service_1 = require("./products-bulk.service");
 const delivery_drivers_controller_1 = require("./delivery-drivers.controller");
 const delivery_drivers_module_1 = require("../delivery-drivers/delivery-drivers.module");
 const notifications_module_1 = require("../notifications/notifications.module");
 const orders_module_1 = require("../orders/orders.module");
+const delivery_zones_controller_1 = require("./delivery-zones.controller");
 let AdminModule = class AdminModule {
 };
 exports.AdminModule = AdminModule;
@@ -36,6 +38,8 @@ exports.AdminModule = AdminModule = __decorate([
             dashboard_controller_1.AdminDashboardController,
             coupons_controller_1.AdminCouponsController,
             delivery_drivers_controller_1.AdminDeliveryDriversController,
+            delivery_zones_controller_1.AdminDeliveryZonesController,
+            loyalty_controller_1.AdminLoyaltyController,
         ],
         imports: [
             uploads_module_1.UploadsModule,

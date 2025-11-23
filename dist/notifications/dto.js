@@ -22,7 +22,14 @@ class RegisterDeviceDto {
 exports.RegisterDeviceDto = RegisterDeviceDto;
 __decorate([
     (0, swagger_1.ApiProperty)({ description: 'Push token from FCM/OneSignal/APNS' }),
-    (0, class_transformer_1.Transform)(({ value }) => (0, sanitize_util_1.cleanString)(value)),
+    (0, class_transformer_1.Transform)(({ value, obj }) => {
+        const source = value ??
+            obj?.token ??
+            obj?.deviceToken ??
+            obj?.fcmToken ??
+            obj?.pushToken;
+        return (0, sanitize_util_1.cleanString)(source);
+    }),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MinLength)(10),
     __metadata("design:type", String)
@@ -68,6 +75,18 @@ __decorate([
     (0, class_validator_1.MaxLength)(64),
     __metadata("design:type", String)
 ], RegisterDeviceDto.prototype, "deviceModel", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Client-side preferences payload (optional)' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], RegisterDeviceDto.prototype, "preferences", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Optional userId (ignored; derived from auth)' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterDeviceDto.prototype, "userId", void 0);
 class UnregisterDeviceDto {
 }
 exports.UnregisterDeviceDto = UnregisterDeviceDto;

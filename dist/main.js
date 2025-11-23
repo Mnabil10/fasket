@@ -120,7 +120,8 @@ async function bootstrap() {
             if (!host) {
                 return res.status(400).json({
                     success: false,
-                    error: { code: 'ERR_HOST_HEADER_REQUIRED', message: 'Host header missing for HTTPS redirect' },
+                    code: 'ERR_HOST_HEADER_REQUIRED',
+                    message: 'Host header missing for HTTPS redirect',
                     correlationId: req.headers['x-correlation-id'],
                 });
             }
