@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Address, Cart, Coupon, Prisma, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
@@ -96,24 +96,24 @@ export class CartService {
 
   async add(userId: string, dto: { productId: string; qty: number }, lang?: Lang, addressId?: string) {
     if (dto.qty < 1) {
-      throw new BadRequestException('Quantity must be at least 1');
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Quantity must be at least 1');
     }
     const cart = await this.ensureCart(userId);
     const product = await this.prisma.product.findFirst({
       where: { id: dto.productId, status: ProductStatus.ACTIVE, deletedAt: null },
     });
     if (!product) {
-      throw new BadRequestException('Product unavailable');
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
     }
     if (product.stock < dto.qty) {
-      throw new BadRequestException('Insufficient stock');
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
     const existing = await this.prisma.cartItem.findUnique({
       where: { cartId_productId: { cartId: cart.id, productId: dto.productId } },
     });
     const desiredQty = (existing?.qty ?? 0) + dto.qty;
     if (desiredQty > product.stock) {
-      throw new BadRequestException('Insufficient stock');
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
     const price = product.salePriceCents ?? product.priceCents;
     const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
@@ -133,11 +133,11 @@ export class CartService {
       include: { product: true },
     });
     if (!item) {
-      throw new BadRequestException('Item not found');
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Item not found in cart');
     }
     if (!item.product || item.product.deletedAt || item.product.status !== ProductStatus.ACTIVE) {
       await this.prisma.cartItem.delete({ where: { id: item.id } });
-      throw new BadRequestException('Product unavailable');
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
     }
     const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
     if (qty === 0) {
@@ -146,7 +146,7 @@ export class CartService {
     }
     const availableStock = item.product.stock ?? 0;
     if (qty > availableStock) {
-      throw new BadRequestException('Insufficient stock');
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
     const price = item.product.salePriceCents ?? item.product.priceCents ?? item.priceCents;
     await this.prisma.cartItem.update({
@@ -167,17 +167,24 @@ export class CartService {
     let cart = await this.ensureCart(userId);
     const snapshot = await this.loadCartSnapshot(cart.id, lang);
     if (!snapshot.items.length) {
-      throw new BadRequestException('Cart is empty');
+      throw new DomainError(ErrorCode.CART_EMPTY, 'Cart is empty');
     }
     const coupon = await this.prisma.coupon.findFirst({
       where: { code: dto.couponCode, isActive: true },
     });
     if (!coupon) {
-      throw new BadRequestException('Invalid coupon code');
+      throw new DomainError(ErrorCode.COUPON_INVALID, 'Invalid coupon code');
     }
     const validation = this.validateCoupon(coupon, snapshot.subtotalCents);
     if (validation.status !== 'VALID' && validation.status !== 'MIN_TOTAL') {
-      throw new BadRequestException(this.formatCouponValidationMessage(validation.status));
+      const message = this.formatCouponValidationMessage(validation.status);
+      const code =
+        validation.status === 'EXPIRED'
+          ? ErrorCode.COUPON_EXPIRED
+          : validation.status === 'INACTIVE'
+            ? ErrorCode.COUPON_INVALID
+            : ErrorCode.COUPON_INVALID;
+      throw new DomainError(code, message);
     }
     await this.prisma.cart.update({ where: { id: cart.id }, data: { couponCode: coupon.code } });
     cart = { ...cart, couponCode: coupon.code } as CartEntity;

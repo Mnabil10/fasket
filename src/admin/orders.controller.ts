@@ -1,9 +1,9 @@
 import { Body, Controller, Get, Logger, Param, Patch, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Prisma } from '@prisma/client';
 import { AdminOnly, StaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
 import { UpdateOrderStatusDto } from './dto/order-status.dto';
-import { PaginationDto } from './dto/pagination.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CurrentUserPayload } from '../common/types/current-user.type';
 import { AssignDriverDto } from '../delivery-drivers/dto/driver.dto';
@@ -12,6 +12,8 @@ import { ReceiptService } from '../orders/receipt.service';
 import { OrderStatus } from '@prisma/client';
 import { AuditLogService } from '../common/audit/audit-log.service';
 import { OrdersService } from '../orders/orders.service';
+import { AdminOrderListDto } from './dto/admin-order-list.dto';
+import { DomainError, ErrorCode } from '../common/errors';
 
 @ApiTags('Admin/Orders')
 @ApiBearerAuth()
@@ -37,37 +39,28 @@ export class AdminOrdersController {
   @ApiQuery({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'driverId', required: false })
   @ApiOkResponse({ description: 'Paginated orders with filters' })
-  async list(
-    @Query('status') status?: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('customer') customer?: string,
-    @Query('minTotalCents') minTotalCents?: string,
-    @Query('maxTotalCents') maxTotalCents?: string,
-    @Query('driverId') driverId?: string,
-    @Query() page?: PaginationDto,
-  ) {
-    const where: any = {};
-    if (status) where.status = status as any;
-    if (from || to) where.createdAt = {};
-    if (from) where.createdAt.gte = new Date(from);
-    if (to) where.createdAt.lte = new Date(to);
-    if (customer) {
+  async list(@Query() query: AdminOrderListDto) {
+    const where: Prisma.OrderWhereInput = {};
+    if (query.status) where.status = query.status;
+    if (query.from || query.to) where.createdAt = {};
+    if (query.from) (where.createdAt as Prisma.DateTimeFilter).gte = query.from;
+    if (query.to) (where.createdAt as Prisma.DateTimeFilter).lte = query.to;
+    if (query.customer) {
       where.user = {
         OR: [
-          { name: { contains: customer, mode: 'insensitive' } },
-          { phone: { contains: customer, mode: 'insensitive' } },
-          { email: { contains: customer, mode: 'insensitive' } },
+          { name: { contains: query.customer, mode: 'insensitive' } },
+          { phone: { contains: query.customer, mode: 'insensitive' } },
+          { email: { contains: query.customer, mode: 'insensitive' } },
         ],
       };
     }
-    if (minTotalCents || maxTotalCents) {
+    if (query.minTotalCents !== undefined || query.maxTotalCents !== undefined) {
       where.totalCents = {};
-      if (minTotalCents) where.totalCents.gte = Number(minTotalCents);
-      if (maxTotalCents) where.totalCents.lte = Number(maxTotalCents);
+      if (query.minTotalCents !== undefined) (where.totalCents as Prisma.IntFilter).gte = query.minTotalCents;
+      if (query.maxTotalCents !== undefined) (where.totalCents as Prisma.IntFilter).lte = query.maxTotalCents;
     }
-    if (driverId) {
-      where.driverId = driverId;
+    if (query.driverId) {
+      where.driverId = query.driverId;
     }
 
     const [items, total] = await this.svc.prisma.$transaction([
@@ -78,12 +71,13 @@ export class AdminOrdersController {
           user: { select: { id: true, name: true, phone: true } },
           driver: { select: { id: true, fullName: true, phone: true } },
         },
-        skip: page?.skip, take: page?.take,
+        skip: query.skip,
+        take: query.take,
       }),
       this.svc.prisma.order.count({ where }),
     ]);
 
-    return { items, total, page: page?.page, pageSize: page?.pageSize };
+    return { items, total, page: query.page, pageSize: query.pageSize };
   }
 
   @Get(':id')
@@ -116,11 +110,12 @@ export class AdminOrdersController {
   async updateStatus(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     const before = await this.svc.prisma.order.findUnique({ where: { id } });
     if (!before) {
-      return { ok: false, message: 'Order not found' };
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
     }
 
     const nextStatus = dto.to as OrderStatus;
     let loyaltyEarned = 0;
+    let loyaltyReversed = 0;
     await this.svc.prisma.$transaction(async (tx) => {
       await tx.order.update({ where: { id }, data: { status: nextStatus } });
       await tx.orderStatusHistory.create({
@@ -128,6 +123,8 @@ export class AdminOrdersController {
       });
       if (nextStatus === OrderStatus.DELIVERED) {
         loyaltyEarned = await this.orders.awardLoyaltyForOrder(id, tx);
+      } else if (nextStatus === OrderStatus.CANCELED) {
+        loyaltyReversed = await this.orders.revokeLoyaltyForOrder(id, tx);
       }
     });
 
@@ -142,6 +139,12 @@ export class AdminOrdersController {
     await this.notifications.notify(statusKey, before.userId, { orderId: id, status: nextStatus });
     if (loyaltyEarned > 0) {
       await this.notifications.notify('loyalty_earned', before.userId, { orderId: id, points: loyaltyEarned });
+    } else if (loyaltyReversed > 0) {
+      await this.notifications.notify('loyalty_redeemed', before.userId, {
+        orderId: id,
+        points: loyaltyReversed,
+        discountCents: 0,
+      });
     }
     await this.audit.log({
       action: 'order.status.change',
@@ -151,7 +154,8 @@ export class AdminOrdersController {
       after: { status: nextStatus, note: dto.note },
     });
     this.logger.log({ msg: 'Order status updated', orderId: id, from: before.status, to: dto.to, actorId: user.userId });
-    return { ok: true };
+    await this.orders.clearCachesForOrder(id, before.userId);
+    return { success: true };
   }
 
   @Patch(':id/assign-driver')

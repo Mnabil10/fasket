@@ -7,6 +7,7 @@ import { SettingsService } from '../settings/settings.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { DomainError, ErrorCode } from '../common/errors';
 import { AuditLogService } from '../common/audit/audit-log.service';
+import { CacheService } from '../common/cache/cache.service';
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
@@ -35,6 +36,8 @@ type PublicStatus = 'PENDING' | 'CONFIRMED' | 'DELIVERING' | 'COMPLETED' | 'CANC
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
+  private readonly listTtl = Number(process.env.ORDER_LIST_CACHE_TTL ?? 30);
+  private readonly receiptTtl = Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -42,23 +45,30 @@ export class OrdersService {
     private readonly settings: SettingsService,
     private readonly loyalty: LoyaltyService,
     private readonly audit: AuditLogService,
+    private readonly cache: CacheService,
   ) {}
 
   async list(userId: string) {
-    const orders = await this.prisma.order.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        code: true,
-        totalCents: true,
-        status: true,
-        createdAt: true,
-        loyaltyPointsUsed: true,
-        loyaltyDiscountCents: true,
-        loyaltyPointsEarned: true,
-      },
-    });
+    const cacheKey = this.cache.buildKey('orders:list', userId);
+    const orders = await this.cache.wrap(
+      cacheKey,
+      () =>
+        this.prisma.order.findMany({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            code: true,
+            totalCents: true,
+            status: true,
+            createdAt: true,
+            loyaltyPointsUsed: true,
+            loyaltyDiscountCents: true,
+            loyaltyPointsEarned: true,
+          },
+        }),
+      this.listTtl,
+    );
     return orders.map((order) => ({
       id: order.id,
       code: order.code,
@@ -72,25 +82,31 @@ export class OrdersService {
   }
 
   async detail(userId: string, id: string) {
-    const order = await this.prisma.order.findFirst({
-      where: { id, userId },
-      include: {
-        address: true,
-        driver: {
-          select: { id: true, fullName: true, phone: true },
-        },
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            productNameSnapshot: true,
-            priceSnapshotCents: true,
-            qty: true,
+    const cacheKey = this.cache.buildKey('orders:detail', id, userId);
+    const order = await this.cache.wrap(
+      cacheKey,
+      () =>
+        this.prisma.order.findFirst({
+          where: { id, userId },
+          include: {
+            address: true,
+            driver: {
+              select: { id: true, fullName: true, phone: true },
+            },
+            items: {
+              select: {
+                id: true,
+                productId: true,
+                productNameSnapshot: true,
+                priceSnapshotCents: true,
+                qty: true,
+              },
+              orderBy: { id: 'asc' },
+            },
           },
-          orderBy: { id: 'asc' },
-        },
-      },
-    });
+        }),
+      this.listTtl,
+    );
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
     }
@@ -101,7 +117,20 @@ export class OrdersService {
   }
 
   async create(userId: string, payload: CreateOrderDto) {
-    const { orderId, loyaltyNotice } = await this.prisma.$transaction(async (tx) => {
+    const idempotencyKey = payload.idempotencyKey?.trim() || null;
+
+    if (idempotencyKey) {
+      const existing = await this.prisma.order.findFirst({
+        where: { userId, idempotencyKey },
+        select: { id: true },
+      });
+      if (existing) {
+        return this.detail(userId, existing.id);
+      }
+    }
+
+    try {
+      const { orderId, loyaltyNotice } = await this.prisma.$transaction(async (tx) => {
       const cart = await tx.cart.findUnique({
         where: { userId },
         include: { items: true },
@@ -139,29 +168,40 @@ export class OrdersService {
       });
 
       for (const item of sourceItems) {
+        const product = productMap.get(item.productId);
+        if (!product) {
+          throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
+        }
+
         const updated = await tx.product.updateMany({
-          where: { id: item.productId, status: ProductStatus.ACTIVE, stock: { gte: item.qty } },
+          where: {
+            id: item.productId,
+            status: ProductStatus.ACTIVE,
+            deletedAt: null,
+            stock: { gte: item.qty },
+          },
           data: { stock: { decrement: item.qty } },
         });
         if (updated.count !== 1) {
-          throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for ' + item.productId);
+          throw new DomainError(
+            ErrorCode.CART_PRODUCT_UNAVAILABLE,
+            `Insufficient stock for ${product.name || item.productId}`,
+          );
         }
-        const product = productMap.get(item.productId);
-        if (product) {
-          const previousStock = product.stock;
-          const newStock = previousStock - item.qty;
-          product.stock = newStock;
-          await tx.productStockLog.create({
-            data: {
-              productId: product.id,
-              previousStock,
-              newStock,
-              delta: newStock - previousStock,
-              reason: 'order.checkout',
-              actorId: userId,
-            },
-          });
-        }
+
+        const previousStock = product.stock;
+        const newStock = previousStock - item.qty;
+        product.stock = newStock;
+        await tx.productStockLog.create({
+          data: {
+            productId: product.id,
+            previousStock,
+            newStock,
+            delta: newStock - previousStock,
+            reason: 'order.checkout',
+            actorId: userId,
+          },
+        });
       }
 
       const address = await tx.address.findFirst({ where: { id: payload.addressId, userId } });
@@ -213,6 +253,7 @@ export class OrdersService {
         data: {
           userId,
           code,
+          idempotencyKey,
           status: OrderStatus.PENDING,
           paymentMethod: paymentMethod as PaymentMethod,
           subtotalCents,
@@ -269,18 +310,31 @@ export class OrdersService {
         await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
       }
       return { orderId: order.id, loyaltyNotice };
-    });
-
-    await this.notify.notify('order_created', userId, { orderId, status: OrderStatus.PENDING });
-    if (loyaltyNotice) {
-      await this.notify.notify('loyalty_redeemed', userId, {
-        orderId,
-        points: loyaltyNotice.pointsUsed,
-        discountCents: loyaltyNotice.discountCents,
       });
+
+      await this.notify.notify('order_created', userId, { orderId, status: OrderStatus.PENDING });
+      if (loyaltyNotice) {
+        await this.notify.notify('loyalty_redeemed', userId, {
+          orderId,
+          points: loyaltyNotice.pointsUsed,
+          discountCents: loyaltyNotice.discountCents,
+        });
+      }
+      this.logger.log({ msg: 'Order created', orderId, userId });
+      await this.clearCachesForOrder(orderId, userId);
+      return this.detail(userId, orderId);
+    } catch (error) {
+      if (idempotencyKey && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const existing = await this.prisma.order.findFirst({
+          where: { userId, idempotencyKey },
+          select: { id: true },
+        });
+        if (existing) {
+          return this.detail(userId, existing.id);
+        }
+      }
+      throw error;
     }
-    this.logger.log({ msg: 'Order created', orderId, userId });
-    return this.detail(userId, orderId);
   }
 
   async awardLoyaltyForOrder(orderId: string, tx?: Prisma.TransactionClient): Promise<number> {
@@ -332,6 +386,56 @@ export class OrdersService {
     if (tx) {
       return runner(tx);
     }
+    return this.prisma.$transaction(runner);
+  }
+
+  async revokeLoyaltyForOrder(orderId: string, tx?: Prisma.TransactionClient): Promise<number> {
+    const runner = async (client: Prisma.TransactionClient) => {
+      const order = await client.order.findUnique({
+        where: { id: orderId },
+        select: { id: true, userId: true, loyaltyPointsEarned: true },
+      });
+      if (!order || !order.loyaltyPointsEarned || order.loyaltyPointsEarned <= 0) {
+        return 0;
+      }
+
+      const existingAdjustment = await client.loyaltyTransaction.findFirst({
+        where: {
+          orderId,
+          type: 'ADJUST',
+          metadata: { path: ['reason'], equals: 'order.cancel' },
+        },
+      });
+      if (existingAdjustment) {
+        return Math.abs(existingAdjustment.points ?? 0);
+      }
+
+      const user = await client.user.findUnique({
+        where: { id: order.userId },
+        select: { loyaltyPoints: true },
+      });
+      if (!user) return 0;
+
+      const adjustment = Math.min(order.loyaltyPointsEarned, user.loyaltyPoints);
+      const nextBalance = Math.max(0, user.loyaltyPoints - adjustment);
+
+      await client.user.update({
+        where: { id: order.userId },
+        data: { loyaltyPoints: nextBalance },
+      });
+      await client.loyaltyTransaction.create({
+        data: {
+          userId: order.userId,
+          orderId: order.id,
+          type: 'ADJUST',
+          points: -adjustment,
+          metadata: { reason: 'order.cancel' },
+        },
+      });
+      return adjustment;
+    };
+
+    if (tx) return runner(tx);
     return this.prisma.$transaction(runner);
   }
 
@@ -393,6 +497,8 @@ export class OrdersService {
       driverPhone: driver.phone,
     });
 
+    await this.clearCachesForOrder(orderId, updated.userId);
+
     return {
       orderId: updated.id,
       driverAssignedAt: updated.driverAssignedAt,
@@ -404,6 +510,14 @@ export class OrdersService {
         plateNumber: updated.driver?.vehicle?.plateNumber,
       },
     };
+  }
+
+  async clearCachesForOrder(orderId: string, userId?: string) {
+    const keys = [this.cache.buildKey('orders:detail', orderId, userId), this.cache.buildKey('orders:receipt', orderId)];
+    if (userId) {
+      keys.push(this.cache.buildKey('orders:list', userId));
+    }
+    await Promise.all(keys.map((key) => this.cache.del(key)));
   }
 
   private async generateOrderCode(tx: Prisma.TransactionClient): Promise<string> {

@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import Redis from 'ioredis';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
+import { version as nodeVersion } from 'process';
 
 @Controller({ path: '', version: ['1', '2'] })
 export class HealthController {
@@ -57,5 +58,26 @@ export class HealthController {
       () => this.redisCheck(),
       () => this.queueCheck(),
     ]);
+  }
+
+  @Get('metrics')
+  async metrics() {
+    const mem = process.memoryUsage();
+    const redisEnabled = this.redisEnabled();
+    return {
+      uptimeSeconds: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+      node: nodeVersion,
+      memory: {
+        rss: mem.rss,
+        heapUsed: mem.heapUsed,
+        heapTotal: mem.heapTotal,
+      },
+      services: {
+        redis: redisEnabled ? 'enabled' : 'disabled',
+        queue: redisEnabled ? 'enabled' : 'disabled',
+        postgres: 'enabled',
+      },
+    };
   }
 }

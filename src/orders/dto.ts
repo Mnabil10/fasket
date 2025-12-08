@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Length, Min } from 'class-validator';
 
 export enum PaymentMethodDto {
   COD = 'COD',
@@ -18,4 +18,15 @@ export class CreateOrderDto {
   @IsInt()
   @Min(0)
   loyaltyPointsToRedeem?: number;
+
+  @ApiProperty({
+    required: false,
+    description: 'Idempotency key to prevent duplicate order submission',
+    minLength: 8,
+    maxLength: 128,
+  })
+  @IsOptional()
+  @IsString()
+  @Length(8, 128)
+  idempotencyKey?: string;
 }

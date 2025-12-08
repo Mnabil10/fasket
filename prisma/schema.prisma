@@ -77,6 +77,8 @@ model Address {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   orders     Order[]
+
+  @@index([zoneId])
 }
 
 model Category {
@@ -157,6 +159,7 @@ model Order {
   code             String               @default(cuid()) @unique
   userId           String
   user             User                 @relation(fields: [userId], references: [id])
+  idempotencyKey   String?
   cartId           String?
   cart             Cart?                @relation(fields: [cartId], references: [id])
   addressId        String?
@@ -189,6 +192,7 @@ model Order {
   @@index([userId, createdAt])
   @@index([driverId])
   @@index([driverId, createdAt])
+  @@unique([userId, idempotencyKey])
 }
 
 model OrderItem {
@@ -201,6 +205,8 @@ model OrderItem {
 
   order   Order   @relation(fields: [orderId], references: [id])
   product Product @relation(fields: [productId], references: [id])
+
+  @@index([productId])
 }
 
 model OrderStatusHistory {
@@ -298,6 +304,7 @@ model LoyaltyTransaction {
   @@index([userId, createdAt])
   @@index([orderId])
   @@index([cycleId])
+  @@index([userId, type, createdAt])
 }
 
 model NotificationTemplate {

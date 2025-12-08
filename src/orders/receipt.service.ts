@@ -3,39 +3,47 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { OrderReceiptDto } from './dto/receipt.dto';
 import { DomainError, ErrorCode } from '../common/errors';
+import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class ReceiptService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly cache: CacheService,
   ) {}
 
   async getForCustomer(orderId: string, userId: string): Promise<OrderReceiptDto> {
-    const order = await this.prisma.order.findFirst({
-      where: { id: orderId, userId },
-      include: {
-        user: { select: { id: true, name: true, phone: true } },
-        address: true,
-        driver: {
-          select: {
-            id: true,
-            fullName: true,
-            phone: true,
-            vehicle: { select: { type: true, plateNumber: true } },
+    const cacheKey = this.cache.buildKey('orders:receipt', orderId, userId);
+    const order = await this.cache.wrap(
+      cacheKey,
+      () =>
+        this.prisma.order.findFirst({
+          where: { id: orderId, userId },
+          include: {
+            user: { select: { id: true, name: true, phone: true } },
+            address: true,
+            driver: {
+              select: {
+                id: true,
+                fullName: true,
+                phone: true,
+                vehicle: { select: { type: true, plateNumber: true } },
+              },
+            },
+            items: {
+              select: {
+                productId: true,
+                productNameSnapshot: true,
+                priceSnapshotCents: true,
+                qty: true,
+              },
+              orderBy: { id: 'asc' },
+            },
           },
-        },
-        items: {
-          select: {
-            productId: true,
-            productNameSnapshot: true,
-            priceSnapshotCents: true,
-            qty: true,
-          },
-          orderBy: { id: 'asc' },
-        },
-      },
-    });
+        }),
+      Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60),
+    );
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found');
     }
@@ -43,30 +51,36 @@ export class ReceiptService {
   }
 
   async getForAdmin(orderId: string): Promise<OrderReceiptDto> {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        user: { select: { id: true, name: true, phone: true } },
-        address: true,
-        driver: {
-          select: {
-            id: true,
-            fullName: true,
-            phone: true,
-            vehicle: { select: { type: true, plateNumber: true } },
+    const cacheKey = this.cache.buildKey('orders:receipt', orderId);
+    const order = await this.cache.wrap(
+      cacheKey,
+      () =>
+        this.prisma.order.findUnique({
+          where: { id: orderId },
+          include: {
+            user: { select: { id: true, name: true, phone: true } },
+            address: true,
+            driver: {
+              select: {
+                id: true,
+                fullName: true,
+                phone: true,
+                vehicle: { select: { type: true, plateNumber: true } },
+              },
+            },
+            items: {
+              select: {
+                productId: true,
+                productNameSnapshot: true,
+                priceSnapshotCents: true,
+                qty: true,
+              },
+              orderBy: { id: 'asc' },
+            },
           },
-        },
-        items: {
-          select: {
-            productId: true,
-            productNameSnapshot: true,
-            priceSnapshotCents: true,
-            qty: true,
-          },
-          orderBy: { id: 'asc' },
-        },
-      },
-    });
+        }),
+      Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60),
+    );
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found');
     }
