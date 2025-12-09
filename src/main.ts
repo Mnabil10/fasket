@@ -200,93 +200,43 @@ async function bootstrap() {
     logger.log('Swagger is disabled for production. Set SWAGGER_ENABLED=true to re-enable.', 'Bootstrap');
   }
 
-  // ==== CORS (patched) ====
-  const originsRaw =
-    configService.get<string>('ALLOWED_ORIGINS') ||
-    configService.get<string>('CORS_ALLOWED_ORIGINS') ||
-    '';
-  const devOriginsRaw = configService.get<string>('CORS_DEV_ORIGINS') || '';
-  const literalOrigins = new Set<string>();
-  const regexOrigins: RegExp[] = [];
-  originsRaw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .forEach((entry) => {
-      if (entry.toLowerCase().startsWith('regex:')) {
-        const pattern = entry.slice(6);
-        try {
-          regexOrigins.push(new RegExp(pattern));
-        } catch (error) {
-          logger.warn(`Invalid CORS regex "${pattern}": ${(error as Error).message}`);
-        }
-        return;
-      }
-      literalOrigins.add(entry);
-    });
-  const devOrigins = new Set<string>(
-    devOriginsRaw
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
-  // Always allow common localhost ports for admin/frontend dev
-  [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://127.0.0.1:5173',
-    'http://127.0.0.1:5174',
+  // ==== CORS (strict whitelist) ====
+  const allowedOrigins = new Set<string>([
+    'https://fasket.shop',
     'http://localhost:3000',
-    'http://127.0.0.1:3000',
-  ].forEach((o) => devOrigins.add(o));
+    'http://localhost:8100',
+    'http://localhost:4200',
+    'capacitor://localhost',
+    'ionic://localhost',
+  ]);
 
-  const allowLocalhostWildcard = (configService.get<string>('NODE_ENV') ?? 'development') !== 'production';
-  const allowLocalhostInProd = (configService.get<string>('CORS_ALLOW_LOCALHOST') ?? 'true') === 'true';
-  const localhostRegexes = [
-    /^https?:\/\/localhost(?::\d+)?$/i,
-    /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
-  ];
-
- app.enableCors({
-  origin(origin, callback) {
-    if (!origin) return callback(null, true);
-    if (literalOrigins.has(origin)) return callback(null, true);
-    if (devOrigins.has(origin) && allowLocalhostInProd) {
-      return callback(null, true);
-    }
-    if (regexOrigins.some((rx) => rx.test(origin))) {
-      return callback(null, true);
-    }
-    if (allowLocalhostWildcard && localhostRegexes.some((rx) => rx.test(origin))) {
-      return callback(null, true);
-    }
-    logger.warn(`Rejected CORS origin "${origin}"`);
-    return callback(null, false);
-  },
-  credentials: true,
-  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'X-User-Agent',
-    'x-user-agent',
-    'X-Refresh-Token',
-    'x-refresh-token',
-    'X-Correlation-Id',
-    'x-correlation-id',
-  ],
-  exposedHeaders: [
-    'X-Refresh-Token',
-    'x-refresh-token',
-    'X-Correlation-Id',
-    'x-correlation-id',
-  ],
-  preflightContinue: false,
-  optionsSuccessStatus: 204,
-});
-
+  app.enableCors({
+    origin(origin, callback) {
+      // Allow non-browser requests (no Origin header), otherwise enforce whitelist
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+      logger.warn(`Rejected CORS origin "${origin}"`);
+      return callback(new Error('CORS origin not allowed'), false);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Origin',
+      'X-Requested-With',
+      'X-Refresh-Token',
+      'x-refresh-token',
+      'X-Correlation-Id',
+      'x-correlation-id',
+    ],
+    exposedHeaders: ['X-Refresh-Token', 'x-refresh-token', 'X-Correlation-Id', 'x-correlation-id'],
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
+  });
   // ==== /CORS ====
 
   const port = configService.get<number>('PORT') ?? 4000;
