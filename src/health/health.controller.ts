@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Head } from '@nestjs/common';
 import { HealthCheck, HealthCheckService, HealthIndicatorResult } from '@nestjs/terminus';
 import { PrismaService } from '../prisma/prisma.service';
 import Redis from 'ioredis';
@@ -87,6 +87,18 @@ export class HealthController {
         return { uploads: { status: uploadHealth?.ok ? 'up' : 'down' } };
       },
     ]);
+  }
+
+  @Get('/monitnow')
+  @Head('/monitnow')
+  monitorProbe() {
+    return { ok: true };
+  }
+
+  @Get('/.well-known/acme-challenge/ping')
+  @Head('/.well-known/acme-challenge/ping')
+  acmePing() {
+    return 'ok';
   }
 
   @Get('metrics')

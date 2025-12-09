@@ -5,6 +5,7 @@ import { AdminService } from './admin.service';
 import { PaginationDto } from './dto/pagination.dto';
 import { TwoFaGuard } from '../common/guards/twofa.guard';
 import { Throttle } from '@nestjs/throttler';
+import { BadRequestException } from '@nestjs/common';
 
 @ApiTags('Admin/Coupons')
 @ApiBearerAuth()
@@ -33,11 +34,16 @@ export class AdminCouponsController {
   @Post()
   create(@Body() dto: any) {
     // dto: { code, type, valueCents|percent, startsAt?, endsAt?, isActive?, minOrderCents?, maxDiscountCents? }
-    // if percent provided, map to type=PERCENT and valueCents=percent
     const data: any = { ...dto };
-    if (dto.percent != null && dto.type == null) {
-      data.type = 'PERCENT';
+    if (dto.percent != null) {
+      data.type = dto.type ?? 'PERCENT';
       data.valueCents = Number(dto.percent);
+    }
+    if (data.type === 'FIXED' && (data.valueCents === undefined || data.valueCents === null)) {
+      throw new BadRequestException('valueCents is required for FIXED coupons');
+    }
+    if (data.type === 'PERCENT' && (data.valueCents === undefined || data.valueCents === null)) {
+      throw new BadRequestException('percent (valueCents) is required for PERCENT coupons');
     }
     const createdPromise = this.svc.prisma.coupon.create({ data });
     createdPromise.then(async (coupon) => {
@@ -59,7 +65,18 @@ export class AdminCouponsController {
       if (!before) {
         throw new Error('Coupon not found');
       }
-      const updated = await tx.coupon.update({ where: { id }, data: dto });
+      const data: any = { ...dto };
+      if (dto.percent != null) {
+        data.type = dto.type ?? 'PERCENT';
+        data.valueCents = Number(dto.percent);
+      }
+      if (data.type === 'FIXED' && data.valueCents === undefined && before.type === 'FIXED') {
+        data.valueCents = before.valueCents;
+      }
+      if ((data.type ?? before.type) === 'PERCENT' && (data.valueCents === undefined || data.valueCents === null)) {
+        throw new BadRequestException('percent (valueCents) is required for PERCENT coupons');
+      }
+      const updated = await tx.coupon.update({ where: { id }, data });
       this.logger.log({ msg: 'Coupon updated', couponId: updated.id, code: updated.code, isActive: updated.isActive });
       await this.svc.audit.log({
         action: 'coupon.update',
