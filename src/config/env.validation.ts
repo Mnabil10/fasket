@@ -17,6 +17,7 @@ const baseSchema = z.object({
   AUTH_BRUTE_TTL: z.coerce.number().int().positive().default(300),
   AUTH_BRUTE_MAX: z.coerce.number().int().positive().default(5),
   AUTH_REQUIRE_ADMIN_2FA: z.enum(['true','false']).optional(),
+  AUTH_ADMIN_STATIC_OTP: z.string().optional(),
 
   REDIS_ENABLED: z.enum(['true','false']).optional(),
   REDIS_URL: z.string().url().optional(),

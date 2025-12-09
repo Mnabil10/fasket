@@ -92,12 +92,26 @@ let AuthService = AuthService_1 = class AuthService {
             throw new common_1.UnauthorizedException('Invalid credentials');
         }
         const requireAdmin2fa = (this.config.get('AUTH_REQUIRE_ADMIN_2FA') ?? 'true') === 'true';
-        if (user.role === 'ADMIN' && requireAdmin2fa) {
-            if (!user.twoFaEnabled) {
-                throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Admin accounts must enable two-factor authentication');
+        const staticAdminOtp = this.config.get('AUTH_ADMIN_STATIC_OTP') || undefined;
+        let twoFaVerified = !user.twoFaEnabled;
+        if (user.role === 'ADMIN') {
+            if (!requireAdmin2fa) {
+                twoFaVerified = true;
             }
-            if (!input.otp || !this.verifyTotp(input.otp, user.twoFaSecret ?? '')) {
-                throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
+            else if (staticAdminOtp) {
+                if (input.otp !== staticAdminOtp) {
+                    throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
+                }
+                twoFaVerified = true;
+            }
+            else {
+                if (!user.twoFaEnabled) {
+                    throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Admin accounts must enable two-factor authentication');
+                }
+                if (!input.otp || !this.verifyTotp(input.otp, user.twoFaSecret ?? '')) {
+                    throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
+                }
+                twoFaVerified = true;
             }
         }
         await this.rateLimiter.reset(identifier, metadata.ip);
@@ -106,7 +120,7 @@ let AuthService = AuthService_1 = class AuthService {
             role: user.role,
             phone: user.phone,
             email: user.email,
-            twoFaVerified: !user.twoFaEnabled || Boolean(input.otp),
+            twoFaVerified,
         });
         const safeUser = { id: user.id, name: user.name, phone: user.phone, email: user.email, role: user.role };
         await this.logSession(user.id, metadata);

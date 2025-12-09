@@ -14,6 +14,7 @@ declare const baseSchema: z.ZodObject<{
     AUTH_BRUTE_TTL: z.ZodDefault<z.ZodNumber>;
     AUTH_BRUTE_MAX: z.ZodDefault<z.ZodNumber>;
     AUTH_REQUIRE_ADMIN_2FA: z.ZodOptional<z.ZodEnum<["true", "false"]>>;
+    AUTH_ADMIN_STATIC_OTP: z.ZodOptional<z.ZodString>;
     REDIS_ENABLED: z.ZodOptional<z.ZodEnum<["true", "false"]>>;
     REDIS_URL: z.ZodOptional<z.ZodString>;
     CACHE_DEFAULT_TTL: z.ZodDefault<z.ZodNumber>;
@@ -62,6 +63,7 @@ declare const baseSchema: z.ZodObject<{
     RATE_LIMIT_TTL: number;
     RATE_LIMIT_MAX: number;
     AUTH_REQUIRE_ADMIN_2FA?: "true" | "false" | undefined;
+    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
     CATEGORIES_CACHE_TTL?: number | undefined;
@@ -104,6 +106,7 @@ declare const baseSchema: z.ZodObject<{
     JWT_ACCESS_TTL?: number | undefined;
     JWT_REFRESH_TTL?: number | undefined;
     AUTH_REQUIRE_ADMIN_2FA?: "true" | "false" | undefined;
+    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     CACHE_DEFAULT_TTL?: number | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
@@ -160,6 +163,7 @@ export declare function validateEnv(config: Record<string, unknown>): {
     RATE_LIMIT_TTL: number;
     RATE_LIMIT_MAX: number;
     AUTH_REQUIRE_ADMIN_2FA?: "true" | "false" | undefined;
+    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
     CATEGORIES_CACHE_TTL?: number | undefined;
