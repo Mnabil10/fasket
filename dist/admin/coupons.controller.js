@@ -38,10 +38,13 @@ let AdminCouponsController = AdminCouponsController_1 = class AdminCouponsContro
         return { items, total, page: page?.page, pageSize: page?.pageSize };
     }
     create(dto) {
-        const data = { ...dto };
-        if (dto.percent != null) {
-            data.type = dto.type ?? 'PERCENT';
+        const data = { ...dto, type: dto.type ?? 'PERCENT' };
+        if (dto.percent != null)
             data.valueCents = Number(dto.percent);
+        if (dto.valueCents != null)
+            data.valueCents = Number(dto.valueCents);
+        if (data.valueCents === undefined || data.valueCents === null) {
+            throw new common_2.BadRequestException('valueCents (or percent) is required for coupons');
         }
         if (data.type === 'FIXED' && (data.valueCents === undefined || data.valueCents === null)) {
             throw new common_2.BadRequestException('valueCents is required for FIXED coupons');

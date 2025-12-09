@@ -60,6 +60,8 @@ async function bootstrap() {
   const normalizedPrefix = rawPrefix.replace(/^\/+|\/+$/g, '');
   const sanitizedPrefix = normalizedPrefix.replace(/\/v\d+$/i, '');
   const finalPrefix = sanitizedPrefix || normalizedPrefix || 'api';
+  // Liveness probe that bypasses global prefix/versioning
+  app.use('/monitnow', (_req: Request, res: Response) => res.status(200).json({ ok: true }));
   if (sanitizedPrefix !== normalizedPrefix) {
     logger.warn(
       `API_PREFIX "${rawPrefix}" contained a version segment. Using "${finalPrefix}" and relying on Nest versioning.`,

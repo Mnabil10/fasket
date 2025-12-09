@@ -34,10 +34,12 @@ export class AdminCouponsController {
   @Post()
   create(@Body() dto: any) {
     // dto: { code, type, valueCents|percent, startsAt?, endsAt?, isActive?, minOrderCents?, maxDiscountCents? }
-    const data: any = { ...dto };
-    if (dto.percent != null) {
-      data.type = dto.type ?? 'PERCENT';
-      data.valueCents = Number(dto.percent);
+    const data: any = { ...dto, type: (dto.type as string | undefined) ?? 'PERCENT' };
+    if (dto.percent != null) data.valueCents = Number(dto.percent);
+    if (dto.valueCents != null) data.valueCents = Number(dto.valueCents);
+
+    if (data.valueCents === undefined || data.valueCents === null) {
+      throw new BadRequestException('valueCents (or percent) is required for coupons');
     }
     if (data.type === 'FIXED' && (data.valueCents === undefined || data.valueCents === null)) {
       throw new BadRequestException('valueCents is required for FIXED coupons');
