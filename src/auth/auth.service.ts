@@ -85,7 +85,8 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    if (user.role === 'ADMIN') {
+    const requireAdmin2fa = (this.config.get<string>('AUTH_REQUIRE_ADMIN_2FA') ?? 'true') === 'true';
+    if (user.role === 'ADMIN' && requireAdmin2fa) {
       if (!user.twoFaEnabled) {
         throw new DomainError(ErrorCode.AUTH_2FA_REQUIRED, 'Admin accounts must enable two-factor authentication');
       }

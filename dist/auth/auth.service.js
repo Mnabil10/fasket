@@ -91,7 +91,8 @@ let AuthService = AuthService_1 = class AuthService {
             this.logger.warn({ msg: 'Login failed - bad password', userId: user.id, ip: metadata.ip });
             throw new common_1.UnauthorizedException('Invalid credentials');
         }
-        if (user.role === 'ADMIN') {
+        const requireAdmin2fa = (this.config.get('AUTH_REQUIRE_ADMIN_2FA') ?? 'true') === 'true';
+        if (user.role === 'ADMIN' && requireAdmin2fa) {
             if (!user.twoFaEnabled) {
                 throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Admin accounts must enable two-factor authentication');
             }
