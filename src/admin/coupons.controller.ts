@@ -35,8 +35,10 @@ export class AdminCouponsController {
   create(@Body() dto: any) {
     // dto: { code, type, valueCents|percent, startsAt?, endsAt?, isActive?, minOrderCents?, maxDiscountCents? }
     const data: any = { ...dto, type: (dto.type as string | undefined) ?? 'PERCENT' };
-    if (dto.percent != null) data.valueCents = Number(dto.percent);
-    if (dto.valueCents != null) data.valueCents = Number(dto.valueCents);
+    const suppliedValue = dto.percent ?? dto.value ?? dto.valueCents;
+    if (suppliedValue != null) {
+      data.valueCents = Number(suppliedValue);
+    }
 
     if (data.valueCents === undefined || data.valueCents === null) {
       throw new BadRequestException('valueCents (or percent) is required for coupons');
@@ -68,9 +70,10 @@ export class AdminCouponsController {
         throw new Error('Coupon not found');
       }
       const data: any = { ...dto };
-      if (dto.percent != null) {
+      const suppliedValue = dto.percent ?? dto.value ?? dto.valueCents;
+      if (suppliedValue != null) {
         data.type = dto.type ?? 'PERCENT';
-        data.valueCents = Number(dto.percent);
+        data.valueCents = Number(suppliedValue);
       }
       if (data.type === 'FIXED' && data.valueCents === undefined && before.type === 'FIXED') {
         data.valueCents = before.valueCents;
