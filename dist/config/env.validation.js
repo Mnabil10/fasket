@@ -25,6 +25,8 @@ const baseSchema = zod_1.z.object({
     BULK_PRODUCT_BATCH_SIZE: zod_1.z.coerce.number().int().positive().optional(),
     ALLOWED_ORIGINS: zod_1.z.string().optional(),
     CORS_ALLOWED_ORIGINS: zod_1.z.string().optional(),
+    CORS_DEV_ORIGINS: zod_1.z.string().optional(),
+    CORS_ALLOW_LOCALHOST: zod_1.z.enum(['true', 'false']).optional(),
     LOG_LEVEL: zod_1.z.string().optional(),
     SWAGGER_ENABLED: zod_1.z.string().optional(),
     SWAGGER_BASIC_USER: zod_1.z.string().optional(),

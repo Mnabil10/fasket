@@ -27,6 +27,8 @@ const baseSchema = z.object({
 
   ALLOWED_ORIGINS: z.string().optional(),
   CORS_ALLOWED_ORIGINS: z.string().optional(),
+  CORS_DEV_ORIGINS: z.string().optional(),
+  CORS_ALLOW_LOCALHOST: z.enum(['true','false']).optional(),
   LOG_LEVEL: z.string().optional(),
 
   SWAGGER_ENABLED: z.string().optional(),

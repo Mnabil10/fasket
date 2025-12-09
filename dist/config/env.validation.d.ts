@@ -22,6 +22,8 @@ declare const baseSchema: z.ZodObject<{
     BULK_PRODUCT_BATCH_SIZE: z.ZodOptional<z.ZodNumber>;
     ALLOWED_ORIGINS: z.ZodOptional<z.ZodString>;
     CORS_ALLOWED_ORIGINS: z.ZodOptional<z.ZodString>;
+    CORS_DEV_ORIGINS: z.ZodOptional<z.ZodString>;
+    CORS_ALLOW_LOCALHOST: z.ZodOptional<z.ZodEnum<["true", "false"]>>;
     LOG_LEVEL: z.ZodOptional<z.ZodString>;
     SWAGGER_ENABLED: z.ZodOptional<z.ZodString>;
     SWAGGER_BASIC_USER: z.ZodOptional<z.ZodString>;
@@ -82,6 +84,8 @@ declare const baseSchema: z.ZodObject<{
     ENFORCE_HTTPS?: "true" | "false" | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
+    CORS_DEV_ORIGINS?: string | undefined;
+    CORS_ALLOW_LOCALHOST?: "true" | "false" | undefined;
     LOG_LEVEL?: string | undefined;
     SWAGGER_ENABLED?: string | undefined;
     SWAGGER_BASIC_USER?: string | undefined;
@@ -127,6 +131,8 @@ declare const baseSchema: z.ZodObject<{
     RATE_LIMIT_MAX?: number | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
+    CORS_DEV_ORIGINS?: string | undefined;
+    CORS_ALLOW_LOCALHOST?: "true" | "false" | undefined;
     LOG_LEVEL?: string | undefined;
     SWAGGER_ENABLED?: string | undefined;
     SWAGGER_BASIC_USER?: string | undefined;
@@ -174,6 +180,8 @@ export declare function validateEnv(config: Record<string, unknown>): {
     ENFORCE_HTTPS?: "true" | "false" | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
+    CORS_DEV_ORIGINS?: string | undefined;
+    CORS_ALLOW_LOCALHOST?: "true" | "false" | undefined;
     LOG_LEVEL?: string | undefined;
     SWAGGER_ENABLED?: string | undefined;
     SWAGGER_BASIC_USER?: string | undefined;

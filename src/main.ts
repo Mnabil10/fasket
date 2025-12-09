@@ -205,6 +205,7 @@ async function bootstrap() {
     configService.get<string>('ALLOWED_ORIGINS') ||
     configService.get<string>('CORS_ALLOWED_ORIGINS') ||
     '';
+  const devOriginsRaw = configService.get<string>('CORS_DEV_ORIGINS') || '';
   const literalOrigins = new Set<string>();
   const regexOrigins: RegExp[] = [];
   originsRaw
@@ -223,8 +224,24 @@ async function bootstrap() {
       }
       literalOrigins.add(entry);
     });
+  const devOrigins = new Set<string>(
+    devOriginsRaw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  // Always allow common localhost ports for admin/frontend dev
+  [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:5174',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+  ].forEach((o) => devOrigins.add(o));
 
   const allowLocalhostWildcard = (configService.get<string>('NODE_ENV') ?? 'development') !== 'production';
+  const allowLocalhostInProd = (configService.get<string>('CORS_ALLOW_LOCALHOST') ?? 'true') === 'true';
   const localhostRegexes = [
     /^https?:\/\/localhost(?::\d+)?$/i,
     /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
@@ -234,6 +251,9 @@ async function bootstrap() {
   origin(origin, callback) {
     if (!origin) return callback(null, true);
     if (literalOrigins.has(origin)) return callback(null, true);
+    if (devOrigins.has(origin) && allowLocalhostInProd) {
+      return callback(null, true);
+    }
     if (regexOrigins.some((rx) => rx.test(origin))) {
       return callback(null, true);
     }

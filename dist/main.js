@@ -175,6 +175,7 @@ async function bootstrap() {
     const originsRaw = configService.get('ALLOWED_ORIGINS') ||
         configService.get('CORS_ALLOWED_ORIGINS') ||
         '';
+    const devOriginsRaw = configService.get('CORS_DEV_ORIGINS') || '';
     const literalOrigins = new Set();
     const regexOrigins = [];
     originsRaw
@@ -194,7 +195,20 @@ async function bootstrap() {
         }
         literalOrigins.add(entry);
     });
+    const devOrigins = new Set(devOriginsRaw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean));
+    [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:5174',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ].forEach((o) => devOrigins.add(o));
     const allowLocalhostWildcard = (configService.get('NODE_ENV') ?? 'development') !== 'production';
+    const allowLocalhostInProd = (configService.get('CORS_ALLOW_LOCALHOST') ?? 'true') === 'true';
     const localhostRegexes = [
         /^https?:\/\/localhost(?::\d+)?$/i,
         /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
@@ -205,6 +219,9 @@ async function bootstrap() {
                 return callback(null, true);
             if (literalOrigins.has(origin))
                 return callback(null, true);
+            if (devOrigins.has(origin) && allowLocalhostInProd) {
+                return callback(null, true);
+            }
             if (regexOrigins.some((rx) => rx.test(origin))) {
                 return callback(null, true);
             }
