@@ -286,10 +286,14 @@ export class SettingsService {
         estimatedDeliveryTime: config.estimatedDeliveryTime ?? null,
       };
     }
-    const zone = params.zoneId
-      ? config.deliveryZones.find((candidate) => candidate.id === params.zoneId && candidate.isActive)
-      : undefined;
-    if (zone) {
+    if (params.zoneId) {
+      const zone = config.deliveryZones.find((candidate) => candidate.id === params.zoneId);
+      if (!zone) {
+        throw new DomainError(ErrorCode.DELIVERY_ZONE_NOT_FOUND, 'Selected delivery zone is not available');
+      }
+      if (!zone.isActive) {
+        throw new DomainError(ErrorCode.DELIVERY_ZONE_INACTIVE, 'Selected delivery zone is inactive');
+      }
       if (zone.minOrderAmountCents && params.subtotalCents < zone.minOrderAmountCents) {
         throw new DomainError(
           ErrorCode.ADDRESS_INVALID_ZONE,
@@ -355,6 +359,22 @@ export class SettingsService {
     return zone;
   }
 
+  validateZoneConfig(zones: DeliveryZone[]) {
+    return zones
+      .map((zone) => {
+        const issues: string[] = [];
+        if (!zone.nameEn.trim()) issues.push('name');
+        if (zone.feeCents === undefined || zone.feeCents === null) issues.push('feeCents');
+        if (zone.etaMinutes === undefined || zone.etaMinutes === null) issues.push('etaMinutes');
+        if (!zone.city && !zone.region) issues.push('location');
+        if (zone.minOrderAmountCents !== null && zone.minOrderAmountCents !== undefined && zone.minOrderAmountCents < 0) {
+          issues.push('minOrderAmountCents');
+        }
+        return issues.length ? { id: zone.id, issues, isActive: zone.isActive } : null;
+      })
+      .filter((entry): entry is { id: string; issues: string[]; isActive: boolean } => Boolean(entry));
+  }
+
   deserializeDeliveryZones(raw: any): DeliveryZone[] {
     return this.normalizeDeliveryZones(raw);
   }
@@ -409,5 +429,34 @@ export class SettingsService {
   private formatEta(etaMinutes?: number): string | null {
     if (!etaMinutes || etaMinutes <= 0) return null;
     return `${etaMinutes} min`;
+  }
+
+  formatEtaLocalized(etaMinutes?: number, lang: 'en' | 'ar' = 'en'): string | null {
+    if (!etaMinutes || etaMinutes <= 0) return null;
+    const minutes = `${etaMinutes}`;
+    if (lang === 'ar') {
+      return `${minutes} دقيقة`;
+    }
+    return `${minutes} min`;
+  }
+
+  buildZoneMessages(zone: DeliveryZone) {
+    const feeCents = zone.feeCents ?? 0;
+    const freeThreshold = zone.freeDeliveryThresholdCents ?? 0;
+    const feeEn =
+      freeThreshold > 0
+        ? `Delivery fee ${(feeCents / 100).toFixed(2)} (free over ${(freeThreshold / 100).toFixed(2)})`
+        : `Delivery fee ${(feeCents / 100).toFixed(2)}`;
+    const feeAr =
+      freeThreshold > 0
+        ? `رسوم التوصيل ${(feeCents / 100).toFixed(2)} (مجانا فوق ${(freeThreshold / 100).toFixed(2)})`
+        : `رسوم التوصيل ${(feeCents / 100).toFixed(2)}`;
+    return {
+      etaTextEn: this.formatEtaLocalized(zone.etaMinutes, 'en'),
+      etaTextAr: this.formatEtaLocalized(zone.etaMinutes, 'ar'),
+      feeMessageEn: feeEn,
+      feeMessageAr: feeAr,
+      freeDeliveryThresholdCents: zone.freeDeliveryThresholdCents ?? null,
+    };
   }
 }

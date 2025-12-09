@@ -20,6 +20,16 @@ export class SettingsController {
       this.settings.getDeliveryConfig(),
       this.settings.getLoyaltyConfig(),
     ]);
+    const deliveryWithMessages = {
+      ...delivery,
+      deliveryZones: delivery.deliveryZones.map((zone) => ({
+        ...zone,
+        etaTextEn: this.settings.formatEtaLocalized(zone.etaMinutes, 'en'),
+        etaTextAr: this.settings.formatEtaLocalized(zone.etaMinutes, 'ar'),
+        feeMessageEn: this.settings.buildZoneMessages(zone).feeMessageEn,
+        feeMessageAr: this.settings.buildZoneMessages(zone).feeMessageAr,
+      })),
+    };
     return {
       store: {
         name: settings.storeName,
@@ -34,7 +44,7 @@ export class SettingsController {
         language: settings.language,
         maintenanceMode: settings.maintenanceMode ?? false,
       },
-      delivery,
+      delivery: deliveryWithMessages,
       loyalty,
       payment: settings.payment ?? undefined,
       notifications: settings.notifications ?? undefined,

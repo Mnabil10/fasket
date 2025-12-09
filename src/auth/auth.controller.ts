@@ -33,7 +33,7 @@ export class AuthController {
   @UseGuards(AuthGuard('jwt-refresh'))
   refresh(@Req() req: any, @Body() _dto: RefreshDto) {
     // req.user is populated by JwtRefreshStrategy.validate
-    return this.service.issueTokensForUserId(req.user.userId);
+    return this.service.issueTokensForUserId(req.user.userId, req.user.jti);
   }
 
   @Post('admin/setup-2fa')

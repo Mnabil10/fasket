@@ -1,12 +1,14 @@
-import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { createHmac, randomBytes } from 'crypto';
+import { createHmac, randomBytes, randomUUID } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthRateLimitService } from './auth-rate-limit.service';
 import { buildDeviceInfo } from '../common/utils/device.util';
 import { DomainError, ErrorCode } from '../common/errors';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 
 @Injectable()
 export class AuthService {
@@ -15,6 +17,7 @@ export class AuthService {
     private jwt: JwtService,
     private readonly rateLimiter: AuthRateLimitService,
     private readonly config: ConfigService,
+    @Inject(CACHE_MANAGER) private readonly cache: Cache,
   ) {}
   private readonly logger = new Logger(AuthService.name);
   private readonly otpDigits = 6;
@@ -82,7 +85,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    if (user.role === 'ADMIN' && user.twoFaEnabled) {
+    if (user.role === 'ADMIN') {
+      if (!user.twoFaEnabled) {
+        throw new DomainError(ErrorCode.AUTH_2FA_REQUIRED, 'Admin accounts must enable two-factor authentication');
+      }
       if (!input.otp || !this.verifyTotp(input.otp, user.twoFaSecret ?? '')) {
         throw new DomainError(ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
       }
@@ -150,6 +156,7 @@ export class AuthService {
     }
     const accessTtl = this.config.get<number>('JWT_ACCESS_TTL') ?? 900;
     const refreshTtl = this.config.get<number>('JWT_REFRESH_TTL') ?? 1209600;
+    const jti = randomUUID();
     const accessPayload = {
       sub: user.id,
       role: user.role,
@@ -161,14 +168,15 @@ export class AuthService {
       secret: accessSecret,
       expiresIn: accessTtl,
     });
-    const refresh = await this.jwt.signAsync({ sub: user.id }, {
+    const refresh = await this.jwt.signAsync({ sub: user.id, jti }, {
       secret: refreshSecret,
       expiresIn: refreshTtl,
     });
+    await this.cache.set(this.refreshCacheKey(user.id, jti), true, refreshTtl);
     return { accessToken: access, refreshToken: refresh };
   }
 
-  async issueTokensForUserId(sub: string) {
+  async issueTokensForUserId(sub: string, previousJti?: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: sub },
       select: { role: true, phone: true, email: true, twoFaEnabled: true },
@@ -176,6 +184,13 @@ export class AuthService {
     if (!user) {
       this.logger.warn({ msg: 'Refresh token rejected - user missing', userId: sub });
       throw new UnauthorizedException('User not found');
+    }
+    if (previousJti) {
+      const allowed = await this.cache.get<boolean>(this.refreshCacheKey(sub, previousJti));
+      if (!allowed) {
+        throw new UnauthorizedException('Refresh token reuse detected');
+      }
+      await this.cache.del(this.refreshCacheKey(sub, previousJti));
     }
     return this.issueTokens({
       id: sub,
@@ -247,5 +262,9 @@ export class AuthService {
       (hmac[offset + 3] & 0xff);
     const digits = code % 10 ** this.otpDigits;
     return digits.toString().padStart(this.otpDigits, '0');
+  }
+
+  private refreshCacheKey(userId: string, jti: string) {
+    return `refresh:${userId}:${jti}`;
   }
 }

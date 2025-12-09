@@ -7,6 +7,8 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class UsersService {
+  private readonly passwordPolicy = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-={}\[\]:;"'`|<>,.?/]{8,}$/;
+
   constructor(private prisma: PrismaService) {}
 
   async me(userId: string) {
@@ -38,6 +40,9 @@ export class UsersService {
   async changePassword(userId: string, dto: ChangePasswordDto) {
     if (dto.currentPassword === dto.newPassword) {
       throw new BadRequestException('New password must be different from current password');
+    }
+    if (!this.passwordPolicy.test(dto.newPassword)) {
+      throw new BadRequestException('Password must be at least 8 chars and contain letters and numbers');
     }
     const user = await this.prisma.user.findUnique({
       where: { id: userId },

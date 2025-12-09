@@ -23,6 +23,7 @@ import { CommonModule } from './common/common.module';
 import { validateEnv } from './config/env.validation';
 import { SettingsModule } from './settings/settings.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
+import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
   imports: [
@@ -110,6 +111,7 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
     SettingsModule,
     LoyaltyModule,
     CommonModule,
+    UploadsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

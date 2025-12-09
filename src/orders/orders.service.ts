@@ -241,8 +241,9 @@ export class OrdersService {
           if (discountCents > subtotalCents) {
             discountCents = subtotalCents;
           }
+          discountCents = Math.max(0, Math.round(discountCents));
         } else {
-          throw new DomainError(ErrorCode.COUPON_INVALID, 'Coupon is invalid or expired');
+          throw new DomainError(ErrorCode.COUPON_EXPIRED, 'Coupon is invalid or expired');
         }
       }
 
@@ -333,6 +334,8 @@ export class OrdersService {
           return this.detail(userId, existing.id);
         }
       }
+      // Roll back any stock decrements if the transaction failed before commit
+      await this.rollbackStockFromCart(userId).catch(() => undefined);
       throw error;
     }
   }
@@ -533,6 +536,322 @@ export class OrdersService {
     return `ORD-${Date.now().toString(36).toUpperCase()}`;
   }
 
+  async reorder(userId: string, fromOrderId: string) {
+    const source = await this.prisma.order.findFirst({
+      where: { id: fromOrderId, userId },
+      include: {
+        items: true,
+        address: true,
+      },
+    });
+    if (!source) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    if (!source.items.length) {
+      throw new DomainError(ErrorCode.CART_EMPTY, 'Order has no items to reorder');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const productIds = Array.from(new Set(source.items.map((i) => i.productId)));
+      const products = await tx.product.findMany({
+        where: { id: { in: productIds }, status: ProductStatus.ACTIVE, deletedAt: null },
+        select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true },
+      });
+      const productMap = new Map(products.map((p) => [p.id, p]));
+
+      const orderItems = source.items.map((item) => {
+        const product = productMap.get(item.productId);
+        if (!product) {
+          throw new DomainError(
+            ErrorCode.CART_PRODUCT_UNAVAILABLE,
+            `Product unavailable: ${item.productNameSnapshot || item.productId}`,
+          );
+        }
+        if ((product.stock ?? 0) < item.qty) {
+          throw new DomainError(
+            ErrorCode.CART_PRODUCT_UNAVAILABLE,
+            `Insufficient stock for ${product.name}`,
+          );
+        }
+        const priceCents = product.salePriceCents ?? product.priceCents;
+        return {
+          productId: product.id,
+          productName: product.name,
+          qty: item.qty,
+          priceCents,
+        };
+      });
+
+      for (const item of orderItems) {
+        await tx.product.updateMany({
+          where: {
+            id: item.productId,
+            status: ProductStatus.ACTIVE,
+            deletedAt: null,
+            stock: { gte: item.qty },
+          },
+          data: { stock: { decrement: item.qty } },
+        });
+        const product = productMap.get(item.productId)!;
+        const previousStock = product.stock ?? 0;
+        const newStock = previousStock - item.qty;
+        productMap.set(item.productId, newStock as any);
+        await tx.productStockLog.create({
+          data: {
+            productId: item.productId,
+            previousStock,
+            newStock,
+            delta: newStock - previousStock,
+            reason: 'order.reorder',
+            actorId: userId,
+          },
+        });
+      }
+
+      const subtotalCents = orderItems.reduce((sum, item) => sum + item.priceCents * item.qty, 0);
+      const address =
+        source.address && source.address.userId === userId
+          ? source.address
+          : await tx.address.findFirst({
+              where: { userId },
+              orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+            });
+      if (!address) {
+        throw new DomainError(ErrorCode.ADDRESS_NOT_FOUND, 'No address available for reorder');
+      }
+
+      const quote = await this.settings.computeDeliveryQuote({
+        subtotalCents,
+        zoneId: address.zoneId,
+      });
+      const deliveryZone = await this.settings.getZoneById(address.zoneId, { includeInactive: true });
+      const shippingFeeCents = quote.shippingFeeCents;
+      const deliveryZoneName = deliveryZone?.nameEn ?? deliveryZone?.nameAr ?? address.zoneId;
+
+      const totalCents = subtotalCents + shippingFeeCents;
+      const code = await this.generateOrderCode(tx);
+      const order = await tx.order.create({
+        data: {
+          userId,
+          code,
+          status: OrderStatus.PENDING,
+          paymentMethod: PaymentMethod.COD,
+          subtotalCents,
+          shippingFeeCents,
+          discountCents: 0,
+          totalCents,
+          loyaltyDiscountCents: 0,
+          loyaltyPointsUsed: 0,
+          addressId: address.id,
+          cartId: null,
+          notes: 'Reorder',
+          couponCode: null,
+          deliveryZoneId: address.zoneId,
+          deliveryZoneName,
+          deliveryEtaMinutes: quote.etaMinutes ?? undefined,
+          estimatedDeliveryTime: quote.estimatedDeliveryTime ?? undefined,
+          items: {
+            create: orderItems.map((item) => ({
+              productId: item.productId,
+              productNameSnapshot: item.productName,
+              priceSnapshotCents: item.priceCents,
+              qty: item.qty,
+            })),
+          },
+        },
+      });
+
+      await this.notify.notify('order_created', userId, { orderId: order.id, status: OrderStatus.PENDING });
+      await this.clearCachesForOrder(order.id, userId);
+      return this.detail(userId, order.id);
+    }).catch(async (error) => {
+      await this.rollbackStockForOrderItems(source.items).catch(() => undefined);
+      throw error;
+    });
+  }
+
+  async cancelOrder(userId: string, orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: { select: { productId: true, qty: true, productNameSnapshot: true } },
+      },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    if (order.userId !== userId) {
+      throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'You are not allowed to cancel this order', 403);
+    }
+    if (order.status === OrderStatus.DELIVERED) {
+      throw new DomainError(ErrorCode.ORDER_ALREADY_COMPLETED, 'Delivered orders cannot be canceled', 400);
+    }
+    if (order.status === OrderStatus.CANCELED) {
+      await this.clearCachesForOrder(orderId, userId);
+      return this.detail(userId, orderId);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.CANCELED },
+      });
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          from: order.status,
+          to: OrderStatus.CANCELED,
+          note: 'Cancelled by customer',
+          actorId: userId,
+        },
+      });
+      await this.restockInventory(orderId, order.items, tx, userId);
+      await this.refundRedeemedPoints(orderId, tx);
+      await this.revokeLoyaltyForOrder(orderId, tx);
+    });
+
+    await this.notify.notify('order_canceled', userId, { orderId });
+    await this.clearCachesForOrder(orderId, userId);
+    return this.detail(userId, orderId);
+  }
+
+  async adminCancelOrder(orderId: string, actorId?: string, note?: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: { select: { productId: true, qty: true, productNameSnapshot: true } } },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    if (order.status === OrderStatus.DELIVERED) {
+      throw new DomainError(ErrorCode.ORDER_ALREADY_COMPLETED, 'Delivered orders cannot be canceled', 400);
+    }
+    if (order.status === OrderStatus.CANCELED) {
+      await this.clearCachesForOrder(orderId, order.userId);
+      return { success: true };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.CANCELED },
+      });
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          from: order.status,
+          to: OrderStatus.CANCELED,
+          note: note ?? 'Cancelled by admin',
+          actorId,
+        },
+      });
+      await this.restockInventory(orderId, order.items, tx, actorId);
+      await this.refundRedeemedPoints(orderId, tx);
+      await this.revokeLoyaltyForOrder(orderId, tx);
+    });
+
+    await this.notify.notify('order_canceled', order.userId, { orderId });
+    await this.audit.log({
+      action: 'order.cancel',
+      entity: 'order',
+      entityId: orderId,
+      actorId,
+      before: { status: order.status },
+      after: { status: OrderStatus.CANCELED },
+    });
+    await this.clearCachesForOrder(orderId, order.userId);
+    return { success: true };
+  }
+
+  private async restockInventory(
+    orderId: string,
+    items: { productId: string; qty: number; productNameSnapshot?: string | null }[],
+    tx: Prisma.TransactionClient,
+    actorId?: string,
+  ) {
+    if (!items?.length) return;
+    const productIds = Array.from(new Set(items.map((i) => i.productId)));
+    const products = await tx.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, stock: true },
+    });
+    const stockMap = new Map(products.map((p) => [p.id, p.stock ?? 0]));
+    for (const item of items) {
+      const previous = stockMap.get(item.productId) ?? 0;
+      const next = previous + item.qty;
+      await tx.product.updateMany({
+        where: { id: item.productId },
+        data: { stock: { increment: item.qty } },
+      });
+      await tx.productStockLog.create({
+        data: {
+          productId: item.productId,
+          previousStock: previous,
+          newStock: next,
+          delta: item.qty,
+          reason: 'order.cancel',
+          actorId,
+        },
+      });
+      stockMap.set(item.productId, next);
+    }
+  }
+
+  private async refundRedeemedPoints(orderId: string, tx: Prisma.TransactionClient) {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      select: { userId: true, loyaltyPointsUsed: true },
+    });
+    if (!order || !order.loyaltyPointsUsed || order.loyaltyPointsUsed <= 0) {
+      return 0;
+    }
+    const existing = await tx.loyaltyTransaction.findFirst({
+      where: {
+        orderId,
+        type: 'ADJUST',
+        metadata: { path: ['reason'], equals: 'order.cancel.refund' },
+      },
+    });
+    if (existing) return existing.points;
+
+    const points = order.loyaltyPointsUsed;
+    await tx.user.update({
+      where: { id: order.userId },
+      data: { loyaltyPoints: { increment: points } },
+    });
+    await tx.loyaltyTransaction.create({
+      data: {
+        userId: order.userId,
+        orderId,
+        type: 'ADJUST',
+        points,
+        metadata: { reason: 'order.cancel.refund' },
+      },
+    });
+    return points;
+  }
+
+  private async rollbackStockFromCart(userId: string) {
+    const cart = await this.prisma.cart.findUnique({
+      where: { userId },
+      include: { items: true },
+    });
+    if (!cart?.items?.length) return;
+    await this.rollbackStockForOrderItems(cart.items.map((i) => ({ productId: i.productId, qty: i.qty })));
+  }
+
+  private async rollbackStockForOrderItems(
+    items: { productId: string; qty: number }[],
+  ) {
+    if (!items?.length) return;
+    for (const item of items) {
+      await this.prisma.product.updateMany({
+        where: { id: item.productId },
+        data: { stock: { increment: item.qty } },
+      });
+    }
+  }
+
   private toPublicStatus(status: OrderStatus): PublicStatus {
     switch (status) {
       case OrderStatus.PROCESSING:
@@ -607,6 +926,7 @@ export class OrdersService {
         priceSnapshotCents: item.priceSnapshotCents,
         qty: item.qty,
       })),
+      etag: order.updatedAt ? `${order.id}-${order.updatedAt.getTime()}` : order.id,
     };
   }
 }

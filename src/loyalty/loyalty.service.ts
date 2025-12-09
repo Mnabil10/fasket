@@ -21,6 +21,9 @@ interface AwardParams {
 
 @Injectable()
 export class LoyaltyService {
+  private readonly resetOnComplete =
+    (process.env.LOYALTY_RESET_ON_COMPLETE ?? 'true').toLowerCase() === 'true';
+
   constructor(
     private readonly settings: SettingsService,
     private readonly prisma: PrismaService,
@@ -70,6 +73,7 @@ export class LoyaltyService {
       discountCents = maxDiscountFromPercent;
     }
     discountCents = Math.min(discountCents, params.subtotalCents);
+    discountCents = Math.max(0, Math.round(discountCents));
     const pointsUsed = Math.min(maxRedeemablePoints, Math.floor(discountCents / (config.redeemRateValue * 100)));
     if (pointsUsed <= 0 || discountCents <= 0) {
       return { pointsUsed: 0, discountCents: 0 };
@@ -130,7 +134,7 @@ export class LoyaltyService {
           completedAt: new Date(),
         },
       });
-      if (cycle.resetOnComplete) {
+      if (cycle.resetOnComplete && this.resetOnComplete) {
         await params.tx.user.update({
           where: { id: params.userId },
           data: { loyaltyPoints: 0 },
@@ -319,7 +323,7 @@ export class LoyaltyService {
       data: {
         userId,
         threshold,
-        resetOnComplete: true,
+        resetOnComplete: this.resetOnComplete,
       },
     });
   }

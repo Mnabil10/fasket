@@ -288,10 +288,30 @@ export class CartService {
     }
 
     const effectiveAddress = deliveryAddress ?? (await this.resolveDeliveryAddress(cart.userId));
-    const quote = await this.settings.computeDeliveryQuote({
-      subtotalCents: cartSnapshot.subtotalCents,
-      zoneId: effectiveAddress?.zoneId,
-    });
+    const zone = effectiveAddress?.zoneId
+      ? await this.settings.getZoneById(effectiveAddress.zoneId, { includeInactive: false })
+      : undefined;
+    const minOrderAmountCents = zone?.minOrderAmountCents ?? null;
+    const freeDeliveryThresholdCents = zone?.freeDeliveryThresholdCents ?? null;
+    const shortfall =
+      minOrderAmountCents && cartSnapshot.subtotalCents < minOrderAmountCents
+        ? minOrderAmountCents - cartSnapshot.subtotalCents
+        : 0;
+
+    const quote = shortfall > 0
+      ? {
+          shippingFeeCents: zone?.feeCents ?? 0,
+          deliveryZoneId: zone?.id,
+          deliveryZoneName: zone?.nameEn,
+          etaMinutes: zone?.etaMinutes,
+          estimatedDeliveryTime: zone?.etaMinutes ? `${zone.etaMinutes} min` : null,
+        }
+      : await this.settings.computeDeliveryQuote({
+          subtotalCents: cartSnapshot.subtotalCents,
+          zoneId: effectiveAddress?.zoneId,
+        });
+    const etaText = this.settings.formatEtaLocalized(quote.etaMinutes ?? zone?.etaMinutes, lang ?? 'en');
+    const feeMessages = zone ? this.settings.buildZoneMessages(zone) : undefined;
     const { discountCents, coupon, couponNotice } = await this.resolveCouponDiscount(
       cart.id,
       couponCode,
@@ -314,6 +334,12 @@ export class CartService {
         zoneName: quote.deliveryZoneName ?? effectiveAddress?.zoneId ?? null,
         estimatedDeliveryTime: quote.estimatedDeliveryTime ?? null,
         etaMinutes: quote.etaMinutes ?? null,
+        minOrderAmountCents,
+        minOrderShortfallCents: shortfall > 0 ? shortfall : 0,
+        freeDeliveryThresholdCents,
+        etaText,
+        feeMessageEn: feeMessages?.feeMessageEn,
+        feeMessageAr: feeMessages?.feeMessageAr,
       },
     };
   }
@@ -392,7 +418,7 @@ export class CartService {
     if (discountCents > subtotalCents) {
       discountCents = subtotalCents;
     }
-    return discountCents;
+    return Math.max(0, Math.round(discountCents));
   }
 
   private formatCouponValidationMessage(status: CouponValidationResult['status']) {

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { DeliveryDriver } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -12,7 +12,7 @@ export class NotificationsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @InjectQueue('notifications') private readonly queue: Queue<NotificationJob>,
+    @InjectQueue('notifications') @Optional() private readonly queue?: Queue<NotificationJob>,
   ) {}
 
   async notify(key: TemplateKey, userId: string, data: Record<string, any>) {
@@ -80,6 +80,12 @@ export class NotificationsService {
   }
 
   private async enqueue(payload: NotificationJob) {
+    if (!this.queue) {
+      // Redis-off fallback: process synchronously via processor logic
+      const processor = new (require('./notifications.processor').NotificationsProcessor)(this.prisma);
+      await processor.process({ data: payload } as any);
+      return;
+    }
     try {
       await this.queue.add('send', payload, {
         removeOnComplete: 50,

@@ -21,6 +21,7 @@ type ProductWithCategory = Prisma.ProductGetPayload<{
 export class ProductsService {
   private readonly listTtl = Number(process.env.PRODUCT_LIST_CACHE_TTL ?? 60);
   private readonly homeTtl = Number(process.env.HOME_CACHE_TTL ?? 120);
+  private readonly swrTtl = Number(process.env.CACHE_SWR_TTL ?? 30);
 
   constructor(private prisma: PrismaService, private cache: CacheService) {}
 
@@ -83,7 +84,7 @@ export class ProductsService {
 
       const mapped = await Promise.all(items.map((product) => this.toProductSummary(product, q?.lang)));
       return { items: mapped, total, page, pageSize };
-    }, this.listTtl);
+    }, this.listTtl + this.swrTtl);
   }
 
   async one(idOrSlug: string, lang?: Lang) {
@@ -103,12 +104,28 @@ export class ProductsService {
     const currentPage = query.page ?? 1;
     const take = query.pageSize ?? 10;
     const lang = query.lang;
-    const cacheKey = this.cache.buildKey('home:best', lang ?? 'en', currentPage, take);
+    const cacheKey = this.cache.buildKey(
+      'home:best',
+      lang ?? 'en',
+      currentPage,
+      take,
+      query.fromDate ?? '',
+      query.toDate ?? '',
+      query.orderBy ?? 'qty',
+      query.sort ?? 'desc',
+    );
     return this.cache.wrap(cacheKey, async () => {
+      const whereOrder: Prisma.OrderWhereInput = {};
+      if (query.fromDate || query.toDate) whereOrder.createdAt = {};
+      if (query.fromDate) (whereOrder.createdAt as Prisma.DateTimeFilter).gte = new Date(query.fromDate);
+      if (query.toDate) (whereOrder.createdAt as Prisma.DateTimeFilter).lte = new Date(query.toDate);
+      whereOrder.status = { in: ['PENDING', 'PROCESSING', 'OUT_FOR_DELIVERY', 'DELIVERED'] as any };
+
       const agg = await this.prisma.orderItem.groupBy({
         by: ['productId'],
         _sum: { qty: true },
-        orderBy: { _sum: { qty: 'desc' } },
+        where: { order: whereOrder },
+        orderBy: { _sum: { qty: query.sort ?? 'desc' } },
         skip: (currentPage - 1) * take,
         take,
       });
@@ -126,7 +143,7 @@ export class ProductsService {
         })
         .filter((p): p is typeof products[number] => !!p);
       return Promise.all(ordered.map((product) => this.toProductSummary(product, lang)));
-    }, this.homeTtl);
+    }, this.homeTtl + this.swrTtl);
   }
 
   async hotOffers(query: PublicProductFeedDto = new PublicProductFeedDto()) {
@@ -143,7 +160,7 @@ export class ProductsService {
         take,
       });
       return Promise.all(items.map((product) => this.toProductSummary(product, lang)));
-    }, this.homeTtl);
+    }, this.homeTtl + this.swrTtl);
   }
 
   private toCents(amount: number) {
@@ -162,6 +179,7 @@ export class ProductsService {
       name: this.localize(product.name, product.nameAr, lang) ?? product.name,
       slug: product.slug,
       imageUrl: await toPublicImageUrl(product.imageUrl),
+      etag: this.buildEtag(product),
       priceCents: product.priceCents,
       salePriceCents: product.salePriceCents,
       stock: product.stock,
@@ -184,6 +202,7 @@ export class ProductsService {
       descriptionAr: product.descriptionAr,
       descriptionEn: product.description,
       imageUrl: await toPublicImageUrl(product.imageUrl),
+      etag: this.buildEtag(product),
       images: product.images,
       priceCents: product.priceCents,
       salePriceCents: product.salePriceCents,
@@ -198,5 +217,10 @@ export class ProductsService {
           }
         : null,
     };
+  }
+
+  private buildEtag(product: { id: string; updatedAt?: Date }) {
+    const updated = product.updatedAt ? product.updatedAt.getTime() : Date.now();
+    return `${product.id}-${updated}`;
   }
 }

@@ -14,10 +14,12 @@ import { AuditLogService } from '../common/audit/audit-log.service';
 import { OrdersService } from '../orders/orders.service';
 import { AdminOrderListDto } from './dto/admin-order-list.dto';
 import { DomainError, ErrorCode } from '../common/errors';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Admin/Orders')
 @ApiBearerAuth()
 @StaffOrAdmin()
+@Throttle(30, 60)
 @Controller({ path: 'admin/orders', version: ['1'] })
 export class AdminOrdersController {
   private readonly logger = new Logger(AdminOrdersController.name);
@@ -114,8 +116,13 @@ export class AdminOrdersController {
     }
 
     const nextStatus = dto.to as OrderStatus;
+    if (nextStatus === OrderStatus.CANCELED) {
+      const result = await this.orders.adminCancelOrder(id, user.userId, dto.note);
+      this.logger.log({ msg: 'Order canceled by admin', orderId: id, actorId: user.userId });
+      return result;
+    }
+
     let loyaltyEarned = 0;
-    let loyaltyReversed = 0;
     await this.svc.prisma.$transaction(async (tx) => {
       await tx.order.update({ where: { id }, data: { status: nextStatus } });
       await tx.orderStatusHistory.create({
@@ -123,8 +130,6 @@ export class AdminOrdersController {
       });
       if (nextStatus === OrderStatus.DELIVERED) {
         loyaltyEarned = await this.orders.awardLoyaltyForOrder(id, tx);
-      } else if (nextStatus === OrderStatus.CANCELED) {
-        loyaltyReversed = await this.orders.revokeLoyaltyForOrder(id, tx);
       }
     });
 
@@ -139,12 +144,6 @@ export class AdminOrdersController {
     await this.notifications.notify(statusKey, before.userId, { orderId: id, status: nextStatus });
     if (loyaltyEarned > 0) {
       await this.notifications.notify('loyalty_earned', before.userId, { orderId: id, points: loyaltyEarned });
-    } else if (loyaltyReversed > 0) {
-      await this.notifications.notify('loyalty_redeemed', before.userId, {
-        orderId: id,
-        points: loyaltyReversed,
-        discountCents: 0,
-      });
     }
     await this.audit.log({
       action: 'order.status.change',

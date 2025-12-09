@@ -1,12 +1,16 @@
-import { Body, Controller, Get, Logger, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AdminOnly } from './_admin-guards';
 import { AdminService } from './admin.service';
 import { PaginationDto } from './dto/pagination.dto';
+import { TwoFaGuard } from '../common/guards/twofa.guard';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Admin/Coupons')
 @ApiBearerAuth()
 @AdminOnly()
+@UseGuards(TwoFaGuard)
+@Throttle(20, 60)
 @Controller({ path: 'admin/coupons', version: ['1'] })
 export class AdminCouponsController {
   private readonly logger = new Logger(AdminCouponsController.name);
@@ -35,19 +39,36 @@ export class AdminCouponsController {
       data.type = 'PERCENT';
       data.valueCents = Number(dto.percent);
     }
-    const created = this.svc.prisma.coupon.create({ data });
-    created.then((coupon) =>
-      this.logger.log({ msg: 'Coupon created', couponId: coupon.id, code: coupon.code, type: coupon.type }),
-    );
-    return created;
+    const createdPromise = this.svc.prisma.coupon.create({ data });
+    createdPromise.then(async (coupon) => {
+      this.logger.log({ msg: 'Coupon created', couponId: coupon.id, code: coupon.code, type: coupon.type });
+      await this.svc.audit.log({
+        action: 'coupon.create',
+        entity: 'Coupon',
+        entityId: coupon.id,
+        after: coupon,
+      });
+    });
+    return createdPromise;
   }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: any) {
-    const updated = this.svc.prisma.coupon.update({ where: { id }, data: dto });
-    updated.then((coupon) =>
-      this.logger.log({ msg: 'Coupon updated', couponId: coupon.id, code: coupon.code, isActive: coupon.isActive }),
-    );
-    return updated;
+    return this.svc.prisma.$transaction(async (tx) => {
+      const before = await tx.coupon.findUnique({ where: { id } });
+      if (!before) {
+        throw new Error('Coupon not found');
+      }
+      const updated = await tx.coupon.update({ where: { id }, data: dto });
+      this.logger.log({ msg: 'Coupon updated', couponId: updated.id, code: updated.code, isActive: updated.isActive });
+      await this.svc.audit.log({
+        action: 'coupon.update',
+        entity: 'Coupon',
+        entityId: id,
+        before,
+        after: updated,
+      });
+      return updated;
+    });
   }
 }

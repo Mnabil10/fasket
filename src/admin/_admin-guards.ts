@@ -2,10 +2,11 @@ import { CanActivate, ExecutionContext, ForbiddenException, UseGuards, applyDeco
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { TwoFaGuard } from '../common/guards/twofa.guard';
 
 
-export const AdminOnly = () => applyDecorators(UseGuards(JwtAuthGuard, RolesGuard), Roles('ADMIN'));
-export const StaffOrAdmin = () => applyDecorators(UseGuards(JwtAuthGuard, RolesGuard), Roles('ADMIN', 'STAFF'));
+export const AdminOnly = () => applyDecorators(UseGuards(JwtAuthGuard, RolesGuard, TwoFaGuard), Roles('ADMIN'));
+export const StaffOrAdmin = () => applyDecorators(UseGuards(JwtAuthGuard, RolesGuard, TwoFaGuard), Roles('ADMIN', 'STAFF'));
 export class AdminGuard implements CanActivate {
     canActivate(ctx: ExecutionContext): boolean {
       const user = ctx.switchToHttp().getRequest().user;

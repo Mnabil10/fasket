@@ -1,6 +1,6 @@
 import {
   BadRequestException, Controller, Get, Post, Query,
-  UploadedFile, UseInterceptors, ParseFilePipe, MaxFileSizeValidator, FileTypeValidator,
+  UploadedFile, UseInterceptors, ParseFilePipe, MaxFileSizeValidator, FileTypeValidator, UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -8,6 +8,7 @@ import { memoryStorage } from 'multer';
 import { UploadsService } from './uploads.service';
 import { AdminOnly } from '../admin/_admin-guards';
 import { Express } from 'express';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @ApiTags('Admin/Uploads')
 @ApiBearerAuth()
@@ -62,5 +63,23 @@ export class UploadsController {
     })) file: Express.Multer.File,
   ) {
     return this.uploads.uploadBuffer(file);
+  }
+}
+
+@ApiTags('Uploads')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@Controller({ path: 'uploads', version: ['1', '2'] })
+export class UserUploadsController {
+  constructor(private readonly uploads: UploadsService) {}
+
+  @Get('signed-url')
+  @ApiQuery({ name: 'filename', required: true })
+  @ApiQuery({ name: 'contentType', required: true, enum: ['image/jpeg','image/png','image/webp'] })
+  @ApiQuery({ name: 'folder', required: false })
+  @ApiOkResponse({ description: 'Returns presigned PUT URL and final public URL for user-facing uploads' })
+  async signedUrl(@Query('filename') filename?: string, @Query('contentType') contentType?: string, @Query('folder') folder?: string) {
+    if (!filename || !contentType) throw new BadRequestException('filename and contentType are required');
+    return this.uploads.createSignedUrl({ filename, contentType, folder });
   }
 }

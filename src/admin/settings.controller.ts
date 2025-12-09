@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Logger, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Patch, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { AdminOnly } from './_admin-guards';
 import { AdminService } from './admin.service';
@@ -11,10 +11,16 @@ import { Prisma } from '@prisma/client';
 import { SettingsService } from '../settings/settings.service';
 import { DeliveryZone } from '../settings/settings.types';
 import { DomainError, ErrorCode } from '../common/errors';
+import { TwoFaGuard } from '../common/guards/twofa.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { CurrentUserPayload } from '../common/types/current-user.type';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Admin/Settings')
 @ApiBearerAuth()
 @AdminOnly()
+@UseGuards(TwoFaGuard)
+@Throttle(20, 60)
 @Controller({ path: 'admin/settings', version: ['1'] })
 export class AdminSettingsController {
   private readonly logger = new Logger(AdminSettingsController.name);
@@ -59,6 +65,10 @@ export class AdminSettingsController {
           freeDeliveryThresholdCents: (zone as any).freeDeliveryThresholdCents,
           minOrderAmountCents: (zone as any).minOrderAmountCents,
           isActive: zone.isActive,
+          etaTextEn: this.settingsService.formatEtaLocalized(zone.etaMinutes, 'en'),
+          etaTextAr: this.settingsService.formatEtaLocalized(zone.etaMinutes, 'ar'),
+          feeMessageEn: this.settingsService.buildZoneMessages(zone).feeMessageEn,
+          feeMessageAr: this.settingsService.buildZoneMessages(zone).feeMessageAr,
         })),
       },
       payment: setting.payment ?? {},
@@ -221,8 +231,9 @@ export class AdminSettingsController {
 
   @Patch()
   @ApiOkResponse({ description: 'Partial update, accept any sections' })
-  async update(@Body() dto: UpdateSettingsDto) {
+  async update(@CurrentUser() user: CurrentUserPayload, @Body() dto: UpdateSettingsDto) {
     const s = await this.getOrCreate();
+    const before = { ...s };
     if (dto.delivery?.deliveryZones) {
       const zones = this.transformDeliveryZones(dto.delivery.deliveryZones);
       if (zones) {
@@ -234,38 +245,46 @@ export class AdminSettingsController {
     this.logger.log({ msg: 'Settings updated', settingId: s.id });
     await this.settingsService.clearCache();
     const zones = await this.settingsService.getDeliveryZones({ includeInactive: true });
+    await this.svc.audit.log({
+      action: 'settings.update',
+      entity: 'settings',
+      entityId: s.id,
+      actorId: user?.userId,
+      before,
+      after: updated,
+    });
     return this.toUi(updated, zones);
   }
 
   // Optional: dedicated section endpoints (useful for the Save buttons per tab)
 
   @Patch('general')
-  async updateGeneral(@Body() dto: GeneralSettingsDto) {
-    return this.update({ general: dto });
+  async updateGeneral(@CurrentUser() user: CurrentUserPayload, @Body() dto: GeneralSettingsDto) {
+    return this.update(user, { general: dto });
   }
 
   @Patch('delivery')
-  async updateDelivery(@Body() dto: DeliverySettingsDto) {
-    return this.update({ delivery: dto });
+  async updateDelivery(@CurrentUser() user: CurrentUserPayload, @Body() dto: DeliverySettingsDto) {
+    return this.update(user, { delivery: dto });
   }
 
   @Patch('payment')
-  async updatePayment(@Body() dto: PaymentSettingsDto) {
-    return this.update({ payment: dto });
+  async updatePayment(@CurrentUser() user: CurrentUserPayload, @Body() dto: PaymentSettingsDto) {
+    return this.update(user, { payment: dto });
   }
 
   @Patch('notifications')
-  async updateNotifications(@Body() dto: NotificationsSettingsDto) {
-    return this.update({ notifications: dto });
+  async updateNotifications(@CurrentUser() user: CurrentUserPayload, @Body() dto: NotificationsSettingsDto) {
+    return this.update(user, { notifications: dto });
   }
 
   @Patch('loyalty')
-  async updateLoyalty(@Body() dto: LoyaltySettingsDto) {
-    return this.update({ loyalty: dto });
+  async updateLoyalty(@CurrentUser() user: CurrentUserPayload, @Body() dto: LoyaltySettingsDto) {
+    return this.update(user, { loyalty: dto });
   }
 
   @Patch('system')
-  async updateSystem(@Body() dto: SystemSettingsDto) {
-    return this.update({ system: dto });
+  async updateSystem(@CurrentUser() user: CurrentUserPayload, @Body() dto: SystemSettingsDto) {
+    return this.update(user, { system: dto });
   }
 }

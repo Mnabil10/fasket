@@ -8,6 +8,16 @@ export type TemplateKey =
   | 'loyalty_earned'
   | 'loyalty_redeemed';
 
+export type PushProvider = 'fcm' | 'onesignal' | 'apns' | 'mock';
+
+export interface DeliveryReceipt {
+  status: 'success' | 'failed';
+  provider: PushProvider;
+  token: string;
+  messageId?: string;
+  error?: string;
+}
+
 export interface NotificationJob {
   key: TemplateKey;
   userId: string;

@@ -38,6 +38,8 @@ function todayPath() {
 export interface ProcessedImageResult {
   url: string;
   variants: string[];
+  driver: 's3' | 'local' | 'inline';
+  warnings?: string[];
 }
 
 @Injectable()
@@ -64,6 +66,10 @@ export class UploadsService {
       (process.env.NODE_ENV === 'production' ? 'false' : 'true')) === 'true';
 
   constructor(@Inject(S3_CLIENT) private readonly s3: S3Client) {}
+
+  private resetDriver() {
+    this.driver = this.originalDriver;
+  }
 
   private mapS3Error(err: any): never {
     // eslint-disable-next-line no-console
@@ -131,12 +137,14 @@ export class UploadsService {
   }
 
   private async storeBuffer(key: string, buffer: Buffer, contentType: string) {
+    const warnings: string[] = [];
     if (this.driver === 'local') {
-      return this.storeBufferLocally(key, buffer);
+      const stored = await this.storeBufferLocally(key, buffer);
+      return { ...stored, driver: this.driver as const, warnings };
     }
     if (this.driver === 'inline') {
       const b64 = buffer.toString('base64');
-      return { url: `data:${contentType};base64,${b64}` };
+      return { url: `data:${contentType};base64,${b64}`, driver: this.driver as const, warnings };
     }
     try {
       await this.s3.send(
@@ -148,10 +156,12 @@ export class UploadsService {
           ...(this.sse ? { ServerSideEncryption: this.sse as any } : {}),
         }),
       );
-      return { url: this.publicUrl(key) };
+      return { url: this.publicUrl(key), driver: this.driver as const, warnings };
     } catch (err) {
       if (this.enableLocalFallback(err)) {
-        return this.storeBufferLocally(key, buffer);
+        warnings.push('Uploads driver fell back to local storage due to S3 error.');
+        const stored = await this.storeBufferLocally(key, buffer);
+        return { ...stored, driver: this.driver as const, warnings };
       }
       return this.mapS3Error(err);
     }
@@ -166,7 +176,20 @@ export class UploadsService {
 
   private async deleteKey(key: string) {
     if (!key) return;
-    if (this.driver === 'local') {
+    if (this.originalDriver === 's3') {
+      try {
+        await this.s3.send(
+          new DeleteObjectCommand({
+            Bucket: this.bucket,
+            Key: key,
+          }),
+        );
+        return;
+      } catch (err) {
+        this.enableLocalFallback(err);
+      }
+    }
+    if (this.driver === 'local' || this.originalDriver === 'local') {
       try {
         await fs.unlink(path.join(this.localRoot, key));
       } catch {
@@ -174,18 +197,7 @@ export class UploadsService {
       }
       return;
     }
-    if (this.driver === 'inline') return;
-    await this.s3
-      .send(
-        new DeleteObjectCommand({
-          Bucket: this.bucket,
-          Key: key,
-        }),
-      )
-      .catch((err) => {
-        this.enableLocalFallback(err);
-        return undefined;
-      });
+    // inline driver keeps data URLs only; nothing to delete
   }
 
   private extractKeyFromUrl(url?: string | null) {
@@ -207,13 +219,19 @@ export class UploadsService {
     return normalized.replace(/^\/+/, '');
   }
 
+  private deriveVariantKeys(key: string) {
+    const ext = path.extname(key) || '';
+    const base = key.slice(0, ext.length ? -ext.length : undefined);
+    return Array.from(new Set([`${base}${ext}`, `${base}-md${ext}`, `${base}-sm${ext}`]));
+  }
+
   private async deleteUrls(urls: (string | null | undefined)[]) {
-    await Promise.all(
-      urls
-        .map((url) => this.extractKeyFromUrl(url))
-        .filter((key): key is string => !!key)
-        .map((key) => this.deleteKey(key)),
-    );
+    const keys = urls
+      .map((url) => this.extractKeyFromUrl(url))
+      .filter((key): key is string => !!key)
+      .flatMap((key) => this.deriveVariantKeys(key));
+    const uniqueKeys = Array.from(new Set(keys));
+    await Promise.all(uniqueKeys.map((key) => this.deleteKey(key)));
   }
 
   private async optimizeImage(buffer: Buffer) {
@@ -237,6 +255,7 @@ export class UploadsService {
   }
 
   async checkHealth() {
+    this.resetDriver();
     if (this.driver === 'local') {
       try {
         await this.ensureLocalDir(this.localRoot);
@@ -257,11 +276,21 @@ export class UploadsService {
   }
 
   async createSignedUrl(params: { filename: string; contentType: string; folder?: string }) {
-    if (this.driver === 'local' || this.driver === 'inline') {
-      throw new BadRequestException('Presigned URL not supported for local storage');
-    }
+    this.resetDriver();
     this.validateMime(params.contentType);
     const Key = this.buildKey(params.filename, params.folder);
+    const warnings: string[] = [];
+    if (this.driver === 'local') {
+      const warning = 'Presigned URLs are disabled because uploads are configured for local storage.';
+      this.logger.warn(warning);
+      warnings.push(warning);
+      return { uploadUrl: null, publicUrl: this.publicUrl(Key), driver: this.driver, warnings, key: Key };
+    }
+    if (this.driver === 'inline') {
+      const warning = 'Inline uploads do not support presigned URLs; send the file contents directly.';
+      warnings.push(warning);
+      return { uploadUrl: null, publicUrl: this.publicUrl(Key), driver: this.driver, warnings, key: Key };
+    }
     try {
       const cmd = new PutObjectCommand({
         Bucket: this.bucket,
@@ -270,8 +299,14 @@ export class UploadsService {
         ...(this.sse ? { ServerSideEncryption: this.sse as any } : {}),
       });
       const uploadUrl = await getSignedUrl(this.s3, cmd, { expiresIn: this.ttl });
-      return { uploadUrl, publicUrl: this.publicUrl(Key) };
+      return { uploadUrl, publicUrl: this.publicUrl(Key), driver: this.driver, warnings, key: Key };
     } catch (err) {
+      if (this.enableLocalFallback(err)) {
+        const warning = 'Presign failed against S3; falling back to local driver.';
+        this.logger.warn(warning);
+        warnings.push(warning);
+        return { uploadUrl: null, publicUrl: this.publicUrl(Key), driver: this.driver, warnings, key: Key };
+      }
       return this.mapS3Error(err);
     }
   }
@@ -288,6 +323,7 @@ export class UploadsService {
     file: Express.Multer.File,
     options: { folder?: string; generateVariants?: boolean; existing?: string[] } = {},
   ): Promise<ProcessedImageResult> {
+    this.resetDriver();
     if (!file) throw new BadRequestException('File is required');
     if (file.size > this.maxBytes) throw new BadRequestException('File too large');
     const mime = await this.detectMime(file);
@@ -310,6 +346,10 @@ export class UploadsService {
     return {
       url: primary.url,
       variants: [medium?.url, thumb?.url].filter((url): url is string => !!url),
+      driver: primary.driver,
+      warnings: [...(primary.warnings ?? []), ...(medium?.warnings ?? []), ...(thumb?.warnings ?? [])].filter(
+        (w): w is string => !!w,
+      ),
     };
   }
 }

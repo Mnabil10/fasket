@@ -1,12 +1,15 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Cache } from 'cache-manager';
+import { createHash } from 'crypto';
 
 type CacheKeyPart = string | number | boolean | null | undefined | Record<string, any>;
 
 @Injectable()
 export class CacheService {
   private readonly defaultTtl = Number(process.env.CACHE_DEFAULT_TTL ?? 60);
+  private hits = 0;
+  private misses = 0;
 
   constructor(@Inject(CACHE_MANAGER) private readonly cache: Cache) {}
 
@@ -29,6 +32,11 @@ export class CacheService {
 
   async get<T>(key: string): Promise<T | undefined> {
     const value = await this.cache.get<T>(key);
+    if (value === undefined) {
+      this.misses += 1;
+    } else {
+      this.hits += 1;
+    }
     return value === undefined ? undefined : value;
   }
 
@@ -66,8 +74,23 @@ export class CacheService {
         .forEach((key) => {
           ordered[key] = (part as any)[key];
         });
-      return JSON.stringify(ordered);
+      return this.hash(JSON.stringify(ordered));
     }
     return String(part);
+  }
+
+  private hash(input: string) {
+    return createHash('sha1').update(input).digest('hex');
+  }
+
+  stats() {
+    const total = this.hits + this.misses;
+    const hitRate = total === 0 ? 0 : this.hits / total;
+    return {
+      hits: this.hits,
+      misses: this.misses,
+      hitRate,
+      total,
+    };
   }
 }

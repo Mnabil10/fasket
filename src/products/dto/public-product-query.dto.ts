@@ -59,4 +59,24 @@ export class PublicProductFeedDto extends PaginationDto {
     return normalizeLang(value);
   })
   lang?: 'en' | 'ar';
+
+  @ApiPropertyOptional({ description: 'ISO date start bound for best-selling analytics', type: String })
+  @IsOptional()
+  @IsString()
+  fromDate?: string;
+
+  @ApiPropertyOptional({ description: 'ISO date end bound for best-selling analytics', type: String })
+  @IsOptional()
+  @IsString()
+  toDate?: string;
+
+  @ApiPropertyOptional({ enum: ['qty'], description: 'Sort field for feed', default: 'qty' })
+  @IsOptional()
+  @IsIn(['qty'])
+  orderBy?: 'qty' = 'qty';
+
+  @ApiPropertyOptional({ enum: ['desc', 'asc'], default: 'desc' })
+  @IsOptional()
+  @IsIn(['desc', 'asc'])
+  sort?: 'desc' | 'asc' = 'desc';
 }

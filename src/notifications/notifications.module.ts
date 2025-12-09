@@ -57,6 +57,7 @@ const queueProviders = redisEnabled
           };
         },
       },
+      NotificationsProcessor,
     ];
 
 @Module({

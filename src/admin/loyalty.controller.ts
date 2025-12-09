@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AdminOnly } from './_admin-guards';
 import { UpdateLoyaltySettingsDto } from './dto/loyalty-settings.dto';
@@ -9,10 +9,14 @@ import { LoyaltyService } from '../loyalty/loyalty.service';
 import { LoyaltyTransactionsQueryDto } from './dto/loyalty-transactions.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CurrentUserPayload } from '../common/types/current-user.type';
+import { TwoFaGuard } from '../common/guards/twofa.guard';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Admin/Loyalty')
 @ApiBearerAuth()
 @AdminOnly()
+@UseGuards(TwoFaGuard)
+@Throttle(20, 60)
 @Controller({ path: 'admin/loyalty', version: ['1'] })
 export class AdminLoyaltyController {
   constructor(

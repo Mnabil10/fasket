@@ -29,7 +29,7 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
       ignoreExpiration: false,
     });
   }
-  async validate(payload: { sub: string }) {
-    return { userId: payload.sub };
+  async validate(payload: { sub: string; jti?: string }) {
+    return { userId: payload.sub, jti: payload.jti };
   }
 }
