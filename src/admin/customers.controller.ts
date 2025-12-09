@@ -50,7 +50,7 @@ export class AdminCustomersController {
         where,
         orderBy: { createdAt: 'desc' },
         select: { id: true, name: true, phone: true, email: true, role: true, createdAt: true },
-        skip: page?.skip, take: page?.take,
+        skip: (page as PaginationDto).skip, take: (page as PaginationDto).take,
       }),
       this.svc.prisma.user.count({ where }),
     ]);
