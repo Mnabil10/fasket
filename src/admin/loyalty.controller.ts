@@ -16,7 +16,7 @@ import { Throttle } from '@nestjs/throttler';
 @ApiBearerAuth()
 @AdminOnly()
 @UseGuards(TwoFaGuard)
-@Throttle(20, 60)
+@Throttle({ default: { limit: 20, ttl: 60 } })
 @Controller({ path: 'admin/loyalty', version: ['1'] })
 export class AdminLoyaltyController {
   constructor(

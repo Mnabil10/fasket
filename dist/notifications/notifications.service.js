@@ -79,6 +79,11 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
         return { success: true };
     }
     async enqueue(payload) {
+        if (!this.queue) {
+            const processor = new (require('./notifications.processor').NotificationsProcessor)(this.prisma);
+            await processor.process({ data: payload });
+            return;
+        }
         try {
             await this.queue.add('send', payload, {
                 removeOnComplete: 50,
@@ -97,6 +102,7 @@ exports.NotificationsService = NotificationsService;
 exports.NotificationsService = NotificationsService = NotificationsService_1 = __decorate([
     (0, common_1.Injectable)(),
     __param(1, (0, bullmq_1.InjectQueue)('notifications')),
+    __param(1, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         bullmq_2.Queue])
 ], NotificationsService);

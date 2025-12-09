@@ -5,6 +5,7 @@ import { CreateOrderDto } from './dto';
 import { SettingsService } from '../settings/settings.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
+import { CacheService } from '../common/cache/cache.service';
 type PublicStatus = 'PENDING' | 'CONFIRMED' | 'DELIVERING' | 'COMPLETED' | 'CANCELED';
 export declare class OrdersService {
     private readonly prisma;
@@ -12,8 +13,11 @@ export declare class OrdersService {
     private readonly settings;
     private readonly loyalty;
     private readonly audit;
+    private readonly cache;
     private readonly logger;
-    constructor(prisma: PrismaService, notify: NotificationsService, settings: SettingsService, loyalty: LoyaltyService, audit: AuditLogService);
+    private readonly listTtl;
+    private readonly receiptTtl;
+    constructor(prisma: PrismaService, notify: NotificationsService, settings: SettingsService, loyalty: LoyaltyService, audit: AuditLogService, cache: CacheService);
     list(userId: string): Promise<{
         id: string;
         code: string;
@@ -76,6 +80,7 @@ export declare class OrdersService {
             priceSnapshotCents: number;
             qty: number;
         }[];
+        etag: string;
     }>;
     create(userId: string, payload: CreateOrderDto): Promise<{
         id: string;
@@ -129,8 +134,10 @@ export declare class OrdersService {
             priceSnapshotCents: number;
             qty: number;
         }[];
+        etag: string;
     }>;
     awardLoyaltyForOrder(orderId: string, tx?: Prisma.TransactionClient): Promise<number>;
+    revokeLoyaltyForOrder(orderId: string, tx?: Prisma.TransactionClient): Promise<number>;
     assignDriverToOrder(orderId: string, driverId: string, actorId?: string): Promise<{
         orderId: string;
         driverAssignedAt: Date | null;
@@ -142,7 +149,123 @@ export declare class OrdersService {
             plateNumber: string | undefined;
         };
     }>;
+    clearCachesForOrder(orderId: string, userId?: string): Promise<void>;
     private generateOrderCode;
+    reorder(userId: string, fromOrderId: string): Promise<{
+        id: string;
+        code: string;
+        userId: string;
+        status: PublicStatus;
+        paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
+        subtotalCents: number;
+        shippingFeeCents: number;
+        discountCents: number;
+        loyaltyDiscountCents: number;
+        loyaltyPointsUsed: number;
+        loyaltyPointsEarned: any;
+        totalCents: number;
+        createdAt: Date;
+        note: string | undefined;
+        estimatedDeliveryTime: string | undefined;
+        deliveryEtaMinutes: number | undefined;
+        deliveryZoneId: string | undefined;
+        deliveryZoneName: string | undefined;
+        deliveryZone: {
+            id: any;
+            nameEn: any;
+            nameAr: any;
+            city: any;
+            region: any;
+            feeCents: any;
+            etaMinutes: any;
+            isActive: any;
+            freeDeliveryThresholdCents: any;
+            minOrderAmountCents: any;
+        } | undefined;
+        address: {
+            id: string;
+            label: string | null;
+            city: string | null;
+            zoneId: string;
+            street: string | null;
+            building: string | null;
+            apartment: string | null;
+        } | null;
+        driver: {
+            id: string;
+            fullName: string;
+            phone: string;
+        } | null;
+        items: {
+            id: string;
+            productId: string;
+            productNameSnapshot: string;
+            priceSnapshotCents: number;
+            qty: number;
+        }[];
+        etag: string;
+    }>;
+    cancelOrder(userId: string, orderId: string): Promise<{
+        id: string;
+        code: string;
+        userId: string;
+        status: PublicStatus;
+        paymentMethod: import(".prisma/client").$Enums.PaymentMethod;
+        subtotalCents: number;
+        shippingFeeCents: number;
+        discountCents: number;
+        loyaltyDiscountCents: number;
+        loyaltyPointsUsed: number;
+        loyaltyPointsEarned: any;
+        totalCents: number;
+        createdAt: Date;
+        note: string | undefined;
+        estimatedDeliveryTime: string | undefined;
+        deliveryEtaMinutes: number | undefined;
+        deliveryZoneId: string | undefined;
+        deliveryZoneName: string | undefined;
+        deliveryZone: {
+            id: any;
+            nameEn: any;
+            nameAr: any;
+            city: any;
+            region: any;
+            feeCents: any;
+            etaMinutes: any;
+            isActive: any;
+            freeDeliveryThresholdCents: any;
+            minOrderAmountCents: any;
+        } | undefined;
+        address: {
+            id: string;
+            label: string | null;
+            city: string | null;
+            zoneId: string;
+            street: string | null;
+            building: string | null;
+            apartment: string | null;
+        } | null;
+        driver: {
+            id: string;
+            fullName: string;
+            phone: string;
+        } | null;
+        items: {
+            id: string;
+            productId: string;
+            productNameSnapshot: string;
+            priceSnapshotCents: number;
+            qty: number;
+        }[];
+        etag: string;
+    }>;
+    adminCancelOrder(orderId: string, actorId?: string, note?: string): Promise<{
+        success: boolean;
+    }>;
+    private restockInventory;
+    private refundRedeemedPoints;
+    private rollbackStockFromCart;
+    private rollbackStockForOrderItems;
     private toPublicStatus;
     private toOrderDetail;
 }

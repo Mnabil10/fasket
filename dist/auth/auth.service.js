@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 var AuthService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
@@ -20,12 +23,14 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const auth_rate_limit_service_1 = require("./auth-rate-limit.service");
 const device_util_1 = require("../common/utils/device.util");
 const errors_1 = require("../common/errors");
+const cache_manager_1 = require("@nestjs/cache-manager");
 let AuthService = AuthService_1 = class AuthService {
-    constructor(prisma, jwt, rateLimiter, config) {
+    constructor(prisma, jwt, rateLimiter, config, cache) {
         this.prisma = prisma;
         this.jwt = jwt;
         this.rateLimiter = rateLimiter;
         this.config = config;
+        this.cache = cache;
         this.logger = new common_1.Logger(AuthService_1.name);
         this.otpDigits = 6;
     }
@@ -86,7 +91,10 @@ let AuthService = AuthService_1 = class AuthService {
             this.logger.warn({ msg: 'Login failed - bad password', userId: user.id, ip: metadata.ip });
             throw new common_1.UnauthorizedException('Invalid credentials');
         }
-        if (user.role === 'ADMIN' && user.twoFaEnabled) {
+        if (user.role === 'ADMIN') {
+            if (!user.twoFaEnabled) {
+                throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Admin accounts must enable two-factor authentication');
+            }
             if (!input.otp || !this.verifyTotp(input.otp, user.twoFaSecret ?? '')) {
                 throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
             }
@@ -149,6 +157,7 @@ let AuthService = AuthService_1 = class AuthService {
         }
         const accessTtl = this.config.get('JWT_ACCESS_TTL') ?? 900;
         const refreshTtl = this.config.get('JWT_REFRESH_TTL') ?? 1209600;
+        const jti = (0, crypto_1.randomUUID)();
         const accessPayload = {
             sub: user.id,
             role: user.role,
@@ -160,13 +169,14 @@ let AuthService = AuthService_1 = class AuthService {
             secret: accessSecret,
             expiresIn: accessTtl,
         });
-        const refresh = await this.jwt.signAsync({ sub: user.id }, {
+        const refresh = await this.jwt.signAsync({ sub: user.id, jti }, {
             secret: refreshSecret,
             expiresIn: refreshTtl,
         });
+        await this.cache.set(this.refreshCacheKey(user.id, jti), true, refreshTtl);
         return { accessToken: access, refreshToken: refresh };
     }
-    async issueTokensForUserId(sub) {
+    async issueTokensForUserId(sub, previousJti) {
         const user = await this.prisma.user.findUnique({
             where: { id: sub },
             select: { role: true, phone: true, email: true, twoFaEnabled: true },
@@ -174,6 +184,13 @@ let AuthService = AuthService_1 = class AuthService {
         if (!user) {
             this.logger.warn({ msg: 'Refresh token rejected - user missing', userId: sub });
             throw new common_1.UnauthorizedException('User not found');
+        }
+        if (previousJti) {
+            const allowed = await this.cache.get(this.refreshCacheKey(sub, previousJti));
+            if (!allowed) {
+                throw new common_1.UnauthorizedException('Refresh token reuse detected');
+            }
+            await this.cache.del(this.refreshCacheKey(sub, previousJti));
         }
         return this.issueTokens({
             id: sub,
@@ -243,13 +260,17 @@ let AuthService = AuthService_1 = class AuthService {
         const digits = code % 10 ** this.otpDigits;
         return digits.toString().padStart(this.otpDigits, '0');
     }
+    refreshCacheKey(userId, jti) {
+        return `refresh:${userId}:${jti}`;
+    }
 };
 exports.AuthService = AuthService;
 exports.AuthService = AuthService = AuthService_1 = __decorate([
     (0, common_1.Injectable)(),
+    __param(4, (0, common_1.Inject)(cache_manager_1.CACHE_MANAGER)),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         jwt_1.JwtService,
         auth_rate_limit_service_1.AuthRateLimitService,
-        config_1.ConfigService])
+        config_1.ConfigService, Object])
 ], AuthService);
 //# sourceMappingURL=auth.service.js.map

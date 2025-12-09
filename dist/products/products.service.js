@@ -29,6 +29,7 @@ let ProductsService = class ProductsService {
         this.cache = cache;
         this.listTtl = Number(process.env.PRODUCT_LIST_CACHE_TTL ?? 60);
         this.homeTtl = Number(process.env.HOME_CACHE_TTL ?? 120);
+        this.swrTtl = Number(process.env.CACHE_SWR_TTL ?? 30);
     }
     async list(q) {
         const page = q.page ?? 1;
@@ -79,7 +80,7 @@ let ProductsService = class ProductsService {
             ]);
             const mapped = await Promise.all(items.map((product) => this.toProductSummary(product, q?.lang)));
             return { items: mapped, total, page, pageSize };
-        }, this.listTtl);
+        }, this.listTtl + this.swrTtl);
     }
     async one(idOrSlug, lang) {
         const product = await this.prisma.product.findFirst({
@@ -98,12 +99,21 @@ let ProductsService = class ProductsService {
         const currentPage = query.page ?? 1;
         const take = query.pageSize ?? 10;
         const lang = query.lang;
-        const cacheKey = this.cache.buildKey('home:best', lang ?? 'en', currentPage, take);
+        const cacheKey = this.cache.buildKey('home:best', lang ?? 'en', currentPage, take, query.fromDate ?? '', query.toDate ?? '', query.orderBy ?? 'qty', query.sort ?? 'desc');
         return this.cache.wrap(cacheKey, async () => {
+            const whereOrder = {};
+            if (query.fromDate || query.toDate)
+                whereOrder.createdAt = {};
+            if (query.fromDate)
+                whereOrder.createdAt.gte = new Date(query.fromDate);
+            if (query.toDate)
+                whereOrder.createdAt.lte = new Date(query.toDate);
+            whereOrder.status = { in: ['PENDING', 'PROCESSING', 'OUT_FOR_DELIVERY', 'DELIVERED'] };
             const agg = await this.prisma.orderItem.groupBy({
                 by: ['productId'],
                 _sum: { qty: true },
-                orderBy: { _sum: { qty: 'desc' } },
+                where: { order: whereOrder },
+                orderBy: { _sum: { qty: query.sort ?? 'desc' } },
                 skip: (currentPage - 1) * take,
                 take,
             });
@@ -122,7 +132,7 @@ let ProductsService = class ProductsService {
             })
                 .filter((p) => !!p);
             return Promise.all(ordered.map((product) => this.toProductSummary(product, lang)));
-        }, this.homeTtl);
+        }, this.homeTtl + this.swrTtl);
     }
     async hotOffers(query = new public_product_query_dto_1.PublicProductFeedDto()) {
         const currentPage = query.page ?? 1;
@@ -138,7 +148,7 @@ let ProductsService = class ProductsService {
                 take,
             });
             return Promise.all(items.map((product) => this.toProductSummary(product, lang)));
-        }, this.homeTtl);
+        }, this.homeTtl + this.swrTtl);
     }
     toCents(amount) {
         const numeric = Number(amount);
@@ -155,6 +165,7 @@ let ProductsService = class ProductsService {
             name: this.localize(product.name, product.nameAr, lang) ?? product.name,
             slug: product.slug,
             imageUrl: await (0, image_util_1.toPublicImageUrl)(product.imageUrl),
+            etag: this.buildEtag(product),
             priceCents: product.priceCents,
             salePriceCents: product.salePriceCents,
             stock: product.stock,
@@ -176,6 +187,7 @@ let ProductsService = class ProductsService {
             descriptionAr: product.descriptionAr,
             descriptionEn: product.description,
             imageUrl: await (0, image_util_1.toPublicImageUrl)(product.imageUrl),
+            etag: this.buildEtag(product),
             images: product.images,
             priceCents: product.priceCents,
             salePriceCents: product.salePriceCents,
@@ -190,6 +202,10 @@ let ProductsService = class ProductsService {
                 }
                 : null,
         };
+    }
+    buildEtag(product) {
+        const updated = product.updatedAt ? product.updatedAt.getTime() : Date.now();
+        return `${product.id}-${updated}`;
     }
 };
 exports.ProductsService = ProductsService;

@@ -7,6 +7,7 @@ export declare class ProductsService {
     private cache;
     private readonly listTtl;
     private readonly homeTtl;
+    private readonly swrTtl;
     constructor(prisma: PrismaService, cache: CacheService);
     list(q: PublicProductListDto): Promise<{
         items: {
@@ -14,6 +15,7 @@ export declare class ProductsService {
             name: string;
             slug: string;
             imageUrl: string | undefined;
+            etag: string;
             priceCents: number;
             salePriceCents: number | null;
             stock: number;
@@ -35,6 +37,7 @@ export declare class ProductsService {
         descriptionAr: string | null;
         descriptionEn: string | null;
         imageUrl: string | undefined;
+        etag: string;
         images: string[];
         priceCents: number;
         salePriceCents: number | null;
@@ -52,6 +55,7 @@ export declare class ProductsService {
         name: string;
         slug: string;
         imageUrl: string | undefined;
+        etag: string;
         priceCents: number;
         salePriceCents: number | null;
         stock: number;
@@ -66,6 +70,7 @@ export declare class ProductsService {
         name: string;
         slug: string;
         imageUrl: string | undefined;
+        etag: string;
         priceCents: number;
         salePriceCents: number | null;
         stock: number;
@@ -79,5 +84,6 @@ export declare class ProductsService {
     private localize;
     private toProductSummary;
     private toProductDetail;
+    private buildEtag;
 }
 export {};

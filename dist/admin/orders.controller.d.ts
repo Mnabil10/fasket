@@ -1,12 +1,13 @@
+import { Prisma } from '@prisma/client';
 import { AdminService } from './admin.service';
 import { UpdateOrderStatusDto } from './dto/order-status.dto';
-import { PaginationDto } from './dto/pagination.dto';
 import { CurrentUserPayload } from '../common/types/current-user.type';
 import { AssignDriverDto } from '../delivery-drivers/dto/driver.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ReceiptService } from '../orders/receipt.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
 import { OrdersService } from '../orders/orders.service';
+import { AdminOrderListDto } from './dto/admin-order-list.dto';
 export declare class AdminOrdersController {
     private readonly svc;
     private readonly notifications;
@@ -15,7 +16,7 @@ export declare class AdminOrdersController {
     private readonly orders;
     private readonly logger;
     constructor(svc: AdminService, notifications: NotificationsService, receipts: ReceiptService, audit: AuditLogService, orders: OrdersService);
-    list(status?: string, from?: string, to?: string, customer?: string, minTotalCents?: string, maxTotalCents?: string, driverId?: string, page?: PaginationDto): Promise<{
+    list(query: AdminOrderListDto): Promise<{
         items: ({
             user: {
                 id: string;
@@ -44,6 +45,7 @@ export declare class AdminOrdersController {
             loyaltyPointsEarned: number;
             notes: string | null;
             couponCode: string | null;
+            idempotencyKey: string | null;
             deliveryZoneId: string | null;
             deliveryZoneName: string | null;
             estimatedDeliveryTime: string | null;
@@ -57,14 +59,14 @@ export declare class AdminOrdersController {
         page: number | undefined;
         pageSize: number | undefined;
     }>;
-    one(id: string): import(".prisma/client").Prisma.Prisma__OrderClient<({
+    one(id: string): Prisma.Prisma__OrderClient<({
         items: {
             id: string;
             orderId: string;
+            qty: number;
             productId: string;
             productNameSnapshot: string;
             priceSnapshotCents: number;
-            qty: number;
         }[];
         user: {
             id: string;
@@ -130,6 +132,7 @@ export declare class AdminOrdersController {
         loyaltyPointsEarned: number;
         notes: string | null;
         couponCode: string | null;
+        idempotencyKey: string | null;
         deliveryZoneId: string | null;
         deliveryZoneName: string | null;
         estimatedDeliveryTime: string | null;
@@ -141,11 +144,7 @@ export declare class AdminOrdersController {
     }) | null, null, import("@prisma/client/runtime/library").DefaultArgs>;
     getReceipt(id: string): Promise<import("../orders/dto/receipt.dto").OrderReceiptDto>;
     updateStatus(user: CurrentUserPayload, id: string, dto: UpdateOrderStatusDto): Promise<{
-        ok: boolean;
-        message: string;
-    } | {
-        ok: boolean;
-        message?: undefined;
+        success: boolean;
     }>;
     assignDriver(id: string, dto: AssignDriverDto, admin: CurrentUserPayload): Promise<{
         success: boolean;

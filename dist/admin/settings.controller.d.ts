@@ -1,6 +1,7 @@
 import { AdminService } from './admin.service';
 import { UpdateSettingsDto, GeneralSettingsDto, DeliverySettingsDto, PaymentSettingsDto, NotificationsSettingsDto, SystemSettingsDto, LoyaltySettingsDto } from './dto/settings.dto';
 import { SettingsService } from '../settings/settings.service';
+import { CurrentUserPayload } from '../common/types/current-user.type';
 export declare class AdminSettingsController {
     private readonly svc;
     private readonly settingsService;
@@ -36,6 +37,10 @@ export declare class AdminSettingsController {
                 freeDeliveryThresholdCents: any;
                 minOrderAmountCents: any;
                 isActive: boolean;
+                etaTextEn: string | null;
+                etaTextAr: string | null;
+                feeMessageEn: string;
+                feeMessageAr: string;
             }[];
         };
         payment: any;
@@ -67,7 +72,7 @@ export declare class AdminSettingsController {
         };
         updatedAt: any;
     }>;
-    update(dto: UpdateSettingsDto): Promise<{
+    update(user: CurrentUserPayload, dto: UpdateSettingsDto): Promise<{
         general: {
             storeName: any;
             storeDescription: any;
@@ -93,6 +98,10 @@ export declare class AdminSettingsController {
                 freeDeliveryThresholdCents: any;
                 minOrderAmountCents: any;
                 isActive: boolean;
+                etaTextEn: string | null;
+                etaTextAr: string | null;
+                feeMessageEn: string;
+                feeMessageAr: string;
             }[];
         };
         payment: any;
@@ -124,7 +133,7 @@ export declare class AdminSettingsController {
         };
         updatedAt: any;
     }>;
-    updateGeneral(dto: GeneralSettingsDto): Promise<{
+    updateGeneral(user: CurrentUserPayload, dto: GeneralSettingsDto): Promise<{
         general: {
             storeName: any;
             storeDescription: any;
@@ -150,6 +159,10 @@ export declare class AdminSettingsController {
                 freeDeliveryThresholdCents: any;
                 minOrderAmountCents: any;
                 isActive: boolean;
+                etaTextEn: string | null;
+                etaTextAr: string | null;
+                feeMessageEn: string;
+                feeMessageAr: string;
             }[];
         };
         payment: any;
@@ -181,7 +194,7 @@ export declare class AdminSettingsController {
         };
         updatedAt: any;
     }>;
-    updateDelivery(dto: DeliverySettingsDto): Promise<{
+    updateDelivery(user: CurrentUserPayload, dto: DeliverySettingsDto): Promise<{
         general: {
             storeName: any;
             storeDescription: any;
@@ -207,6 +220,10 @@ export declare class AdminSettingsController {
                 freeDeliveryThresholdCents: any;
                 minOrderAmountCents: any;
                 isActive: boolean;
+                etaTextEn: string | null;
+                etaTextAr: string | null;
+                feeMessageEn: string;
+                feeMessageAr: string;
             }[];
         };
         payment: any;
@@ -238,7 +255,7 @@ export declare class AdminSettingsController {
         };
         updatedAt: any;
     }>;
-    updatePayment(dto: PaymentSettingsDto): Promise<{
+    updatePayment(user: CurrentUserPayload, dto: PaymentSettingsDto): Promise<{
         general: {
             storeName: any;
             storeDescription: any;
@@ -264,6 +281,10 @@ export declare class AdminSettingsController {
                 freeDeliveryThresholdCents: any;
                 minOrderAmountCents: any;
                 isActive: boolean;
+                etaTextEn: string | null;
+                etaTextAr: string | null;
+                feeMessageEn: string;
+                feeMessageAr: string;
             }[];
         };
         payment: any;
@@ -295,7 +316,7 @@ export declare class AdminSettingsController {
         };
         updatedAt: any;
     }>;
-    updateNotifications(dto: NotificationsSettingsDto): Promise<{
+    updateNotifications(user: CurrentUserPayload, dto: NotificationsSettingsDto): Promise<{
         general: {
             storeName: any;
             storeDescription: any;
@@ -321,6 +342,10 @@ export declare class AdminSettingsController {
                 freeDeliveryThresholdCents: any;
                 minOrderAmountCents: any;
                 isActive: boolean;
+                etaTextEn: string | null;
+                etaTextAr: string | null;
+                feeMessageEn: string;
+                feeMessageAr: string;
             }[];
         };
         payment: any;
@@ -352,7 +377,7 @@ export declare class AdminSettingsController {
         };
         updatedAt: any;
     }>;
-    updateLoyalty(dto: LoyaltySettingsDto): Promise<{
+    updateLoyalty(user: CurrentUserPayload, dto: LoyaltySettingsDto): Promise<{
         general: {
             storeName: any;
             storeDescription: any;
@@ -378,6 +403,10 @@ export declare class AdminSettingsController {
                 freeDeliveryThresholdCents: any;
                 minOrderAmountCents: any;
                 isActive: boolean;
+                etaTextEn: string | null;
+                etaTextAr: string | null;
+                feeMessageEn: string;
+                feeMessageAr: string;
             }[];
         };
         payment: any;
@@ -409,7 +438,7 @@ export declare class AdminSettingsController {
         };
         updatedAt: any;
     }>;
-    updateSystem(dto: SystemSettingsDto): Promise<{
+    updateSystem(user: CurrentUserPayload, dto: SystemSettingsDto): Promise<{
         general: {
             storeName: any;
             storeDescription: any;
@@ -435,6 +464,10 @@ export declare class AdminSettingsController {
                 freeDeliveryThresholdCents: any;
                 minOrderAmountCents: any;
                 isActive: boolean;
+                etaTextEn: string | null;
+                etaTextAr: string | null;
+                feeMessageEn: string;
+                feeMessageAr: string;
             }[];
         };
         payment: any;

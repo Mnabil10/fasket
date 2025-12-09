@@ -140,11 +140,11 @@ export class UploadsService {
     const warnings: string[] = [];
     if (this.driver === 'local') {
       const stored = await this.storeBufferLocally(key, buffer);
-      return { ...stored, driver: this.driver as const, warnings };
+      return { ...stored, driver: this.driver, warnings };
     }
     if (this.driver === 'inline') {
       const b64 = buffer.toString('base64');
-      return { url: `data:${contentType};base64,${b64}`, driver: this.driver as const, warnings };
+      return { url: `data:${contentType};base64,${b64}`, driver: this.driver, warnings };
     }
     try {
       await this.s3.send(
@@ -156,12 +156,12 @@ export class UploadsService {
           ...(this.sse ? { ServerSideEncryption: this.sse as any } : {}),
         }),
       );
-      return { url: this.publicUrl(key), driver: this.driver as const, warnings };
+      return { url: this.publicUrl(key), driver: this.driver, warnings };
     } catch (err) {
       if (this.enableLocalFallback(err)) {
         warnings.push('Uploads driver fell back to local storage due to S3 error.');
         const stored = await this.storeBufferLocally(key, buffer);
-        return { ...stored, driver: this.driver as const, warnings };
+        return { ...stored, driver: this.driver, warnings };
       }
       return this.mapS3Error(err);
     }

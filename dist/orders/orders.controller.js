@@ -28,14 +28,24 @@ let OrdersController = class OrdersController {
     list(user) {
         return this.service.list(user.userId);
     }
-    detail(user, id) {
-        return this.service.detail(user.userId, id);
+    async detail(user, id, res) {
+        const result = await this.service.detail(user.userId, id);
+        if (result.etag) {
+            res.setHeader('ETag', result.etag);
+        }
+        return res.json(result);
     }
     create(user, dto) {
         return this.service.create(user.userId, dto);
     }
+    reorder(user, id) {
+        return this.service.reorder(user.userId, id);
+    }
     receipt(user, id) {
         return this.receipts.getForCustomer(id, user.userId);
+    }
+    cancel(user, id) {
+        return this.service.cancelOrder(user.userId, id);
     }
 };
 exports.OrdersController = OrdersController;
@@ -50,9 +60,10 @@ __decorate([
     (0, common_1.Get)(':id'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
 ], OrdersController.prototype, "detail", null);
 __decorate([
     (0, common_1.Post)(),
@@ -63,6 +74,14 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], OrdersController.prototype, "create", null);
 __decorate([
+    (0, common_1.Post)(':id/reorder'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], OrdersController.prototype, "reorder", null);
+__decorate([
     (0, common_1.Get)(':id/receipt'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id')),
@@ -70,6 +89,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], OrdersController.prototype, "receipt", null);
+__decorate([
+    (0, common_1.Patch)(':id/cancel'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], OrdersController.prototype, "cancel", null);
 exports.OrdersController = OrdersController = __decorate([
     (0, swagger_1.ApiTags)('Orders'),
     (0, swagger_1.ApiBearerAuth)(),

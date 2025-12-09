@@ -65,9 +65,22 @@ export declare class SettingsService {
     }): Promise<DeliveryQuote>;
     getLoyaltyConfig(): Promise<LoyaltyConfig>;
     ensureZoneActive(zoneId: string, zones: DeliveryZone[]): DeliveryZone;
+    validateZoneConfig(zones: DeliveryZone[]): {
+        id: string;
+        issues: string[];
+        isActive: boolean;
+    }[];
     deserializeDeliveryZones(raw: any): DeliveryZone[];
     private normalizeDeliveryZones;
     private normalizeDeliveryZone;
     private toNonNegativeInt;
     private formatEta;
+    formatEtaLocalized(etaMinutes?: number, lang?: 'en' | 'ar'): string | null;
+    buildZoneMessages(zone: DeliveryZone): {
+        etaTextEn: string | null;
+        etaTextAr: string | null;
+        feeMessageEn: string;
+        feeMessageAr: string;
+        freeDeliveryThresholdCents: number | null;
+    };
 }

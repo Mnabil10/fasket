@@ -19,6 +19,9 @@ const swagger_1 = require("@nestjs/swagger");
 const _admin_guards_1 = require("./_admin-guards");
 const admin_service_1 = require("./admin.service");
 const pagination_dto_1 = require("./dto/pagination.dto");
+const twofa_guard_1 = require("../common/guards/twofa.guard");
+const throttler_1 = require("@nestjs/throttler");
+const common_2 = require("@nestjs/common");
 let AdminCouponsController = AdminCouponsController_1 = class AdminCouponsController {
     constructor(svc) {
         this.svc = svc;
@@ -36,18 +39,56 @@ let AdminCouponsController = AdminCouponsController_1 = class AdminCouponsContro
     }
     create(dto) {
         const data = { ...dto };
-        if (dto.percent != null && dto.type == null) {
-            data.type = 'PERCENT';
+        if (dto.percent != null) {
+            data.type = dto.type ?? 'PERCENT';
             data.valueCents = Number(dto.percent);
         }
-        const created = this.svc.prisma.coupon.create({ data });
-        created.then((coupon) => this.logger.log({ msg: 'Coupon created', couponId: coupon.id, code: coupon.code, type: coupon.type }));
-        return created;
+        if (data.type === 'FIXED' && (data.valueCents === undefined || data.valueCents === null)) {
+            throw new common_2.BadRequestException('valueCents is required for FIXED coupons');
+        }
+        if (data.type === 'PERCENT' && (data.valueCents === undefined || data.valueCents === null)) {
+            throw new common_2.BadRequestException('percent (valueCents) is required for PERCENT coupons');
+        }
+        const createdPromise = this.svc.prisma.coupon.create({ data });
+        createdPromise.then(async (coupon) => {
+            this.logger.log({ msg: 'Coupon created', couponId: coupon.id, code: coupon.code, type: coupon.type });
+            await this.svc.audit.log({
+                action: 'coupon.create',
+                entity: 'Coupon',
+                entityId: coupon.id,
+                after: coupon,
+            });
+        });
+        return createdPromise;
     }
     update(id, dto) {
-        const updated = this.svc.prisma.coupon.update({ where: { id }, data: dto });
-        updated.then((coupon) => this.logger.log({ msg: 'Coupon updated', couponId: coupon.id, code: coupon.code, isActive: coupon.isActive }));
-        return updated;
+        return this.svc.prisma.$transaction(async (tx) => {
+            const before = await tx.coupon.findUnique({ where: { id } });
+            if (!before) {
+                throw new Error('Coupon not found');
+            }
+            const data = { ...dto };
+            if (dto.percent != null) {
+                data.type = dto.type ?? 'PERCENT';
+                data.valueCents = Number(dto.percent);
+            }
+            if (data.type === 'FIXED' && data.valueCents === undefined && before.type === 'FIXED') {
+                data.valueCents = before.valueCents;
+            }
+            if ((data.type ?? before.type) === 'PERCENT' && (data.valueCents === undefined || data.valueCents === null)) {
+                throw new common_2.BadRequestException('percent (valueCents) is required for PERCENT coupons');
+            }
+            const updated = await tx.coupon.update({ where: { id }, data });
+            this.logger.log({ msg: 'Coupon updated', couponId: updated.id, code: updated.code, isActive: updated.isActive });
+            await this.svc.audit.log({
+                action: 'coupon.update',
+                entity: 'Coupon',
+                entityId: id,
+                before,
+                after: updated,
+            });
+            return updated;
+        });
     }
 };
 exports.AdminCouponsController = AdminCouponsController;
@@ -80,6 +121,8 @@ exports.AdminCouponsController = AdminCouponsController = AdminCouponsController
     (0, swagger_1.ApiTags)('Admin/Coupons'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.AdminOnly)(),
+    (0, common_1.UseGuards)(twofa_guard_1.TwoFaGuard),
+    (0, throttler_1.Throttle)({ default: { limit: 20, ttl: 60 } }),
     (0, common_1.Controller)({ path: 'admin/coupons', version: ['1'] }),
     __metadata("design:paramtypes", [admin_service_1.AdminService])
 ], AdminCouponsController);

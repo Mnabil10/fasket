@@ -17,6 +17,7 @@ const prisma_service_1 = require("../prisma/prisma.service");
 let UsersService = class UsersService {
     constructor(prisma) {
         this.prisma = prisma;
+        this.passwordPolicy = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-={}\[\]:;"'`|<>,.?/]{8,}$/;
     }
     async me(userId) {
         const [user, ordersCount, sums] = await this.prisma.$transaction([
@@ -45,6 +46,9 @@ let UsersService = class UsersService {
     async changePassword(userId, dto) {
         if (dto.currentPassword === dto.newPassword) {
             throw new common_1.BadRequestException('New password must be different from current password');
+        }
+        if (!this.passwordPolicy.test(dto.newPassword)) {
+            throw new common_1.BadRequestException('Password must be at least 8 chars and contain letters and numbers');
         }
         const user = await this.prisma.user.findUnique({
             where: { id: userId },

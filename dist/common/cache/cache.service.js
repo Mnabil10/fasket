@@ -15,10 +15,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CacheService = void 0;
 const cache_manager_1 = require("@nestjs/cache-manager");
 const common_1 = require("@nestjs/common");
+const crypto_1 = require("crypto");
 let CacheService = class CacheService {
     constructor(cache) {
         this.cache = cache;
         this.defaultTtl = Number(process.env.CACHE_DEFAULT_TTL ?? 60);
+        this.hits = 0;
+        this.misses = 0;
     }
     buildKey(namespace, ...parts) {
         const normalized = parts
@@ -37,6 +40,12 @@ let CacheService = class CacheService {
     }
     async get(key) {
         const value = await this.cache.get(key);
+        if (value === undefined) {
+            this.misses += 1;
+        }
+        else {
+            this.hits += 1;
+        }
         return value === undefined ? undefined : value;
     }
     async set(key, value, ttl) {
@@ -72,9 +81,22 @@ let CacheService = class CacheService {
                 .forEach((key) => {
                 ordered[key] = part[key];
             });
-            return JSON.stringify(ordered);
+            return this.hash(JSON.stringify(ordered));
         }
         return String(part);
+    }
+    hash(input) {
+        return (0, crypto_1.createHash)('sha1').update(input).digest('hex');
+    }
+    stats() {
+        const total = this.hits + this.misses;
+        const hitRate = total === 0 ? 0 : this.hits / total;
+        return {
+            hits: this.hits,
+            misses: this.misses,
+            hitRate,
+            total,
+        };
     }
 };
 exports.CacheService = CacheService;

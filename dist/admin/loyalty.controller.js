@@ -23,6 +23,8 @@ const loyalty_adjust_dto_1 = require("./dto/loyalty-adjust.dto");
 const loyalty_service_1 = require("../loyalty/loyalty.service");
 const loyalty_transactions_dto_1 = require("./dto/loyalty-transactions.dto");
 const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
+const twofa_guard_1 = require("../common/guards/twofa.guard");
+const throttler_1 = require("@nestjs/throttler");
 let AdminLoyaltyController = class AdminLoyaltyController {
     constructor(settings, admin, loyalty) {
         this.settings = settings;
@@ -271,6 +273,8 @@ exports.AdminLoyaltyController = AdminLoyaltyController = __decorate([
     (0, swagger_1.ApiTags)('Admin/Loyalty'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.AdminOnly)(),
+    (0, common_1.UseGuards)(twofa_guard_1.TwoFaGuard),
+    (0, throttler_1.Throttle)({ default: { limit: 20, ttl: 60 } }),
     (0, common_1.Controller)({ path: 'admin/loyalty', version: ['1'] }),
     __metadata("design:paramtypes", [settings_service_1.SettingsService,
         admin_service_1.AdminService,

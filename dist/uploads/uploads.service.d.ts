@@ -2,6 +2,8 @@ import { S3Client } from '@aws-sdk/client-s3';
 export interface ProcessedImageResult {
     url: string;
     variants: string[];
+    driver: 's3' | 'local' | 'inline';
+    warnings?: string[];
 }
 export declare class UploadsService {
     private readonly s3;
@@ -19,6 +21,7 @@ export declare class UploadsService {
     private readonly sse;
     private readonly allowLocalFallback;
     constructor(s3: S3Client);
+    private resetDriver;
     private mapS3Error;
     private validateMime;
     private ensureLocalDir;
@@ -32,6 +35,7 @@ export declare class UploadsService {
     private storeBufferLocally;
     private deleteKey;
     private extractKeyFromUrl;
+    private deriveVariantKeys;
     private deleteUrls;
     private optimizeImage;
     checkHealth(): Promise<{
@@ -42,8 +46,29 @@ export declare class UploadsService {
         contentType: string;
         folder?: string;
     }): Promise<{
+        uploadUrl: null;
+        publicUrl: string;
+        driver: "local";
+        warnings: string[];
+        key: string;
+    } | {
+        uploadUrl: null;
+        publicUrl: string;
+        driver: "inline";
+        warnings: string[];
+        key: string;
+    } | {
         uploadUrl: string;
         publicUrl: string;
+        driver: "s3";
+        warnings: string[];
+        key: string;
+    } | {
+        uploadUrl: null;
+        publicUrl: string;
+        driver: "s3";
+        warnings: string[];
+        key: string;
     }>;
     uploadBuffer(file: Express.Multer.File): Promise<ProcessedImageResult>;
     processProductImage(file: Express.Multer.File, existing?: string[]): Promise<ProcessedImageResult>;

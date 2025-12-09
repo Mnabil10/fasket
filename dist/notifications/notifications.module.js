@@ -61,6 +61,7 @@ const queueProviders = redisEnabled
                 };
             },
         },
+        notifications_processor_1.NotificationsProcessor,
     ];
 let NotificationsModule = class NotificationsModule {
 };

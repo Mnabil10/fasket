@@ -36,7 +36,7 @@ let AuthController = class AuthController {
         });
     }
     refresh(req, _dto) {
-        return this.service.issueTokensForUserId(req.user.userId);
+        return this.service.issueTokensForUserId(req.user.userId, req.user.jti);
     }
     setupAdminTwoFa(req) {
         return this.service.setupAdminTwoFa(req.user.userId);

@@ -19,7 +19,7 @@ import { Throttle } from '@nestjs/throttler';
 @ApiTags('Admin/Orders')
 @ApiBearerAuth()
 @StaffOrAdmin()
-@Throttle(30, 60)
+@Throttle({ default: { limit: 30, ttl: 60 } })
 @Controller({ path: 'admin/orders', version: ['1'] })
 export class AdminOrdersController {
   private readonly logger = new Logger(AdminOrdersController.name);
@@ -138,9 +138,7 @@ export class AdminOrdersController {
         ? 'order_out_for_delivery'
         : nextStatus === OrderStatus.DELIVERED
           ? 'order_delivered'
-          : nextStatus === OrderStatus.CANCELED
-            ? 'order_canceled'
-            : 'order_status_changed';
+          : 'order_status_changed';
     await this.notifications.notify(statusKey, before.userId, { orderId: id, status: nextStatus });
     if (loyaltyEarned > 0) {
       await this.notifications.notify('loyalty_earned', before.userId, { orderId: id, points: loyaltyEarned });

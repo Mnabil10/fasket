@@ -15,6 +15,7 @@ export declare class AdminDashboardController {
                 id?: number | undefined;
                 code?: number | undefined;
                 userId?: number | undefined;
+                idempotencyKey?: number | undefined;
                 cartId?: number | undefined;
                 addressId?: number | undefined;
                 deliveryZoneId?: number | undefined;
@@ -62,6 +63,7 @@ export declare class AdminDashboardController {
                 id?: string | null | undefined;
                 code?: string | null | undefined;
                 userId?: string | null | undefined;
+                idempotencyKey?: string | null | undefined;
                 cartId?: string | null | undefined;
                 addressId?: string | null | undefined;
                 deliveryZoneId?: string | null | undefined;
@@ -88,6 +90,7 @@ export declare class AdminDashboardController {
                 id?: string | null | undefined;
                 code?: string | null | undefined;
                 userId?: string | null | undefined;
+                idempotencyKey?: string | null | undefined;
                 cartId?: string | null | undefined;
                 addressId?: string | null | undefined;
                 deliveryZoneId?: string | null | undefined;

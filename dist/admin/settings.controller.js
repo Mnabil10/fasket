@@ -21,6 +21,9 @@ const admin_service_1 = require("./admin.service");
 const settings_dto_1 = require("./dto/settings.dto");
 const settings_service_1 = require("../settings/settings.service");
 const errors_1 = require("../common/errors");
+const twofa_guard_1 = require("../common/guards/twofa.guard");
+const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
+const throttler_1 = require("@nestjs/throttler");
 let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsController {
     constructor(svc, settingsService) {
         this.svc = svc;
@@ -61,6 +64,10 @@ let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsCon
                     freeDeliveryThresholdCents: zone.freeDeliveryThresholdCents,
                     minOrderAmountCents: zone.minOrderAmountCents,
                     isActive: zone.isActive,
+                    etaTextEn: this.settingsService.formatEtaLocalized(zone.etaMinutes, 'en'),
+                    etaTextAr: this.settingsService.formatEtaLocalized(zone.etaMinutes, 'ar'),
+                    feeMessageEn: this.settingsService.buildZoneMessages(zone).feeMessageEn,
+                    feeMessageAr: this.settingsService.buildZoneMessages(zone).feeMessageAr,
                 })),
             },
             payment: setting.payment ?? {},
@@ -238,8 +245,9 @@ let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsCon
         const zones = await this.settingsService.getDeliveryZones({ includeInactive: true });
         return this.toUi(s, zones);
     }
-    async update(dto) {
+    async update(user, dto) {
         const s = await this.getOrCreate();
+        const before = { ...s };
         if (dto.delivery?.deliveryZones) {
             const zones = this.transformDeliveryZones(dto.delivery.deliveryZones);
             if (zones) {
@@ -251,25 +259,33 @@ let AdminSettingsController = AdminSettingsController_1 = class AdminSettingsCon
         this.logger.log({ msg: 'Settings updated', settingId: s.id });
         await this.settingsService.clearCache();
         const zones = await this.settingsService.getDeliveryZones({ includeInactive: true });
+        await this.svc.audit.log({
+            action: 'settings.update',
+            entity: 'settings',
+            entityId: s.id,
+            actorId: user?.userId,
+            before,
+            after: updated,
+        });
         return this.toUi(updated, zones);
     }
-    async updateGeneral(dto) {
-        return this.update({ general: dto });
+    async updateGeneral(user, dto) {
+        return this.update(user, { general: dto });
     }
-    async updateDelivery(dto) {
-        return this.update({ delivery: dto });
+    async updateDelivery(user, dto) {
+        return this.update(user, { delivery: dto });
     }
-    async updatePayment(dto) {
-        return this.update({ payment: dto });
+    async updatePayment(user, dto) {
+        return this.update(user, { payment: dto });
     }
-    async updateNotifications(dto) {
-        return this.update({ notifications: dto });
+    async updateNotifications(user, dto) {
+        return this.update(user, { notifications: dto });
     }
-    async updateLoyalty(dto) {
-        return this.update({ loyalty: dto });
+    async updateLoyalty(user, dto) {
+        return this.update(user, { loyalty: dto });
     }
-    async updateSystem(dto) {
-        return this.update({ system: dto });
+    async updateSystem(user, dto) {
+        return this.update(user, { system: dto });
     }
 };
 exports.AdminSettingsController = AdminSettingsController;
@@ -283,57 +299,66 @@ __decorate([
 __decorate([
     (0, common_1.Patch)(),
     (0, swagger_1.ApiOkResponse)({ description: 'Partial update, accept any sections' }),
-    __param(0, (0, common_1.Body)()),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [settings_dto_1.UpdateSettingsDto]),
+    __metadata("design:paramtypes", [Object, settings_dto_1.UpdateSettingsDto]),
     __metadata("design:returntype", Promise)
 ], AdminSettingsController.prototype, "update", null);
 __decorate([
     (0, common_1.Patch)('general'),
-    __param(0, (0, common_1.Body)()),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [settings_dto_1.GeneralSettingsDto]),
+    __metadata("design:paramtypes", [Object, settings_dto_1.GeneralSettingsDto]),
     __metadata("design:returntype", Promise)
 ], AdminSettingsController.prototype, "updateGeneral", null);
 __decorate([
     (0, common_1.Patch)('delivery'),
-    __param(0, (0, common_1.Body)()),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [settings_dto_1.DeliverySettingsDto]),
+    __metadata("design:paramtypes", [Object, settings_dto_1.DeliverySettingsDto]),
     __metadata("design:returntype", Promise)
 ], AdminSettingsController.prototype, "updateDelivery", null);
 __decorate([
     (0, common_1.Patch)('payment'),
-    __param(0, (0, common_1.Body)()),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [settings_dto_1.PaymentSettingsDto]),
+    __metadata("design:paramtypes", [Object, settings_dto_1.PaymentSettingsDto]),
     __metadata("design:returntype", Promise)
 ], AdminSettingsController.prototype, "updatePayment", null);
 __decorate([
     (0, common_1.Patch)('notifications'),
-    __param(0, (0, common_1.Body)()),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [settings_dto_1.NotificationsSettingsDto]),
+    __metadata("design:paramtypes", [Object, settings_dto_1.NotificationsSettingsDto]),
     __metadata("design:returntype", Promise)
 ], AdminSettingsController.prototype, "updateNotifications", null);
 __decorate([
     (0, common_1.Patch)('loyalty'),
-    __param(0, (0, common_1.Body)()),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [settings_dto_1.LoyaltySettingsDto]),
+    __metadata("design:paramtypes", [Object, settings_dto_1.LoyaltySettingsDto]),
     __metadata("design:returntype", Promise)
 ], AdminSettingsController.prototype, "updateLoyalty", null);
 __decorate([
     (0, common_1.Patch)('system'),
-    __param(0, (0, common_1.Body)()),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [settings_dto_1.SystemSettingsDto]),
+    __metadata("design:paramtypes", [Object, settings_dto_1.SystemSettingsDto]),
     __metadata("design:returntype", Promise)
 ], AdminSettingsController.prototype, "updateSystem", null);
 exports.AdminSettingsController = AdminSettingsController = AdminSettingsController_1 = __decorate([
     (0, swagger_1.ApiTags)('Admin/Settings'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.AdminOnly)(),
+    (0, common_1.UseGuards)(twofa_guard_1.TwoFaGuard),
+    (0, throttler_1.Throttle)({ default: { limit: 20, ttl: 60 } }),
     (0, common_1.Controller)({ path: 'admin/settings', version: ['1'] }),
     __metadata("design:paramtypes", [admin_service_1.AdminService,
         settings_service_1.SettingsService])

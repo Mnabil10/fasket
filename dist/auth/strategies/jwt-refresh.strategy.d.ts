@@ -5,8 +5,10 @@ export declare class JwtRefreshStrategy extends JwtRefreshStrategy_base {
     constructor(config: ConfigService);
     validate(payload: {
         sub: string;
+        jti?: string;
     }): Promise<{
         userId: string;
+        jti: string | undefined;
     }>;
 }
 export {};

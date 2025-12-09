@@ -14,13 +14,16 @@ const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../prisma/prisma.service");
 const settings_service_1 = require("../settings/settings.service");
 const errors_1 = require("../common/errors");
+const cache_service_1 = require("../common/cache/cache.service");
 let ReceiptService = class ReceiptService {
-    constructor(prisma, settings) {
+    constructor(prisma, settings, cache) {
         this.prisma = prisma;
         this.settings = settings;
+        this.cache = cache;
     }
     async getForCustomer(orderId, userId) {
-        const order = await this.prisma.order.findFirst({
+        const cacheKey = this.cache.buildKey('orders:receipt', orderId, userId);
+        const order = await this.cache.wrap(cacheKey, () => this.prisma.order.findFirst({
             where: { id: orderId, userId },
             include: {
                 user: { select: { id: true, name: true, phone: true } },
@@ -43,14 +46,15 @@ let ReceiptService = class ReceiptService {
                     orderBy: { id: 'asc' },
                 },
             },
-        });
+        }), Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60));
         if (!order) {
             throw new errors_1.DomainError(errors_1.ErrorCode.ORDER_NOT_FOUND, 'Order not found');
         }
         return this.buildReceipt(order);
     }
     async getForAdmin(orderId) {
-        const order = await this.prisma.order.findUnique({
+        const cacheKey = this.cache.buildKey('orders:receipt', orderId);
+        const order = await this.cache.wrap(cacheKey, () => this.prisma.order.findUnique({
             where: { id: orderId },
             include: {
                 user: { select: { id: true, name: true, phone: true } },
@@ -73,7 +77,7 @@ let ReceiptService = class ReceiptService {
                     orderBy: { id: 'asc' },
                 },
             },
-        });
+        }), Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60));
         if (!order) {
             throw new errors_1.DomainError(errors_1.ErrorCode.ORDER_NOT_FOUND, 'Order not found');
         }
@@ -161,6 +165,7 @@ exports.ReceiptService = ReceiptService;
 exports.ReceiptService = ReceiptService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        settings_service_1.SettingsService])
+        settings_service_1.SettingsService,
+        cache_service_1.CacheService])
 ], ReceiptService);
 //# sourceMappingURL=receipt.service.js.map

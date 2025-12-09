@@ -19,7 +19,6 @@ const swagger_1 = require("@nestjs/swagger");
 const _admin_guards_1 = require("./_admin-guards");
 const admin_service_1 = require("./admin.service");
 const order_status_dto_1 = require("./dto/order-status.dto");
-const pagination_dto_1 = require("./dto/pagination.dto");
 const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
 const driver_dto_1 = require("../delivery-drivers/dto/driver.dto");
 const notifications_service_1 = require("../notifications/notifications.service");
@@ -27,6 +26,9 @@ const receipt_service_1 = require("../orders/receipt.service");
 const client_1 = require("@prisma/client");
 const audit_log_service_1 = require("../common/audit/audit-log.service");
 const orders_service_1 = require("../orders/orders.service");
+const admin_order_list_dto_1 = require("./dto/admin-order-list.dto");
+const errors_1 = require("../common/errors");
+const throttler_1 = require("@nestjs/throttler");
 let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersController {
     constructor(svc, notifications, receipts, audit, orders) {
         this.svc = svc;
@@ -36,34 +38,34 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
         this.orders = orders;
         this.logger = new common_1.Logger(AdminOrdersController_1.name);
     }
-    async list(status, from, to, customer, minTotalCents, maxTotalCents, driverId, page) {
+    async list(query) {
         const where = {};
-        if (status)
-            where.status = status;
-        if (from || to)
+        if (query.status)
+            where.status = query.status;
+        if (query.from || query.to)
             where.createdAt = {};
-        if (from)
-            where.createdAt.gte = new Date(from);
-        if (to)
-            where.createdAt.lte = new Date(to);
-        if (customer) {
+        if (query.from)
+            where.createdAt.gte = query.from;
+        if (query.to)
+            where.createdAt.lte = query.to;
+        if (query.customer) {
             where.user = {
                 OR: [
-                    { name: { contains: customer, mode: 'insensitive' } },
-                    { phone: { contains: customer, mode: 'insensitive' } },
-                    { email: { contains: customer, mode: 'insensitive' } },
+                    { name: { contains: query.customer, mode: 'insensitive' } },
+                    { phone: { contains: query.customer, mode: 'insensitive' } },
+                    { email: { contains: query.customer, mode: 'insensitive' } },
                 ],
             };
         }
-        if (minTotalCents || maxTotalCents) {
+        if (query.minTotalCents !== undefined || query.maxTotalCents !== undefined) {
             where.totalCents = {};
-            if (minTotalCents)
-                where.totalCents.gte = Number(minTotalCents);
-            if (maxTotalCents)
-                where.totalCents.lte = Number(maxTotalCents);
+            if (query.minTotalCents !== undefined)
+                where.totalCents.gte = query.minTotalCents;
+            if (query.maxTotalCents !== undefined)
+                where.totalCents.lte = query.maxTotalCents;
         }
-        if (driverId) {
-            where.driverId = driverId;
+        if (query.driverId) {
+            where.driverId = query.driverId;
         }
         const [items, total] = await this.svc.prisma.$transaction([
             this.svc.prisma.order.findMany({
@@ -73,11 +75,12 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
                     user: { select: { id: true, name: true, phone: true } },
                     driver: { select: { id: true, fullName: true, phone: true } },
                 },
-                skip: page?.skip, take: page?.take,
+                skip: query.skip,
+                take: query.take,
             }),
             this.svc.prisma.order.count({ where }),
         ]);
-        return { items, total, page: page?.page, pageSize: page?.pageSize };
+        return { items, total, page: query.page, pageSize: query.pageSize };
     }
     one(id) {
         return this.svc.prisma.order.findUnique({
@@ -104,9 +107,14 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
     async updateStatus(user, id, dto) {
         const before = await this.svc.prisma.order.findUnique({ where: { id } });
         if (!before) {
-            return { ok: false, message: 'Order not found' };
+            throw new errors_1.DomainError(errors_1.ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
         }
         const nextStatus = dto.to;
+        if (nextStatus === client_1.OrderStatus.CANCELED) {
+            const result = await this.orders.adminCancelOrder(id, user.userId, dto.note);
+            this.logger.log({ msg: 'Order canceled by admin', orderId: id, actorId: user.userId });
+            return result;
+        }
         let loyaltyEarned = 0;
         await this.svc.prisma.$transaction(async (tx) => {
             await tx.order.update({ where: { id }, data: { status: nextStatus } });
@@ -121,9 +129,7 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
             ? 'order_out_for_delivery'
             : nextStatus === client_1.OrderStatus.DELIVERED
                 ? 'order_delivered'
-                : nextStatus === client_1.OrderStatus.CANCELED
-                    ? 'order_canceled'
-                    : 'order_status_changed';
+                : 'order_status_changed';
         await this.notifications.notify(statusKey, before.userId, { orderId: id, status: nextStatus });
         if (loyaltyEarned > 0) {
             await this.notifications.notify('loyalty_earned', before.userId, { orderId: id, points: loyaltyEarned });
@@ -136,7 +142,8 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
             after: { status: nextStatus, note: dto.note },
         });
         this.logger.log({ msg: 'Order status updated', orderId: id, from: before.status, to: dto.to, actorId: user.userId });
-        return { ok: true };
+        await this.orders.clearCachesForOrder(id, before.userId);
+        return { success: true };
     }
     async assignDriver(id, dto, admin) {
         const result = await this.orders.assignDriverToOrder(id, dto.driverId, admin.userId);
@@ -155,16 +162,9 @@ __decorate([
     (0, swagger_1.ApiQuery)({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } }),
     (0, swagger_1.ApiQuery)({ name: 'driverId', required: false }),
     (0, swagger_1.ApiOkResponse)({ description: 'Paginated orders with filters' }),
-    __param(0, (0, common_1.Query)('status')),
-    __param(1, (0, common_1.Query)('from')),
-    __param(2, (0, common_1.Query)('to')),
-    __param(3, (0, common_1.Query)('customer')),
-    __param(4, (0, common_1.Query)('minTotalCents')),
-    __param(5, (0, common_1.Query)('maxTotalCents')),
-    __param(6, (0, common_1.Query)('driverId')),
-    __param(7, (0, common_1.Query)()),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, String, String, String, String, String, pagination_dto_1.PaginationDto]),
+    __metadata("design:paramtypes", [admin_order_list_dto_1.AdminOrderListDto]),
     __metadata("design:returntype", Promise)
 ], AdminOrdersController.prototype, "list", null);
 __decorate([
@@ -203,6 +203,7 @@ exports.AdminOrdersController = AdminOrdersController = AdminOrdersController_1 
     (0, swagger_1.ApiTags)('Admin/Orders'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, _admin_guards_1.StaffOrAdmin)(),
+    (0, throttler_1.Throttle)({ default: { limit: 30, ttl: 60 } }),
     (0, common_1.Controller)({ path: 'admin/orders', version: ['1'] }),
     __metadata("design:paramtypes", [admin_service_1.AdminService,
         notifications_service_1.NotificationsService,

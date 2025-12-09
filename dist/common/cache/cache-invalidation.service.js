@@ -21,8 +21,10 @@ let CacheInvalidationService = class CacheInvalidationService {
         await this.invalidateByPattern('home:*');
     }
     async productsChanged() {
-        await this.invalidateByPattern('products:*');
-        await this.invalidateByPattern('home:*');
+        await this.invalidateByPattern('products:list*');
+        await this.invalidateByPattern('products:detail*');
+        await this.invalidateByPattern('home:best*');
+        await this.invalidateByPattern('home:hot*');
     }
     async homeSectionsChanged() {
         await this.invalidateByPattern('home:*');

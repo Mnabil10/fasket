@@ -8,4 +8,5 @@ export declare class CreateOrderDto {
     note?: string;
     couponCode?: string;
     loyaltyPointsToRedeem?: number;
+    idempotencyKey?: string;
 }

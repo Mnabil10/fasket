@@ -2,12 +2,14 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthRateLimitService } from './auth-rate-limit.service';
+import type { Cache } from 'cache-manager';
 export declare class AuthService {
     private prisma;
     private jwt;
     private readonly rateLimiter;
     private readonly config;
-    constructor(prisma: PrismaService, jwt: JwtService, rateLimiter: AuthRateLimitService, config: ConfigService);
+    private readonly cache;
+    constructor(prisma: PrismaService, jwt: JwtService, rateLimiter: AuthRateLimitService, config: ConfigService, cache: Cache);
     private readonly logger;
     private readonly otpDigits;
     private normalizeEmail;
@@ -67,7 +69,7 @@ export declare class AuthService {
         accessToken: string;
         refreshToken: string;
     }>;
-    issueTokensForUserId(sub: string): Promise<{
+    issueTokensForUserId(sub: string, previousJti?: string): Promise<{
         accessToken: string;
         refreshToken: string;
     }>;
@@ -76,4 +78,5 @@ export declare class AuthService {
     private toBase32;
     private verifyTotp;
     private generateTotp;
+    private refreshCacheKey;
 }

@@ -32,6 +32,7 @@ const common_module_1 = require("./common/common.module");
 const env_validation_1 = require("./config/env.validation");
 const settings_module_1 = require("./settings/settings.module");
 const loyalty_module_1 = require("./loyalty/loyalty.module");
+const uploads_module_1 = require("./uploads/uploads.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -120,6 +121,7 @@ exports.AppModule = AppModule = __decorate([
             settings_module_1.SettingsModule,
             loyalty_module_1.LoyaltyModule,
             common_module_1.CommonModule,
+            uploads_module_1.UploadsModule,
         ],
         controllers: [app_controller_1.AppController, health_controller_1.HealthController],
         providers: [

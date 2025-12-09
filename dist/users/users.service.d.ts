@@ -3,6 +3,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 export declare class UsersService {
     private prisma;
+    private readonly passwordPolicy;
     constructor(prisma: PrismaService);
     me(userId: string): Promise<{
         ordersCount: number;

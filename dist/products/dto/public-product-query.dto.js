@@ -77,6 +77,11 @@ __decorate([
     __metadata("design:type", String)
 ], PublicProductListDto.prototype, "sort", void 0);
 class PublicProductFeedDto extends pagination_dto_1.PaginationDto {
+    constructor() {
+        super(...arguments);
+        this.orderBy = 'qty';
+        this.sort = 'desc';
+    }
 }
 exports.PublicProductFeedDto = PublicProductFeedDto;
 __decorate([
@@ -88,4 +93,28 @@ __decorate([
     }),
     __metadata("design:type", String)
 ], PublicProductFeedDto.prototype, "lang", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'ISO date start bound for best-selling analytics', type: String }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PublicProductFeedDto.prototype, "fromDate", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'ISO date end bound for best-selling analytics', type: String }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PublicProductFeedDto.prototype, "toDate", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ enum: ['qty'], description: 'Sort field for feed', default: 'qty' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(['qty']),
+    __metadata("design:type", String)
+], PublicProductFeedDto.prototype, "orderBy", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ enum: ['desc', 'asc'], default: 'desc' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(['desc', 'asc']),
+    __metadata("design:type", String)
+], PublicProductFeedDto.prototype, "sort", void 0);
 //# sourceMappingURL=public-product-query.dto.js.map

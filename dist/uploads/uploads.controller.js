@@ -12,13 +12,14 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UploadsController = void 0;
+exports.UserUploadsController = exports.UploadsController = void 0;
 const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
 const platform_express_1 = require("@nestjs/platform-express");
 const multer_1 = require("multer");
 const uploads_service_1 = require("./uploads.service");
 const _admin_guards_1 = require("../admin/_admin-guards");
+const jwt_auth_guard_1 = require("../common/guards/jwt-auth.guard");
 let UploadsController = class UploadsController {
     constructor(uploads) {
         this.uploads = uploads;
@@ -95,4 +96,35 @@ exports.UploadsController = UploadsController = __decorate([
     (0, common_1.Controller)({ path: 'admin/uploads', version: ['1'] }),
     __metadata("design:paramtypes", [uploads_service_1.UploadsService])
 ], UploadsController);
+let UserUploadsController = class UserUploadsController {
+    constructor(uploads) {
+        this.uploads = uploads;
+    }
+    async signedUrl(filename, contentType, folder) {
+        if (!filename || !contentType)
+            throw new common_1.BadRequestException('filename and contentType are required');
+        return this.uploads.createSignedUrl({ filename, contentType, folder });
+    }
+};
+exports.UserUploadsController = UserUploadsController;
+__decorate([
+    (0, common_1.Get)('signed-url'),
+    (0, swagger_1.ApiQuery)({ name: 'filename', required: true }),
+    (0, swagger_1.ApiQuery)({ name: 'contentType', required: true, enum: ['image/jpeg', 'image/png', 'image/webp'] }),
+    (0, swagger_1.ApiQuery)({ name: 'folder', required: false }),
+    (0, swagger_1.ApiOkResponse)({ description: 'Returns presigned PUT URL and final public URL for user-facing uploads' }),
+    __param(0, (0, common_1.Query)('filename')),
+    __param(1, (0, common_1.Query)('contentType')),
+    __param(2, (0, common_1.Query)('folder')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:returntype", Promise)
+], UserUploadsController.prototype, "signedUrl", null);
+exports.UserUploadsController = UserUploadsController = __decorate([
+    (0, swagger_1.ApiTags)('Uploads'),
+    (0, swagger_1.ApiBearerAuth)(),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Controller)({ path: 'uploads', version: ['1', '2'] }),
+    __metadata("design:paramtypes", [uploads_service_1.UploadsService])
+], UserUploadsController);
 //# sourceMappingURL=uploads.controller.js.map

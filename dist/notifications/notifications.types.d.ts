@@ -1,4 +1,12 @@
 export type TemplateKey = 'order_created' | 'order_status_changed' | 'order_assigned_driver' | 'order_out_for_delivery' | 'order_delivered' | 'order_canceled' | 'loyalty_earned' | 'loyalty_redeemed';
+export type PushProvider = 'fcm' | 'onesignal' | 'apns' | 'mock';
+export interface DeliveryReceipt {
+    status: 'success' | 'failed';
+    provider: PushProvider;
+    token: string;
+    messageId?: string;
+    error?: string;
+}
 export interface NotificationJob {
     key: TemplateKey;
     userId: string;

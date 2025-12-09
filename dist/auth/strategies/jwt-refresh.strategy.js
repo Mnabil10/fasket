@@ -40,7 +40,7 @@ let JwtRefreshStrategy = class JwtRefreshStrategy extends (0, passport_1.Passpor
         });
     }
     async validate(payload) {
-        return { userId: payload.sub };
+        return { userId: payload.sub, jti: payload.jti };
     }
 };
 exports.JwtRefreshStrategy = JwtRefreshStrategy;

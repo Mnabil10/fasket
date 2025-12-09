@@ -11,7 +11,7 @@ import { BadRequestException } from '@nestjs/common';
 @ApiBearerAuth()
 @AdminOnly()
 @UseGuards(TwoFaGuard)
-@Throttle(20, 60)
+@Throttle({ default: { limit: 20, ttl: 60 } })
 @Controller({ path: 'admin/coupons', version: ['1'] })
 export class AdminCouponsController {
   private readonly logger = new Logger(AdminCouponsController.name);

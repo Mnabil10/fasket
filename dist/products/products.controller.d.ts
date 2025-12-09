@@ -9,6 +9,7 @@ export declare class ProductsController {
             name: string;
             slug: string;
             imageUrl: string | undefined;
+            etag: string;
             priceCents: number;
             salePriceCents: number | null;
             stock: number;
@@ -27,6 +28,7 @@ export declare class ProductsController {
         name: string;
         slug: string;
         imageUrl: string | undefined;
+        etag: string;
         priceCents: number;
         salePriceCents: number | null;
         stock: number;
@@ -41,6 +43,7 @@ export declare class ProductsController {
         name: string;
         slug: string;
         imageUrl: string | undefined;
+        etag: string;
         priceCents: number;
         salePriceCents: number | null;
         stock: number;
@@ -58,6 +61,7 @@ export declare class ProductsController {
         descriptionAr: string | null;
         descriptionEn: string | null;
         imageUrl: string | undefined;
+        etag: string;
         images: string[];
         priceCents: number;
         salePriceCents: number | null;

@@ -45,6 +45,12 @@ export declare class CartController {
             zoneName: string | null;
             estimatedDeliveryTime: string | null;
             etaMinutes: number | null;
+            minOrderAmountCents: number | null;
+            minOrderShortfallCents: number;
+            freeDeliveryThresholdCents: number | null;
+            etaText: string | null;
+            feeMessageEn: string | undefined;
+            feeMessageAr: string | undefined;
         };
     }>;
     add(user: CurrentUserPayload, dto: AddToCartDto, lang?: 'en' | 'ar', addressId?: string): Promise<{
@@ -88,6 +94,12 @@ export declare class CartController {
             zoneName: string | null;
             estimatedDeliveryTime: string | null;
             etaMinutes: number | null;
+            minOrderAmountCents: number | null;
+            minOrderShortfallCents: number;
+            freeDeliveryThresholdCents: number | null;
+            etaText: string | null;
+            feeMessageEn: string | undefined;
+            feeMessageAr: string | undefined;
         };
     }>;
     applyCoupon(user: CurrentUserPayload, dto: ApplyCouponDto, lang?: 'en' | 'ar', addressId?: string): Promise<{
@@ -131,6 +143,12 @@ export declare class CartController {
             zoneName: string | null;
             estimatedDeliveryTime: string | null;
             etaMinutes: number | null;
+            minOrderAmountCents: number | null;
+            minOrderShortfallCents: number;
+            freeDeliveryThresholdCents: number | null;
+            etaText: string | null;
+            feeMessageEn: string | undefined;
+            feeMessageAr: string | undefined;
         };
     }>;
     update(user: CurrentUserPayload, id: string, dto: UpdateCartItemDto, lang?: 'en' | 'ar', addressId?: string): Promise<{
@@ -174,6 +192,12 @@ export declare class CartController {
             zoneName: string | null;
             estimatedDeliveryTime: string | null;
             etaMinutes: number | null;
+            minOrderAmountCents: number | null;
+            minOrderShortfallCents: number;
+            freeDeliveryThresholdCents: number | null;
+            etaText: string | null;
+            feeMessageEn: string | undefined;
+            feeMessageAr: string | undefined;
         };
     }>;
     remove(user: CurrentUserPayload, id: string, lang?: 'en' | 'ar', addressId?: string): Promise<{
@@ -217,6 +241,12 @@ export declare class CartController {
             zoneName: string | null;
             estimatedDeliveryTime: string | null;
             etaMinutes: number | null;
+            minOrderAmountCents: number | null;
+            minOrderShortfallCents: number;
+            freeDeliveryThresholdCents: number | null;
+            etaText: string | null;
+            feeMessageEn: string | undefined;
+            feeMessageAr: string | undefined;
         };
     }>;
 }

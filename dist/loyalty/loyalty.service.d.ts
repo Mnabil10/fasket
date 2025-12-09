@@ -17,6 +17,7 @@ interface AwardParams {
 export declare class LoyaltyService {
     private readonly settings;
     private readonly prisma;
+    private readonly resetOnComplete;
     constructor(settings: SettingsService, prisma: PrismaService);
     redeemPoints(params: RedeemParams): Promise<{
         pointsUsed: number;

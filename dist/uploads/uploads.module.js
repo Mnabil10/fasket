@@ -17,7 +17,7 @@ let UploadsModule = class UploadsModule {
 exports.UploadsModule = UploadsModule;
 exports.UploadsModule = UploadsModule = __decorate([
     (0, common_1.Module)({
-        controllers: [uploads_controller_1.UploadsController],
+        controllers: [uploads_controller_1.UploadsController, uploads_controller_1.UserUploadsController],
         providers: [
             uploads_service_1.UploadsService,
             { provide: uploads_constants_1.S3_CLIENT, useFactory: s3_client_1.createS3Client },

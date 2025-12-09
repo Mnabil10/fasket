@@ -18,6 +18,7 @@ let LoyaltyService = class LoyaltyService {
     constructor(settings, prisma) {
         this.settings = settings;
         this.prisma = prisma;
+        this.resetOnComplete = (process.env.LOYALTY_RESET_ON_COMPLETE ?? 'true').toLowerCase() === 'true';
     }
     async redeemPoints(params) {
         if (!params.pointsToRedeem || params.pointsToRedeem <= 0) {
@@ -56,6 +57,7 @@ let LoyaltyService = class LoyaltyService {
             discountCents = maxDiscountFromPercent;
         }
         discountCents = Math.min(discountCents, params.subtotalCents);
+        discountCents = Math.max(0, Math.round(discountCents));
         const pointsUsed = Math.min(maxRedeemablePoints, Math.floor(discountCents / (config.redeemRateValue * 100)));
         if (pointsUsed <= 0 || discountCents <= 0) {
             return { pointsUsed: 0, discountCents: 0 };
@@ -111,7 +113,7 @@ let LoyaltyService = class LoyaltyService {
                     completedAt: new Date(),
                 },
             });
-            if (cycle.resetOnComplete) {
+            if (cycle.resetOnComplete && this.resetOnComplete) {
                 await params.tx.user.update({
                     where: { id: params.userId },
                     data: { loyaltyPoints: 0 },
@@ -289,7 +291,7 @@ let LoyaltyService = class LoyaltyService {
             data: {
                 userId,
                 threshold,
-                resetOnComplete: true,
+                resetOnComplete: this.resetOnComplete,
             },
         });
     }

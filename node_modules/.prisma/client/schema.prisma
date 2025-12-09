@@ -128,6 +128,8 @@ model Product {
   @@index([name])
   @@index([slug])
   @@index([categoryId, status])
+  @@index([isHotOffer, status, createdAt])
+  @@index([status, createdAt])
 }
 
 model Cart {
@@ -272,6 +274,7 @@ model DeliveryZone {
   @@index([isActive, nameEn])
   @@index([city])
   @@index([region])
+  @@index([isActive, city, region])
 }
 
 model LoyaltyCycle {

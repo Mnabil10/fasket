@@ -37,24 +37,24 @@ let CartService = class CartService {
     }
     async add(userId, dto, lang, addressId) {
         if (dto.qty < 1) {
-            throw new common_1.BadRequestException('Quantity must be at least 1');
+            throw new errors_1.DomainError(errors_1.ErrorCode.VALIDATION_FAILED, 'Quantity must be at least 1');
         }
         const cart = await this.ensureCart(userId);
         const product = await this.prisma.product.findFirst({
             where: { id: dto.productId, status: client_1.ProductStatus.ACTIVE, deletedAt: null },
         });
         if (!product) {
-            throw new common_1.BadRequestException('Product unavailable');
+            throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
         }
         if (product.stock < dto.qty) {
-            throw new common_1.BadRequestException('Insufficient stock');
+            throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
         }
         const existing = await this.prisma.cartItem.findUnique({
             where: { cartId_productId: { cartId: cart.id, productId: dto.productId } },
         });
         const desiredQty = (existing?.qty ?? 0) + dto.qty;
         if (desiredQty > product.stock) {
-            throw new common_1.BadRequestException('Insufficient stock');
+            throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
         }
         const price = product.salePriceCents ?? product.priceCents;
         const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
@@ -74,11 +74,11 @@ let CartService = class CartService {
             include: { product: true },
         });
         if (!item) {
-            throw new common_1.BadRequestException('Item not found');
+            throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Item not found in cart');
         }
         if (!item.product || item.product.deletedAt || item.product.status !== client_1.ProductStatus.ACTIVE) {
             await this.prisma.cartItem.delete({ where: { id: item.id } });
-            throw new common_1.BadRequestException('Product unavailable');
+            throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
         }
         const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
         if (qty === 0) {
@@ -87,7 +87,7 @@ let CartService = class CartService {
         }
         const availableStock = item.product.stock ?? 0;
         if (qty > availableStock) {
-            throw new common_1.BadRequestException('Insufficient stock');
+            throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
         }
         const price = item.product.salePriceCents ?? item.product.priceCents ?? item.priceCents;
         await this.prisma.cartItem.update({
@@ -106,17 +106,23 @@ let CartService = class CartService {
         let cart = await this.ensureCart(userId);
         const snapshot = await this.loadCartSnapshot(cart.id, lang);
         if (!snapshot.items.length) {
-            throw new common_1.BadRequestException('Cart is empty');
+            throw new errors_1.DomainError(errors_1.ErrorCode.CART_EMPTY, 'Cart is empty');
         }
         const coupon = await this.prisma.coupon.findFirst({
             where: { code: dto.couponCode, isActive: true },
         });
         if (!coupon) {
-            throw new common_1.BadRequestException('Invalid coupon code');
+            throw new errors_1.DomainError(errors_1.ErrorCode.COUPON_INVALID, 'Invalid coupon code');
         }
         const validation = this.validateCoupon(coupon, snapshot.subtotalCents);
         if (validation.status !== 'VALID' && validation.status !== 'MIN_TOTAL') {
-            throw new common_1.BadRequestException(this.formatCouponValidationMessage(validation.status));
+            const message = this.formatCouponValidationMessage(validation.status);
+            const code = validation.status === 'EXPIRED'
+                ? errors_1.ErrorCode.COUPON_EXPIRED
+                : validation.status === 'INACTIVE'
+                    ? errors_1.ErrorCode.COUPON_INVALID
+                    : errors_1.ErrorCode.COUPON_INVALID;
+            throw new errors_1.DomainError(code, message);
         }
         await this.prisma.cart.update({ where: { id: cart.id }, data: { couponCode: coupon.code } });
         cart = { ...cart, couponCode: coupon.code };
@@ -199,10 +205,28 @@ let CartService = class CartService {
             couponCode = null;
         }
         const effectiveAddress = deliveryAddress ?? (await this.resolveDeliveryAddress(cart.userId));
-        const quote = await this.settings.computeDeliveryQuote({
-            subtotalCents: cartSnapshot.subtotalCents,
-            zoneId: effectiveAddress?.zoneId,
-        });
+        const zone = effectiveAddress?.zoneId
+            ? await this.settings.getZoneById(effectiveAddress.zoneId, { includeInactive: false })
+            : undefined;
+        const minOrderAmountCents = zone?.minOrderAmountCents ?? null;
+        const freeDeliveryThresholdCents = zone?.freeDeliveryThresholdCents ?? null;
+        const shortfall = minOrderAmountCents && cartSnapshot.subtotalCents < minOrderAmountCents
+            ? minOrderAmountCents - cartSnapshot.subtotalCents
+            : 0;
+        const quote = shortfall > 0
+            ? {
+                shippingFeeCents: zone?.feeCents ?? 0,
+                deliveryZoneId: zone?.id,
+                deliveryZoneName: zone?.nameEn,
+                etaMinutes: zone?.etaMinutes,
+                estimatedDeliveryTime: zone?.etaMinutes ? `${zone.etaMinutes} min` : null,
+            }
+            : await this.settings.computeDeliveryQuote({
+                subtotalCents: cartSnapshot.subtotalCents,
+                zoneId: effectiveAddress?.zoneId,
+            });
+        const etaText = this.settings.formatEtaLocalized(quote.etaMinutes ?? zone?.etaMinutes, lang ?? 'en');
+        const feeMessages = zone ? this.settings.buildZoneMessages(zone) : undefined;
         const { discountCents, coupon, couponNotice } = await this.resolveCouponDiscount(cart.id, couponCode, cartSnapshot.subtotalCents, couponOverride);
         const totalCents = Math.max(cartSnapshot.subtotalCents + quote.shippingFeeCents - discountCents, 0);
         return {
@@ -220,6 +244,12 @@ let CartService = class CartService {
                 zoneName: quote.deliveryZoneName ?? effectiveAddress?.zoneId ?? null,
                 estimatedDeliveryTime: quote.estimatedDeliveryTime ?? null,
                 etaMinutes: quote.etaMinutes ?? null,
+                minOrderAmountCents,
+                minOrderShortfallCents: shortfall > 0 ? shortfall : 0,
+                freeDeliveryThresholdCents,
+                etaText,
+                feeMessageEn: feeMessages?.feeMessageEn,
+                feeMessageAr: feeMessages?.feeMessageAr,
             },
         };
     }
@@ -290,7 +320,7 @@ let CartService = class CartService {
         if (discountCents > subtotalCents) {
             discountCents = subtotalCents;
         }
-        return discountCents;
+        return Math.max(0, Math.round(discountCents));
     }
     formatCouponValidationMessage(status) {
         switch (status) {

@@ -49,4 +49,16 @@ __decorate([
     (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], CreateOrderDto.prototype, "loyaltyPointsToRedeem", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({
+        required: false,
+        description: 'Idempotency key to prevent duplicate order submission',
+        minLength: 8,
+        maxLength: 128,
+    }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.Length)(8, 128),
+    __metadata("design:type", String)
+], CreateOrderDto.prototype, "idempotencyKey", void 0);
 //# sourceMappingURL=dto.js.map

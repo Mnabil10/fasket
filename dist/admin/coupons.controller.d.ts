@@ -37,7 +37,7 @@ export declare class AdminCouponsController {
         minOrderCents: number | null;
         maxDiscountCents: number | null;
     }, never, import("@prisma/client/runtime/library").DefaultArgs>;
-    update(id: string, dto: any): import(".prisma/client").Prisma.Prisma__CouponClient<{
+    update(id: string, dto: any): Promise<{
         type: import(".prisma/client").$Enums.CouponType;
         code: string;
         id: string;
@@ -50,5 +50,5 @@ export declare class AdminCouponsController {
         endsAt: Date | null;
         minOrderCents: number | null;
         maxDiscountCents: number | null;
-    }, never, import("@prisma/client/runtime/library").DefaultArgs>;
+    }>;
 }

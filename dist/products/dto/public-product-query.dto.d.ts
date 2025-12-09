@@ -11,4 +11,8 @@ export declare class PublicProductListDto extends PaginationDto {
 }
 export declare class PublicProductFeedDto extends PaginationDto {
     lang?: 'en' | 'ar';
+    fromDate?: string;
+    toDate?: string;
+    orderBy?: 'qty';
+    sort?: 'desc' | 'asc';
 }

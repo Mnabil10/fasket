@@ -63,8 +63,8 @@ declare const baseSchema: z.ZodObject<{
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
-    REDIS_ENABLED?: "true" | "false" | undefined;
     REDIS_URL?: string | undefined;
+    REDIS_ENABLED?: "true" | "false" | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
     S3_PUBLIC_BASE_URL?: string | undefined;
@@ -104,8 +104,8 @@ declare const baseSchema: z.ZodObject<{
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
-    REDIS_ENABLED?: "true" | "false" | undefined;
     REDIS_URL?: string | undefined;
+    REDIS_ENABLED?: "true" | "false" | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
     S3_PUBLIC_BASE_URL?: string | undefined;
@@ -155,8 +155,8 @@ export declare function validateEnv(config: Record<string, unknown>): {
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
-    REDIS_ENABLED?: "true" | "false" | undefined;
     REDIS_URL?: string | undefined;
+    REDIS_ENABLED?: "true" | "false" | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
     S3_PUBLIC_BASE_URL?: string | undefined;
