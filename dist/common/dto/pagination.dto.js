@@ -37,7 +37,7 @@ __decorate([
 __decorate([
     (0, swagger_1.ApiPropertyOptional)({ default: 20, minimum: 1, maximum: 100 }),
     (0, class_transformer_1.Transform)(({ value, obj }) => {
-        const source = value ?? obj?.limit;
+        const source = value ?? obj?.limit ?? obj?.take;
         const raw = source ?? 20;
         return Math.min(100, Number(raw));
     }),
@@ -59,6 +59,19 @@ __decorate([
     (0, class_validator_1.Min)(1),
     __metadata("design:type", Number)
 ], PaginationDto.prototype, "limit", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({
+        name: 'take',
+        description: 'Alias for pageSize',
+        minimum: 1,
+        maximum: 100,
+    }),
+    (0, class_transformer_1.Transform)(({ value }) => (value === undefined ? undefined : Math.min(100, Number(value)))),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Number)
+], PaginationDto.prototype, "takeParam", void 0);
 class SortDto {
     constructor() {
         this.sort = 'desc';

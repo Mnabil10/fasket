@@ -12,7 +12,7 @@ export class PaginationDto {
 
   @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
   @Transform(({ value, obj }) => {
-    const source = value ?? obj?.limit;
+    const source = value ?? obj?.limit ?? obj?.take;
     const raw = source ?? 20;
     return Math.min(100, Number(raw));
   })
@@ -32,6 +32,18 @@ export class PaginationDto {
   @IsInt()
   @Min(1)
   limit?: number;
+
+  @ApiPropertyOptional({
+    name: 'take',
+    description: 'Alias for pageSize',
+    minimum: 1,
+    maximum: 100,
+  })
+  @Transform(({ value }) => (value === undefined ? undefined : Math.min(100, Number(value))))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  takeParam?: number;
 
   get skip() {
     return ((this.page ?? 1) - 1) * (this.pageSize ?? 20);

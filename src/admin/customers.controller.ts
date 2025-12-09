@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiProperty, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { IsEnum, IsString, MinLength } from 'class-validator';
+import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { UserRole } from '@prisma/client';
 import { AdminOnly, StaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
@@ -16,6 +16,13 @@ class ResetPasswordDto {
   newPassword!: string;
 }
 
+class AdminCustomerQueryDto extends PaginationDto {
+  @ApiProperty({ required: false, description: 'search name/phone/email' })
+  @IsOptional()
+  @IsString()
+  q?: string;
+}
+
 @ApiTags('Admin/Customers')
 @ApiBearerAuth()
 @AdminOnly()
@@ -27,9 +34,9 @@ export class AdminCustomersController {
   ) {}
 
   @Get()
-  @ApiQuery({ name: 'q', required: false, description: 'search name/phone/email' })
   @ApiOkResponse({ description: 'Paginated customers' })
-  async list(@Query('q') q?: string, @Query() page?: PaginationDto) {
+  async list(@Query() query: AdminCustomerQueryDto) {
+    const { q, ...page } = query;
     const where: any = {};
     if (q) {
       where.OR = [
