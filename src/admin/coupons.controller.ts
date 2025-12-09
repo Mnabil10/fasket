@@ -36,18 +36,13 @@ export class AdminCouponsController {
     // dto: { code, type, valueCents|percent, startsAt?, endsAt?, isActive?, minOrderCents?, maxDiscountCents? }
     const data: any = { ...dto, type: (dto.type as string | undefined) ?? 'PERCENT' };
     const suppliedValue = dto.percent ?? dto.value ?? dto.valueCents;
-    if (suppliedValue != null) {
-      data.valueCents = Number(suppliedValue);
-    }
+    data.valueCents = suppliedValue != null ? Number(suppliedValue) : 0;
 
-    if (data.valueCents === undefined || data.valueCents === null) {
-      throw new BadRequestException('valueCents (or percent) is required for coupons');
+    if (data.type === 'PERCENT' && data.valueCents < 0) {
+      throw new BadRequestException('percent (valueCents) must be >= 0');
     }
-    if (data.type === 'FIXED' && (data.valueCents === undefined || data.valueCents === null)) {
-      throw new BadRequestException('valueCents is required for FIXED coupons');
-    }
-    if (data.type === 'PERCENT' && (data.valueCents === undefined || data.valueCents === null)) {
-      throw new BadRequestException('percent (valueCents) is required for PERCENT coupons');
+    if (data.type === 'FIXED' && data.valueCents < 0) {
+      throw new BadRequestException('valueCents must be >= 0 for FIXED coupons');
     }
     const createdPromise = this.svc.prisma.coupon.create({ data });
     createdPromise.then(async (coupon) => {
@@ -74,12 +69,14 @@ export class AdminCouponsController {
       if (suppliedValue != null) {
         data.type = dto.type ?? 'PERCENT';
         data.valueCents = Number(suppliedValue);
-      }
-      if (data.type === 'FIXED' && data.valueCents === undefined && before.type === 'FIXED') {
+      } else if (before.valueCents != null) {
         data.valueCents = before.valueCents;
       }
-      if ((data.type ?? before.type) === 'PERCENT' && (data.valueCents === undefined || data.valueCents === null)) {
-        throw new BadRequestException('percent (valueCents) is required for PERCENT coupons');
+      if ((data.type ?? before.type) === 'PERCENT' && data.valueCents < 0) {
+        throw new BadRequestException('percent (valueCents) must be >= 0');
+      }
+      if ((data.type ?? before.type) === 'FIXED' && data.valueCents < 0) {
+        throw new BadRequestException('valueCents must be >= 0 for FIXED coupons');
       }
       const updated = await tx.coupon.update({ where: { id }, data });
       this.logger.log({ msg: 'Coupon updated', couponId: updated.id, code: updated.code, isActive: updated.isActive });
