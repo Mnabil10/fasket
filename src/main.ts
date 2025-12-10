@@ -208,6 +208,7 @@ async function bootstrap() {
     'http://localhost:4200',
     'capacitor://localhost',
     'ionic://localhost',
+    'https://admin.fasket.cloud',
   ]);
 
   app.enableCors({
