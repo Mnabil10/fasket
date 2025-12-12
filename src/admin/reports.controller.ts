@@ -1,0 +1,91 @@
+import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { StaffOrAdmin } from './_admin-guards';
+import { PrismaService } from '../prisma/prisma.service';
+
+interface DateRange {
+  from: Date;
+  to: Date;
+}
+
+@ApiTags('Admin/Reports')
+@ApiBearerAuth()
+@StaffOrAdmin()
+@Controller({ path: 'admin/reports', version: ['1'] })
+export class AdminReportsController {
+  constructor(private readonly prisma: PrismaService) {}
+
+  @Get('profit/daily')
+  async daily(@Query('date') date: string) {
+    const target = date ? new Date(date) : new Date();
+    const start = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate()));
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    return this.computeRange({ from: start, to: end });
+  }
+
+  @Get('profit/range')
+  async range(@Query('from') from: string, @Query('to') to: string) {
+    if (!from || !to) {
+      throw new BadRequestException('from and to are required');
+    }
+    const start = new Date(from);
+    const end = new Date(to);
+    return this.computeRange({ from: start, to: end });
+  }
+
+  private async computeRange(window: DateRange) {
+    const orders = await this.prisma.order.findMany({
+      where: {
+        createdAt: { gte: window.from, lt: window.to },
+        status: { not: 'CANCELED' as any },
+      },
+      select: {
+        id: true,
+        discountCents: true,
+        loyaltyDiscountCents: true,
+        shippingFeeCents: true,
+        items: {
+          select: { qty: true, unitPriceCents: true, unitCostCents: true, priceSnapshotCents: true },
+        },
+      },
+    });
+
+    let salesCents = 0;
+    let discountCents = 0;
+    let deliveryFeeCents = 0;
+    let cogsCents = 0;
+    let missingCostCount = 0;
+    for (const order of orders) {
+      let itemsTotal = 0;
+      let itemsCost = 0;
+      for (const item of order.items) {
+        const price = item.unitPriceCents || item.priceSnapshotCents || 0;
+        const cost = item.unitCostCents || 0;
+        if (!item.unitCostCents || item.unitCostCents <= 0) {
+          missingCostCount += 1;
+        }
+        itemsTotal += price * item.qty;
+        itemsCost += cost * item.qty;
+      }
+      salesCents += itemsTotal;
+      discountCents += (order.discountCents ?? 0) + (order.loyaltyDiscountCents ?? 0);
+      deliveryFeeCents += order.shippingFeeCents ?? 0;
+      cogsCents += itemsCost;
+    }
+    const netRevenueCents = Math.max(0, salesCents - discountCents) + deliveryFeeCents;
+    const grossProfitCents = netRevenueCents - cogsCents;
+    const grossMarginPct = netRevenueCents > 0 ? (grossProfitCents / netRevenueCents) * 100 : 0;
+    return {
+      date: window.from.toISOString().slice(0, 10),
+      ordersCount: orders.length,
+      salesCents,
+      discountCents,
+      deliveryFeeCents,
+      netRevenueCents,
+      cogsCents,
+      grossProfitCents,
+      grossMarginPct: Number(grossMarginPct.toFixed(2)),
+      missingCostCount,
+    };
+  }
+}

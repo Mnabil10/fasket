@@ -41,4 +41,7 @@ export declare class AuthController {
     disableAdminTwoFa(req: any): Promise<{
         enabled: boolean;
     }>;
+    logout(req: any): Promise<{
+        success: boolean;
+    }>;
 }

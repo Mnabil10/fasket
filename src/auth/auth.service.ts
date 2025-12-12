@@ -86,17 +86,10 @@ export class AuthService {
     }
 
     const requireAdmin2fa = (this.config.get<string>('AUTH_REQUIRE_ADMIN_2FA') ?? 'true') === 'true';
-    const staticAdminOtp = this.config.get<string>('AUTH_ADMIN_STATIC_OTP') || '1234';
     let twoFaVerified = !user.twoFaEnabled;
 
     if (user.role === 'ADMIN') {
       if (!requireAdmin2fa) {
-        twoFaVerified = true;
-      } else if (staticAdminOtp) {
-        const provided = input.otp ?? staticAdminOtp;
-        if (provided !== staticAdminOtp) {
-          throw new DomainError(ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
-        }
         twoFaVerified = true;
       } else {
         if (!user.twoFaEnabled) {
@@ -281,5 +274,10 @@ export class AuthService {
 
   private refreshCacheKey(userId: string, jti: string) {
     return `refresh:${userId}:${jti}`;
+  }
+
+  async revokeRefreshToken(userId: string, jti: string) {
+    await this.cache.del(this.refreshCacheKey(userId, jti));
+    return { success: true };
   }
 }

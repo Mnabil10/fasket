@@ -24,6 +24,10 @@ import { validateEnv } from './config/env.validation';
 import { SettingsModule } from './settings/settings.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { AutomationModule } from './automation/automation.module';
+import { OtpModule } from './otp/otp.module';
+import { PasswordResetModule } from './password-reset/password-reset.module';
+import { AutomationSupportModule } from './automation-support/automation-support.module';
 
 @Module({
   imports: [
@@ -96,6 +100,12 @@ import { UploadsModule } from './uploads/uploads.module';
         { name: 'authLogin', ttl: 60, limit: 10 },
         { name: 'authRegister', ttl: 60, limit: 5 },
         { name: 'uploadsAdmin', ttl: 60, limit: 30 },
+        { name: 'supportBot', ttl: 600, limit: 5 },
+        { name: 'supportBotSearch', ttl: 600, limit: 10 },
+        { name: 'otpRequest', ttl: 600, limit: 10 },
+        { name: 'otpVerify', ttl: 600, limit: 20 },
+        { name: 'passwordResetRequest', ttl: 600, limit: 5 },
+        { name: 'passwordResetConfirm', ttl: 600, limit: 10 },
       ],
     }),
     PrismaModule,
@@ -108,6 +118,10 @@ import { UploadsModule } from './uploads/uploads.module';
     OrdersModule,
     AdminModule,
     NotificationsModule,
+    AutomationModule,
+    OtpModule,
+    PasswordResetModule,
+    AutomationSupportModule,
     SettingsModule,
     LoyaltyModule,
     CommonModule,

@@ -39,18 +39,13 @@ let AdminCouponsController = AdminCouponsController_1 = class AdminCouponsContro
     }
     create(dto) {
         const data = { ...dto, type: dto.type ?? 'PERCENT' };
-        if (dto.percent != null)
-            data.valueCents = Number(dto.percent);
-        if (dto.valueCents != null)
-            data.valueCents = Number(dto.valueCents);
-        if (data.valueCents === undefined || data.valueCents === null) {
-            throw new common_2.BadRequestException('valueCents (or percent) is required for coupons');
+        const suppliedValue = dto.percent ?? dto.value ?? dto.valueCents;
+        data.valueCents = suppliedValue != null ? Number(suppliedValue) : 0;
+        if (data.type === 'PERCENT' && data.valueCents < 0) {
+            throw new common_2.BadRequestException('percent (valueCents) must be >= 0');
         }
-        if (data.type === 'FIXED' && (data.valueCents === undefined || data.valueCents === null)) {
-            throw new common_2.BadRequestException('valueCents is required for FIXED coupons');
-        }
-        if (data.type === 'PERCENT' && (data.valueCents === undefined || data.valueCents === null)) {
-            throw new common_2.BadRequestException('percent (valueCents) is required for PERCENT coupons');
+        if (data.type === 'FIXED' && data.valueCents < 0) {
+            throw new common_2.BadRequestException('valueCents must be >= 0 for FIXED coupons');
         }
         const createdPromise = this.svc.prisma.coupon.create({ data });
         createdPromise.then(async (coupon) => {
@@ -71,15 +66,19 @@ let AdminCouponsController = AdminCouponsController_1 = class AdminCouponsContro
                 throw new Error('Coupon not found');
             }
             const data = { ...dto };
-            if (dto.percent != null) {
+            const suppliedValue = dto.percent ?? dto.value ?? dto.valueCents;
+            if (suppliedValue != null) {
                 data.type = dto.type ?? 'PERCENT';
-                data.valueCents = Number(dto.percent);
+                data.valueCents = Number(suppliedValue);
             }
-            if (data.type === 'FIXED' && data.valueCents === undefined && before.type === 'FIXED') {
+            else if (before.valueCents != null) {
                 data.valueCents = before.valueCents;
             }
-            if ((data.type ?? before.type) === 'PERCENT' && (data.valueCents === undefined || data.valueCents === null)) {
-                throw new common_2.BadRequestException('percent (valueCents) is required for PERCENT coupons');
+            if ((data.type ?? before.type) === 'PERCENT' && data.valueCents < 0) {
+                throw new common_2.BadRequestException('percent (valueCents) must be >= 0');
+            }
+            if ((data.type ?? before.type) === 'FIXED' && data.valueCents < 0) {
+                throw new common_2.BadRequestException('valueCents must be >= 0 for FIXED coupons');
             }
             const updated = await tx.coupon.update({ where: { id }, data });
             this.logger.log({ msg: 'Coupon updated', couponId: updated.id, code: updated.code, isActive: updated.isActive });

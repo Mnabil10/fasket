@@ -79,4 +79,7 @@ export declare class AuthService {
     private verifyTotp;
     private generateTotp;
     private refreshCacheKey;
+    revokeRefreshToken(userId: string, jti: string): Promise<{
+        success: boolean;
+    }>;
 }

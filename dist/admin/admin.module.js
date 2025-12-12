@@ -24,6 +24,9 @@ const delivery_drivers_module_1 = require("../delivery-drivers/delivery-drivers.
 const notifications_module_1 = require("../notifications/notifications.module");
 const orders_module_1 = require("../orders/orders.module");
 const delivery_zones_controller_1 = require("./delivery-zones.controller");
+const automation_module_1 = require("../automation/automation.module");
+const reports_controller_1 = require("./reports.controller");
+const automation_controller_1 = require("./automation.controller");
 let AdminModule = class AdminModule {
 };
 exports.AdminModule = AdminModule;
@@ -40,12 +43,15 @@ exports.AdminModule = AdminModule = __decorate([
             delivery_drivers_controller_1.AdminDeliveryDriversController,
             delivery_zones_controller_1.AdminDeliveryZonesController,
             loyalty_controller_1.AdminLoyaltyController,
+            reports_controller_1.AdminReportsController,
+            automation_controller_1.AdminAutomationController,
         ],
         imports: [
             uploads_module_1.UploadsModule,
             notifications_module_1.NotificationsModule,
             orders_module_1.OrdersModule,
             delivery_drivers_module_1.DeliveryDriversModule,
+            automation_module_1.AutomationModule,
         ],
         providers: [admin_service_1.AdminService, products_bulk_service_1.ProductsBulkService],
     })

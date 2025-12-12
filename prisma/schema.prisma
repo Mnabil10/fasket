@@ -39,6 +39,13 @@ enum LoyaltyTransactionType {
   ADJUST
 }
 
+enum AutomationEventStatus {
+  PENDING
+  SENT
+  FAILED
+  DEAD
+}
+
 model User {
   id         String    @id @default(cuid())
   email      String?   @unique
@@ -113,6 +120,7 @@ model Product {
   descriptionAr  String?
   imageUrl       String?
   priceCents     Int
+  costPriceCents Int?          @default(0)
   salePriceCents Int?
   stock          Int           @default(0)
   status         ProductStatus @default(ACTIVE)
@@ -195,6 +203,8 @@ model Order {
   @@index([driverId])
   @@index([driverId, createdAt])
   @@unique([userId, idempotencyKey])
+  @@index([code])
+  @@index([createdAt])
 }
 
 model OrderItem {
@@ -203,12 +213,29 @@ model OrderItem {
   productId           String
   productNameSnapshot String
   priceSnapshotCents  Int
+  unitPriceCents      Int    @default(0)
+  unitCostCents       Int    @default(0)
+  lineTotalCents      Int    @default(0)
+  lineProfitCents     Int    @default(0)
   qty                 Int
 
   order   Order   @relation(fields: [orderId], references: [id])
   product Product @relation(fields: [productId], references: [id])
 
   @@index([productId])
+  @@index([orderId])
+}
+
+model SupportQueryAudit {
+  id            String   @id @default(cuid())
+  endpoint      String
+  phoneHash     String?
+  success       Boolean  @default(false)
+  correlationId String?
+  ip            String?
+  createdAt     DateTime @default(now())
+
+  @@index([endpoint, createdAt])
 }
 
 model OrderStatusHistory {
@@ -365,6 +392,29 @@ model SessionLog {
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+model AutomationEvent {
+  id             String                @id @default(uuid())
+  type           String
+  payload        Json
+  status         AutomationEventStatus @default(PENDING)
+  attempts       Int                   @default(0)
+  nextAttemptAt  DateTime?
+  dedupeKey      String?
+  correlationId  String?
+  lastHttpStatus Int?
+  lastError      String?
+  lastResponseAt DateTime?
+  lastResponseBodySnippet String?
+  sentAt         DateTime?
+  createdAt      DateTime              @default(now())
+
+  @@index([status, nextAttemptAt])
+  @@index([dedupeKey])
+  @@index([type])
+  @@index([createdAt])
+  @@unique([type, dedupeKey])
 }
 
 // prisma/schema.prisma  (only the Setting model shown)

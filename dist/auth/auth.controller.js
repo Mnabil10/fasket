@@ -47,6 +47,9 @@ let AuthController = class AuthController {
     disableAdminTwoFa(req) {
         return this.service.disableAdminTwoFa(req.user.userId);
     }
+    logout(req) {
+        return this.service.revokeRefreshToken(req.user.userId, req.user.jti);
+    }
 };
 exports.AuthController = AuthController;
 __decorate([
@@ -103,6 +106,14 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], AuthController.prototype, "disableAdminTwoFa", null);
+__decorate([
+    (0, common_1.Post)('logout'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt-refresh')),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "logout", null);
 exports.AuthController = AuthController = __decorate([
     (0, swagger_1.ApiTags)('Auth'),
     (0, common_1.Controller)({ path: 'auth', version: ['1', '2'] }),

@@ -15,6 +15,7 @@ const sanitize_input_pipe_1 = require("./common/pipes/sanitize-input.pipe");
 const request_context_service_1 = require("./common/context/request-context.service");
 const response_interceptor_1 = require("./common/interceptors/response.interceptor");
 const all_exceptions_filter_1 = require("./common/filters/all-exceptions.filter");
+const bodyParser = require("body-parser");
 const compression = require('compression');
 const express = require('express');
 if (process.env.SENTRY_DSN) {
@@ -33,6 +34,17 @@ async function bootstrap() {
     const configService = app.get(config_1.ConfigService);
     const logger = app.get(nestjs_pino_1.Logger);
     app.useLogger(logger);
+    app.use(bodyParser.json({
+        verify: (req, _res, buf) => {
+            req.rawBody = buf.toString();
+        },
+    }));
+    app.use(bodyParser.urlencoded({
+        extended: true,
+        verify: (req, _res, buf) => {
+            req.rawBody = buf.toString();
+        },
+    }));
     const context = app.get(request_context_service_1.RequestContextService);
     app.use((req, res, next) => {
         const correlationId = req.headers['x-correlation-id'] || (0, crypto_1.randomUUID)();
@@ -172,85 +184,39 @@ async function bootstrap() {
     else {
         logger.log('Swagger is disabled for production. Set SWAGGER_ENABLED=true to re-enable.', 'Bootstrap');
     }
-    const originsRaw = configService.get('ALLOWED_ORIGINS') ||
-        configService.get('CORS_ALLOWED_ORIGINS') ||
-        '';
-    const devOriginsRaw = configService.get('CORS_DEV_ORIGINS') || '';
-    const literalOrigins = new Set();
-    const regexOrigins = [];
-    originsRaw
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .forEach((entry) => {
-        if (entry.toLowerCase().startsWith('regex:')) {
-            const pattern = entry.slice(6);
-            try {
-                regexOrigins.push(new RegExp(pattern));
-            }
-            catch (error) {
-                logger.warn(`Invalid CORS regex "${pattern}": ${error.message}`);
-            }
-            return;
-        }
-        literalOrigins.add(entry);
-    });
-    const devOrigins = new Set(devOriginsRaw
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean));
-    [
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://127.0.0.1:5173',
-        'http://127.0.0.1:5174',
+    const allowedOrigins = new Set([
+        'https://fasket.shop',
         'http://localhost:3000',
-        'http://127.0.0.1:3000',
-    ].forEach((o) => devOrigins.add(o));
-    const allowLocalhostWildcard = (configService.get('NODE_ENV') ?? 'development') !== 'production';
-    const allowLocalhostInProd = (configService.get('CORS_ALLOW_LOCALHOST') ?? 'true') === 'true';
-    const localhostRegexes = [
-        /^https?:\/\/localhost(?::\d+)?$/i,
-        /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
-    ];
+        'http://localhost:8100',
+        'http://localhost:4200',
+        'capacitor://localhost',
+        'ionic://localhost',
+        'https://admin.fasket.cloud',
+    ]);
     app.enableCors({
         origin(origin, callback) {
             if (!origin)
                 return callback(null, true);
-            if (literalOrigins.has(origin))
-                return callback(null, true);
-            if (devOrigins.has(origin) && allowLocalhostInProd) {
-                return callback(null, true);
-            }
-            if (regexOrigins.some((rx) => rx.test(origin))) {
-                return callback(null, true);
-            }
-            if (allowLocalhostWildcard && localhostRegexes.some((rx) => rx.test(origin))) {
+            if (allowedOrigins.has(origin)) {
                 return callback(null, true);
             }
             logger.warn(`Rejected CORS origin "${origin}"`);
-            return callback(null, false);
+            return callback(new Error('CORS origin not allowed'), false);
         },
         credentials: true,
-        methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
         allowedHeaders: [
             'Content-Type',
             'Authorization',
-            'X-Requested-With',
             'Accept',
-            'X-User-Agent',
-            'x-user-agent',
+            'Origin',
+            'X-Requested-With',
             'X-Refresh-Token',
             'x-refresh-token',
             'X-Correlation-Id',
             'x-correlation-id',
         ],
-        exposedHeaders: [
-            'X-Refresh-Token',
-            'x-refresh-token',
-            'X-Correlation-Id',
-            'x-correlation-id',
-        ],
+        exposedHeaders: ['X-Refresh-Token', 'x-refresh-token', 'X-Correlation-Id', 'x-correlation-id'],
         preflightContinue: false,
         optionsSuccessStatus: 204,
     });

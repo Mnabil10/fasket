@@ -92,17 +92,9 @@ let AuthService = AuthService_1 = class AuthService {
             throw new common_1.UnauthorizedException('Invalid credentials');
         }
         const requireAdmin2fa = (this.config.get('AUTH_REQUIRE_ADMIN_2FA') ?? 'true') === 'true';
-        const staticAdminOtp = this.config.get('AUTH_ADMIN_STATIC_OTP') || '1234';
         let twoFaVerified = !user.twoFaEnabled;
         if (user.role === 'ADMIN') {
             if (!requireAdmin2fa) {
-                twoFaVerified = true;
-            }
-            else if (staticAdminOtp) {
-                const provided = input.otp ?? staticAdminOtp;
-                if (provided !== staticAdminOtp) {
-                    throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
-                }
                 twoFaVerified = true;
             }
             else {
@@ -278,6 +270,10 @@ let AuthService = AuthService_1 = class AuthService {
     }
     refreshCacheKey(userId, jti) {
         return `refresh:${userId}:${jti}`;
+    }
+    async revokeRefreshToken(userId, jti) {
+        await this.cache.del(this.refreshCacheKey(userId, jti));
+        return { success: true };
     }
 };
 exports.AuthService = AuthService;

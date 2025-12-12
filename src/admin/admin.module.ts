@@ -15,6 +15,9 @@ import { DeliveryDriversModule } from '../delivery-drivers/delivery-drivers.modu
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersModule } from '../orders/orders.module';
 import { AdminDeliveryZonesController } from './delivery-zones.controller';
+import { AutomationModule } from '../automation/automation.module';
+import { AdminReportsController } from './reports.controller';
+import { AdminAutomationController } from './automation.controller';
 
 @Module({
   controllers: [
@@ -28,6 +31,8 @@ import { AdminDeliveryZonesController } from './delivery-zones.controller';
     AdminDeliveryDriversController,
     AdminDeliveryZonesController,
     AdminLoyaltyController,
+    AdminReportsController,
+    AdminAutomationController,
   ],
   imports: [
     // Additional modules can be wired here when needed
@@ -35,6 +40,7 @@ import { AdminDeliveryZonesController } from './delivery-zones.controller';
     NotificationsModule,
     OrdersModule,
     DeliveryDriversModule,
+    AutomationModule,
     // ...other modules
   ],
   providers: [AdminService, ProductsBulkService],

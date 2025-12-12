@@ -33,6 +33,10 @@ const env_validation_1 = require("./config/env.validation");
 const settings_module_1 = require("./settings/settings.module");
 const loyalty_module_1 = require("./loyalty/loyalty.module");
 const uploads_module_1 = require("./uploads/uploads.module");
+const automation_module_1 = require("./automation/automation.module");
+const otp_module_1 = require("./otp/otp.module");
+const password_reset_module_1 = require("./password-reset/password-reset.module");
+const automation_support_module_1 = require("./automation-support/automation-support.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -106,6 +110,12 @@ exports.AppModule = AppModule = __decorate([
                     { name: 'authLogin', ttl: 60, limit: 10 },
                     { name: 'authRegister', ttl: 60, limit: 5 },
                     { name: 'uploadsAdmin', ttl: 60, limit: 30 },
+                    { name: 'supportBot', ttl: 600, limit: 5 },
+                    { name: 'supportBotSearch', ttl: 600, limit: 10 },
+                    { name: 'otpRequest', ttl: 600, limit: 10 },
+                    { name: 'otpVerify', ttl: 600, limit: 20 },
+                    { name: 'passwordResetRequest', ttl: 600, limit: 5 },
+                    { name: 'passwordResetConfirm', ttl: 600, limit: 10 },
                 ],
             }),
             prisma_module_1.PrismaModule,
@@ -118,6 +128,10 @@ exports.AppModule = AppModule = __decorate([
             orders_module_1.OrdersModule,
             admin_module_1.AdminModule,
             notifications_module_1.NotificationsModule,
+            automation_module_1.AutomationModule,
+            otp_module_1.OtpModule,
+            password_reset_module_1.PasswordResetModule,
+            automation_support_module_1.AutomationSupportModule,
             settings_module_1.SettingsModule,
             loyalty_module_1.LoyaltyModule,
             common_module_1.CommonModule,

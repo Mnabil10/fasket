@@ -21,21 +21,19 @@ const admin_service_1 = require("./admin.service");
 const order_status_dto_1 = require("./dto/order-status.dto");
 const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
 const driver_dto_1 = require("../delivery-drivers/dto/driver.dto");
-const notifications_service_1 = require("../notifications/notifications.service");
 const receipt_service_1 = require("../orders/receipt.service");
-const client_1 = require("@prisma/client");
 const audit_log_service_1 = require("../common/audit/audit-log.service");
 const orders_service_1 = require("../orders/orders.service");
 const admin_order_list_dto_1 = require("./dto/admin-order-list.dto");
-const errors_1 = require("../common/errors");
 const throttler_1 = require("@nestjs/throttler");
+const automation_events_service_1 = require("../automation/automation-events.service");
 let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersController {
-    constructor(svc, notifications, receipts, audit, orders) {
+    constructor(svc, receipts, audit, orders, automation) {
         this.svc = svc;
-        this.notifications = notifications;
         this.receipts = receipts;
         this.audit = audit;
         this.orders = orders;
+        this.automation = automation;
         this.logger = new common_1.Logger(AdminOrdersController_1.name);
     }
     async list(query) {
@@ -105,45 +103,10 @@ let AdminOrdersController = AdminOrdersController_1 = class AdminOrdersControlle
         return this.receipts.getForAdmin(id);
     }
     async updateStatus(user, id, dto) {
-        const before = await this.svc.prisma.order.findUnique({ where: { id } });
-        if (!before) {
-            throw new errors_1.DomainError(errors_1.ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
-        }
         const nextStatus = dto.to;
-        if (nextStatus === client_1.OrderStatus.CANCELED) {
-            const result = await this.orders.adminCancelOrder(id, user.userId, dto.note);
-            this.logger.log({ msg: 'Order canceled by admin', orderId: id, actorId: user.userId });
-            return result;
-        }
-        let loyaltyEarned = 0;
-        await this.svc.prisma.$transaction(async (tx) => {
-            await tx.order.update({ where: { id }, data: { status: nextStatus } });
-            await tx.orderStatusHistory.create({
-                data: { orderId: id, from: before.status, to: nextStatus, note: dto.note, actorId: user.userId },
-            });
-            if (nextStatus === client_1.OrderStatus.DELIVERED) {
-                loyaltyEarned = await this.orders.awardLoyaltyForOrder(id, tx);
-            }
-        });
-        const statusKey = nextStatus === client_1.OrderStatus.OUT_FOR_DELIVERY
-            ? 'order_out_for_delivery'
-            : nextStatus === client_1.OrderStatus.DELIVERED
-                ? 'order_delivered'
-                : 'order_status_changed';
-        await this.notifications.notify(statusKey, before.userId, { orderId: id, status: nextStatus });
-        if (loyaltyEarned > 0) {
-            await this.notifications.notify('loyalty_earned', before.userId, { orderId: id, points: loyaltyEarned });
-        }
-        await this.audit.log({
-            action: 'order.status.change',
-            entity: 'order',
-            entityId: id,
-            before: { status: before.status },
-            after: { status: nextStatus, note: dto.note },
-        });
-        this.logger.log({ msg: 'Order status updated', orderId: id, from: before.status, to: dto.to, actorId: user.userId });
-        await this.orders.clearCachesForOrder(id, before.userId);
-        return { success: true };
+        const result = await this.orders.updateStatus(id, nextStatus, user.userId, dto.note);
+        this.logger.log({ msg: 'Order status updated', orderId: id, to: dto.to, actorId: user.userId });
+        return result;
     }
     async assignDriver(id, dto, admin) {
         const result = await this.orders.assignDriverToOrder(id, dto.driverId, admin.userId);
@@ -206,9 +169,9 @@ exports.AdminOrdersController = AdminOrdersController = AdminOrdersController_1 
     (0, throttler_1.Throttle)({ default: { limit: 30, ttl: 60 } }),
     (0, common_1.Controller)({ path: 'admin/orders', version: ['1'] }),
     __metadata("design:paramtypes", [admin_service_1.AdminService,
-        notifications_service_1.NotificationsService,
         receipt_service_1.ReceiptService,
         audit_log_service_1.AuditLogService,
-        orders_service_1.OrdersService])
+        orders_service_1.OrdersService,
+        automation_events_service_1.AutomationEventsService])
 ], AdminOrdersController);
 //# sourceMappingURL=orders.controller.js.map

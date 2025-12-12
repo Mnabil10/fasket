@@ -14,21 +14,21 @@ exports.OrdersService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
-const notifications_service_1 = require("../notifications/notifications.service");
 const dto_1 = require("./dto");
 const settings_service_1 = require("../settings/settings.service");
 const loyalty_service_1 = require("../loyalty/loyalty.service");
 const errors_1 = require("../common/errors");
 const audit_log_service_1 = require("../common/audit/audit-log.service");
 const cache_service_1 = require("../common/cache/cache.service");
+const automation_events_service_1 = require("../automation/automation-events.service");
 let OrdersService = OrdersService_1 = class OrdersService {
-    constructor(prisma, notify, settings, loyalty, audit, cache) {
+    constructor(prisma, settings, loyalty, audit, cache, automation) {
         this.prisma = prisma;
-        this.notify = notify;
         this.settings = settings;
         this.loyalty = loyalty;
         this.audit = audit;
         this.cache = cache;
+        this.automation = automation;
         this.logger = new common_1.Logger(OrdersService_1.name);
         this.listTtl = Number(process.env.ORDER_LIST_CACHE_TTL ?? 30);
         this.receiptTtl = Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60);
@@ -91,6 +91,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
     }
     async create(userId, payload) {
         const idempotencyKey = payload.idempotencyKey?.trim() || null;
+        const automationEvents = [];
         if (idempotencyKey) {
             const existing = await this.prisma.order.findFirst({
                 where: { userId, idempotencyKey },
@@ -101,7 +102,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             }
         }
         try {
-            const { orderId, loyaltyNotice } = await this.prisma.$transaction(async (tx) => {
+            const { orderId } = await this.prisma.$transaction(async (tx) => {
                 const cart = await tx.cart.findUnique({
                     where: { userId },
                     include: { items: true },
@@ -113,7 +114,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 const productIds = cart.items.map((item) => item.productId);
                 const products = await tx.product.findMany({
                     where: { id: { in: productIds }, status: client_1.ProductStatus.ACTIVE, deletedAt: null },
-                    select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true },
+                    select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true, costPriceCents: true },
                 });
                 if (products.length !== productIds.length) {
                     throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, 'One or more products are unavailable');
@@ -126,11 +127,15 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     if (product.stock < item.qty) {
                         throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, `Insufficient stock for ${product.name}`);
                     }
+                    if (!product.costPriceCents || product.costPriceCents <= 0) {
+                        this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: product.id });
+                    }
                     return {
                         productId: product.id,
                         productName: product.name,
                         qty: item.qty,
                         priceCents: product.salePriceCents ?? product.priceCents,
+                        costCents: product.costPriceCents ?? 0,
                     };
                 });
                 for (const item of sourceItems) {
@@ -234,12 +239,15 @@ let OrdersService = OrdersService_1 = class OrdersService {
                                 productId: item.productId,
                                 productNameSnapshot: item.productName,
                                 priceSnapshotCents: item.priceCents,
+                                unitPriceCents: item.priceCents,
+                                unitCostCents: item.costCents ?? 0,
+                                lineTotalCents: item.priceCents * item.qty,
+                                lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
                                 qty: item.qty,
                             })),
                         },
                     },
                 });
-                let loyaltyNotice;
                 if (payload.loyaltyPointsToRedeem && payload.loyaltyPointsToRedeem > 0) {
                     const redemption = await this.loyalty.redeemPoints({
                         userId,
@@ -258,23 +266,21 @@ let OrdersService = OrdersService_1 = class OrdersService {
                                 totalCents,
                             },
                         });
-                        loyaltyNotice = redemption;
                     }
                 }
                 await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
                 if (cart.couponCode) {
                     await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
                 }
-                return { orderId: order.id, loyaltyNotice };
-            });
-            await this.notify.notify('order_created', userId, { orderId, status: client_1.OrderStatus.PENDING });
-            if (loyaltyNotice) {
-                await this.notify.notify('loyalty_redeemed', userId, {
-                    orderId,
-                    points: loyaltyNotice.pointsUsed,
-                    discountCents: loyaltyNotice.discountCents,
+                const eventPayload = await this.buildOrderEventPayload(order.id, tx);
+                const createdEvent = await this.automation.emit('order.created', eventPayload, {
+                    tx,
+                    dedupeKey: `order:${order.id}:${order.status}:created`,
                 });
-            }
+                automationEvents.push(createdEvent);
+                return { orderId: order.id };
+            });
+            await this.automation.enqueueMany(automationEvents);
             this.logger.log({ msg: 'Order created', orderId, userId });
             await this.clearCachesForOrder(orderId, userId);
             return this.detail(userId, orderId);
@@ -414,17 +420,27 @@ let OrdersService = OrdersService_1 = class OrdersService {
         if (!driver.isActive) {
             throw new errors_1.DomainError(errors_1.ErrorCode.DRIVER_INACTIVE, 'Driver is inactive');
         }
-        const updated = await this.prisma.order.update({
-            where: { id: orderId },
-            data: { driverId: driver.id, driverAssignedAt: new Date() },
-            select: {
-                id: true,
-                userId: true,
-                driverAssignedAt: true,
-                driver: {
-                    select: { id: true, fullName: true, phone: true, vehicle: { select: { type: true, plateNumber: true } } },
+        const automationEvents = [];
+        const updated = await this.prisma.$transaction(async (tx) => {
+            const next = await tx.order.update({
+                where: { id: orderId },
+                data: { driverId: driver.id, driverAssignedAt: new Date() },
+                select: {
+                    id: true,
+                    userId: true,
+                    driverAssignedAt: true,
+                    driver: {
+                        select: { id: true, fullName: true, phone: true, vehicle: { select: { type: true, plateNumber: true } } },
+                    },
                 },
-            },
+            });
+            const payload = await this.buildOrderEventPayload(orderId, tx);
+            const event = await this.automation.emit('order.driver_assigned', payload, {
+                tx,
+                dedupeKey: `order:${orderId}:driver:${driver.id}`,
+            });
+            automationEvents.push(event);
+            return next;
         });
         await this.audit.log({
             action: 'order.assign-driver',
@@ -434,12 +450,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             before: { driverId: order.driverId ?? null },
             after: { driverId: driver.id },
         });
-        await this.notify.notify('order_assigned_driver', updated.userId, {
-            orderId: orderId,
-            driverId: driver.id,
-            driverName: driver.fullName,
-            driverPhone: driver.phone,
-        });
+        await this.automation.enqueueMany(automationEvents);
         await this.clearCachesForOrder(orderId, updated.userId);
         return {
             orderId: updated.id,
@@ -486,11 +497,12 @@ let OrdersService = OrdersService_1 = class OrdersService {
         if (!source.items.length) {
             throw new errors_1.DomainError(errors_1.ErrorCode.CART_EMPTY, 'Order has no items to reorder');
         }
-        return this.prisma.$transaction(async (tx) => {
+        const automationEvents = [];
+        const result = await this.prisma.$transaction(async (tx) => {
             const productIds = Array.from(new Set(source.items.map((i) => i.productId)));
             const products = await tx.product.findMany({
                 where: { id: { in: productIds }, status: client_1.ProductStatus.ACTIVE, deletedAt: null },
-                select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true },
+                select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true, costPriceCents: true },
             });
             const productMap = new Map(products.map((p) => [p.id, p]));
             const orderItems = source.items.map((item) => {
@@ -502,11 +514,16 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     throw new errors_1.DomainError(errors_1.ErrorCode.CART_PRODUCT_UNAVAILABLE, `Insufficient stock for ${product.name}`);
                 }
                 const priceCents = product.salePriceCents ?? product.priceCents;
+                const costCents = product.costPriceCents ?? 0;
+                if (!costCents || costCents <= 0) {
+                    this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: product.id });
+                }
                 return {
                     productId: product.id,
                     productName: product.name,
                     qty: item.qty,
                     priceCents,
+                    costCents,
                 };
             });
             for (const item of orderItems) {
@@ -578,18 +595,29 @@ let OrdersService = OrdersService_1 = class OrdersService {
                             productId: item.productId,
                             productNameSnapshot: item.productName,
                             priceSnapshotCents: item.priceCents,
+                            unitPriceCents: item.priceCents,
+                            unitCostCents: item.costCents ?? 0,
+                            lineTotalCents: item.priceCents * item.qty,
+                            lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
                             qty: item.qty,
                         })),
                     },
                 },
             });
-            await this.notify.notify('order_created', userId, { orderId: order.id, status: client_1.OrderStatus.PENDING });
-            await this.clearCachesForOrder(order.id, userId);
-            return this.detail(userId, order.id);
+            const eventPayload = await this.buildOrderEventPayload(order.id, tx);
+            const createdEvent = await this.automation.emit('order.created', eventPayload, {
+                tx,
+                dedupeKey: `order:${order.id}:${order.status}:reorder`,
+            });
+            automationEvents.push(createdEvent);
+            return { orderId: order.id };
         }).catch(async (error) => {
             await this.rollbackStockForOrderItems(source.items).catch(() => undefined);
             throw error;
         });
+        await this.automation.enqueueMany(automationEvents);
+        await this.clearCachesForOrder(result.orderId, userId);
+        return this.detail(userId, result.orderId);
     }
     async cancelOrder(userId, orderId) {
         const order = await this.prisma.order.findUnique({
@@ -611,12 +639,13 @@ let OrdersService = OrdersService_1 = class OrdersService {
             await this.clearCachesForOrder(orderId, userId);
             return this.detail(userId, orderId);
         }
+        const automationEvents = [];
         await this.prisma.$transaction(async (tx) => {
             await tx.order.update({
                 where: { id: orderId },
                 data: { status: client_1.OrderStatus.CANCELED },
             });
-            await tx.orderStatusHistory.create({
+            const history = await tx.orderStatusHistory.create({
                 data: {
                     orderId,
                     from: order.status,
@@ -628,10 +657,50 @@ let OrdersService = OrdersService_1 = class OrdersService {
             await this.restockInventory(orderId, order.items, tx, userId);
             await this.refundRedeemedPoints(orderId, tx);
             await this.revokeLoyaltyForOrder(orderId, tx);
+            const payload = await this.buildOrderEventPayload(orderId, tx);
+            const event = await this.automation.emit('order.canceled', payload, {
+                tx,
+                dedupeKey: `order:${orderId}:${client_1.OrderStatus.CANCELED}:${history.id}`,
+            });
+            automationEvents.push(event);
         });
-        await this.notify.notify('order_canceled', userId, { orderId });
+        await this.automation.enqueueMany(automationEvents);
         await this.clearCachesForOrder(orderId, userId);
         return this.detail(userId, orderId);
+    }
+    async updateStatus(orderId, nextStatus, actorId, note) {
+        const before = await this.prisma.order.findUnique({ where: { id: orderId } });
+        if (!before) {
+            throw new errors_1.DomainError(errors_1.ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+        }
+        if (nextStatus === client_1.OrderStatus.CANCELED) {
+            return this.adminCancelOrder(orderId, actorId, note);
+        }
+        let loyaltyEarned = 0;
+        const automationEvents = [];
+        await this.prisma.$transaction(async (tx) => {
+            await tx.order.update({ where: { id: orderId }, data: { status: nextStatus } });
+            const history = await tx.orderStatusHistory.create({
+                data: { orderId, from: before.status, to: nextStatus, note: note ?? undefined, actorId },
+            });
+            if (nextStatus === client_1.OrderStatus.DELIVERED) {
+                loyaltyEarned = await this.awardLoyaltyForOrder(orderId, tx);
+            }
+            const automationEvent = await this.emitOrderStatusAutomationEvent(tx, orderId, nextStatus, `order:${orderId}:${nextStatus}:${history.id}`);
+            if (automationEvent)
+                automationEvents.push(automationEvent);
+        });
+        await this.automation.enqueueMany(automationEvents);
+        await this.audit.log({
+            action: 'order.status.change',
+            entity: 'order',
+            entityId: orderId,
+            actorId,
+            before: { status: before.status },
+            after: { status: nextStatus, note },
+        });
+        await this.clearCachesForOrder(orderId, before.userId);
+        return { success: true, loyaltyEarned };
     }
     async adminCancelOrder(orderId, actorId, note) {
         const order = await this.prisma.order.findUnique({
@@ -648,12 +717,13 @@ let OrdersService = OrdersService_1 = class OrdersService {
             await this.clearCachesForOrder(orderId, order.userId);
             return { success: true };
         }
+        const automationEvents = [];
         await this.prisma.$transaction(async (tx) => {
             await tx.order.update({
                 where: { id: orderId },
                 data: { status: client_1.OrderStatus.CANCELED },
             });
-            await tx.orderStatusHistory.create({
+            const history = await tx.orderStatusHistory.create({
                 data: {
                     orderId,
                     from: order.status,
@@ -665,8 +735,14 @@ let OrdersService = OrdersService_1 = class OrdersService {
             await this.restockInventory(orderId, order.items, tx, actorId);
             await this.refundRedeemedPoints(orderId, tx);
             await this.revokeLoyaltyForOrder(orderId, tx);
+            const payload = await this.buildOrderEventPayload(orderId, tx);
+            const event = await this.automation.emit('order.canceled', payload, {
+                tx,
+                dedupeKey: `order:${orderId}:${client_1.OrderStatus.CANCELED}:${history.id}`,
+            });
+            automationEvents.push(event);
         });
-        await this.notify.notify('order_canceled', order.userId, { orderId });
+        await this.automation.enqueueMany(automationEvents);
         await this.audit.log({
             action: 'order.cancel',
             entity: 'order',
@@ -759,6 +835,83 @@ let OrdersService = OrdersService_1 = class OrdersService {
             });
         }
     }
+    mapStatusToAutomationEvent(status) {
+        switch (status) {
+            case client_1.OrderStatus.PROCESSING:
+                return 'order.confirmed';
+            case client_1.OrderStatus.OUT_FOR_DELIVERY:
+                return 'order.out_for_delivery';
+            case client_1.OrderStatus.DELIVERED:
+                return 'order.delivered';
+            case client_1.OrderStatus.CANCELED:
+                return 'order.canceled';
+            default:
+                return null;
+        }
+    }
+    async emitOrderStatusAutomationEvent(tx, orderId, status, dedupeKey) {
+        const eventType = this.mapStatusToAutomationEvent(status);
+        if (!eventType)
+            return null;
+        const payload = await this.buildOrderEventPayload(orderId, tx);
+        return this.automation.emit(eventType, payload, {
+            tx,
+            dedupeKey,
+        });
+    }
+    async buildOrderEventPayload(orderId, client = this.prisma) {
+        const order = await client.order.findUnique({
+            where: { id: orderId },
+            include: {
+                user: { select: { phone: true, name: true } },
+                address: { select: { zoneId: true, label: true, city: true, street: true, building: true, apartment: true } },
+                driver: { select: { id: true, fullName: true, phone: true } },
+                items: { select: { productNameSnapshot: true, qty: true } },
+            },
+        });
+        if (!order) {
+            throw new errors_1.DomainError(errors_1.ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+        }
+        const items = order.items.map((item) => ({
+            name: item.productNameSnapshot,
+            qty: item.qty,
+        }));
+        return {
+            order_id: order.id,
+            order_code: order.code ?? order.id,
+            status: this.toPublicStatus(order.status),
+            status_internal: order.status,
+            customer_phone: order.user?.phone,
+            total_cents: order.totalCents,
+            total_formatted: (order.totalCents / 100).toFixed(2),
+            payment_method: order.paymentMethod,
+            items,
+            items_summary: items.map((i) => `${i.name} x${i.qty}`).join(', '),
+            delivery_zone: {
+                id: order.deliveryZoneId,
+                name: order.deliveryZoneName,
+            },
+            eta_minutes: order.deliveryEtaMinutes ?? null,
+            estimated_delivery_time: order.estimatedDeliveryTime ?? null,
+            driver: order.driver
+                ? {
+                    id: order.driver.id,
+                    name: order.driver.fullName,
+                    phone: order.driver.phone,
+                }
+                : null,
+            address: order.address
+                ? {
+                    label: order.address.label,
+                    city: order.address.city,
+                    street: order.address.street,
+                    building: order.address.building,
+                    apartment: order.address.apartment,
+                    zone_id: order.address.zoneId,
+                }
+                : null,
+        };
+    }
     toPublicStatus(status) {
         switch (status) {
             case client_1.OrderStatus.PROCESSING:
@@ -840,10 +993,10 @@ exports.OrdersService = OrdersService;
 exports.OrdersService = OrdersService = OrdersService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        notifications_service_1.NotificationsService,
         settings_service_1.SettingsService,
         loyalty_service_1.LoyaltyService,
         audit_log_service_1.AuditLogService,
-        cache_service_1.CacheService])
+        cache_service_1.CacheService,
+        automation_events_service_1.AutomationEventsService])
 ], OrdersService);
 //# sourceMappingURL=orders.service.js.map

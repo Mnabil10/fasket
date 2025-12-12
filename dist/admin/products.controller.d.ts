@@ -41,6 +41,7 @@ export declare class AdminProductsController {
         priceCents: number;
         sku: string | null;
         descriptionAr: string | null;
+        costPriceCents: number | null;
         salePriceCents: number | null;
         stock: number;
         isHotOffer: boolean;
@@ -61,6 +62,7 @@ export declare class AdminProductsController {
         priceCents: number;
         sku: string | null;
         descriptionAr: string | null;
+        costPriceCents: number | null;
         salePriceCents: number | null;
         stock: number;
         isHotOffer: boolean;

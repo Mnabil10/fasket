@@ -63,13 +63,11 @@ declare const baseSchema: z.ZodObject<{
     RATE_LIMIT_TTL: number;
     RATE_LIMIT_MAX: number;
     AUTH_REQUIRE_ADMIN_2FA?: "true" | "false" | undefined;
-    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
-    REDIS_URL?: string | undefined;
     REDIS_ENABLED?: "true" | "false" | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
@@ -84,8 +82,10 @@ declare const baseSchema: z.ZodObject<{
     S3_ACCESS_KEY?: string | undefined;
     S3_SECRET_ACCESS_KEY?: string | undefined;
     S3_SECRET_KEY?: string | undefined;
+    REDIS_URL?: string | undefined;
     API_PREFIX?: string | undefined;
     ENFORCE_HTTPS?: "true" | "false" | undefined;
+    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
     CORS_DEV_ORIGINS?: string | undefined;
@@ -106,7 +106,6 @@ declare const baseSchema: z.ZodObject<{
     JWT_ACCESS_TTL?: number | undefined;
     JWT_REFRESH_TTL?: number | undefined;
     AUTH_REQUIRE_ADMIN_2FA?: "true" | "false" | undefined;
-    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     CACHE_DEFAULT_TTL?: number | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
@@ -114,7 +113,6 @@ declare const baseSchema: z.ZodObject<{
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
-    REDIS_URL?: string | undefined;
     REDIS_ENABLED?: "true" | "false" | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
@@ -131,10 +129,12 @@ declare const baseSchema: z.ZodObject<{
     S3_ACCESS_KEY?: string | undefined;
     S3_SECRET_ACCESS_KEY?: string | undefined;
     S3_SECRET_KEY?: string | undefined;
+    REDIS_URL?: string | undefined;
     API_PREFIX?: string | undefined;
     ENFORCE_HTTPS?: "true" | "false" | undefined;
     RATE_LIMIT_TTL?: number | undefined;
     RATE_LIMIT_MAX?: number | undefined;
+    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
     CORS_DEV_ORIGINS?: string | undefined;
@@ -163,13 +163,11 @@ export declare function validateEnv(config: Record<string, unknown>): {
     RATE_LIMIT_TTL: number;
     RATE_LIMIT_MAX: number;
     AUTH_REQUIRE_ADMIN_2FA?: "true" | "false" | undefined;
-    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
-    REDIS_URL?: string | undefined;
     REDIS_ENABLED?: "true" | "false" | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
@@ -184,8 +182,10 @@ export declare function validateEnv(config: Record<string, unknown>): {
     S3_ACCESS_KEY?: string | undefined;
     S3_SECRET_ACCESS_KEY?: string | undefined;
     S3_SECRET_KEY?: string | undefined;
+    REDIS_URL?: string | undefined;
     API_PREFIX?: string | undefined;
     ENFORCE_HTTPS?: "true" | "false" | undefined;
+    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
     CORS_DEV_ORIGINS?: string | undefined;

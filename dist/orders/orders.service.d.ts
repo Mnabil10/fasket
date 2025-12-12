@@ -1,23 +1,23 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { CreateOrderDto } from './dto';
 import { SettingsService } from '../settings/settings.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
 import { CacheService } from '../common/cache/cache.service';
+import { AutomationEventsService, AutomationEventRef } from '../automation/automation-events.service';
 type PublicStatus = 'PENDING' | 'CONFIRMED' | 'DELIVERING' | 'COMPLETED' | 'CANCELED';
 export declare class OrdersService {
     private readonly prisma;
-    private readonly notify;
     private readonly settings;
     private readonly loyalty;
     private readonly audit;
     private readonly cache;
+    private readonly automation;
     private readonly logger;
     private readonly listTtl;
     private readonly receiptTtl;
-    constructor(prisma: PrismaService, notify: NotificationsService, settings: SettingsService, loyalty: LoyaltyService, audit: AuditLogService, cache: CacheService);
+    constructor(prisma: PrismaService, settings: SettingsService, loyalty: LoyaltyService, audit: AuditLogService, cache: CacheService, automation: AutomationEventsService);
     list(userId: string): Promise<{
         id: string;
         code: string;
@@ -259,6 +259,12 @@ export declare class OrdersService {
         }[];
         etag: string;
     }>;
+    updateStatus(orderId: string, nextStatus: OrderStatus, actorId?: string, note?: string): Promise<{
+        success: boolean;
+    } | {
+        success: boolean;
+        loyaltyEarned: number;
+    }>;
     adminCancelOrder(orderId: string, actorId?: string, note?: string): Promise<{
         success: boolean;
     }>;
@@ -266,6 +272,9 @@ export declare class OrdersService {
     private refundRedeemedPoints;
     private rollbackStockFromCart;
     private rollbackStockForOrderItems;
+    private mapStatusToAutomationEvent;
+    emitOrderStatusAutomationEvent(tx: Prisma.TransactionClient, orderId: string, status: OrderStatus, dedupeKey: string): Promise<AutomationEventRef | null>;
+    private buildOrderEventPayload;
     private toPublicStatus;
     private toOrderDetail;
 }

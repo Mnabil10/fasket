@@ -31,12 +31,21 @@ __decorate([
     (0, class_validator_1.MinLength)(6),
     __metadata("design:type", String)
 ], ResetPasswordDto.prototype, "newPassword", void 0);
+class AdminCustomerQueryDto extends pagination_dto_1.PaginationDto {
+}
+__decorate([
+    (0, swagger_1.ApiProperty)({ required: false, description: 'search name/phone/email' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AdminCustomerQueryDto.prototype, "q", void 0);
 let AdminCustomersController = class AdminCustomersController {
     constructor(svc, loyalty) {
         this.svc = svc;
         this.loyalty = loyalty;
     }
-    async list(q, page) {
+    async list(query) {
+        const { q, ...page } = query;
         const where = {};
         if (q) {
             where.OR = [
@@ -50,7 +59,7 @@ let AdminCustomersController = class AdminCustomersController {
                 where,
                 orderBy: { createdAt: 'desc' },
                 select: { id: true, name: true, phone: true, email: true, role: true, createdAt: true },
-                skip: page?.skip, take: page?.take,
+                skip: page.skip, take: page.take,
             }),
             this.svc.prisma.user.count({ where }),
         ]);
@@ -91,12 +100,10 @@ let AdminCustomersController = class AdminCustomersController {
 exports.AdminCustomersController = AdminCustomersController;
 __decorate([
     (0, common_1.Get)(),
-    (0, swagger_1.ApiQuery)({ name: 'q', required: false, description: 'search name/phone/email' }),
     (0, swagger_1.ApiOkResponse)({ description: 'Paginated customers' }),
-    __param(0, (0, common_1.Query)('q')),
-    __param(1, (0, common_1.Query)()),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, pagination_dto_1.PaginationDto]),
+    __metadata("design:paramtypes", [AdminCustomerQueryDto]),
     __metadata("design:returntype", Promise)
 ], AdminCustomersController.prototype, "list", null);
 __decorate([

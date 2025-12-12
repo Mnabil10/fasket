@@ -3,19 +3,19 @@ import { AdminService } from './admin.service';
 import { UpdateOrderStatusDto } from './dto/order-status.dto';
 import { CurrentUserPayload } from '../common/types/current-user.type';
 import { AssignDriverDto } from '../delivery-drivers/dto/driver.dto';
-import { NotificationsService } from '../notifications/notifications.service';
 import { ReceiptService } from '../orders/receipt.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
 import { OrdersService } from '../orders/orders.service';
 import { AdminOrderListDto } from './dto/admin-order-list.dto';
+import { AutomationEventsService } from '../automation/automation-events.service';
 export declare class AdminOrdersController {
     private readonly svc;
-    private readonly notifications;
     private readonly receipts;
     private readonly audit;
     private readonly orders;
+    private readonly automation;
     private readonly logger;
-    constructor(svc: AdminService, notifications: NotificationsService, receipts: ReceiptService, audit: AuditLogService, orders: OrdersService);
+    constructor(svc: AdminService, receipts: ReceiptService, audit: AuditLogService, orders: OrdersService, automation: AutomationEventsService);
     list(query: AdminOrderListDto): Promise<{
         items: ({
             user: {
@@ -67,6 +67,10 @@ export declare class AdminOrdersController {
             productId: string;
             productNameSnapshot: string;
             priceSnapshotCents: number;
+            unitPriceCents: number;
+            unitCostCents: number;
+            lineTotalCents: number;
+            lineProfitCents: number;
         }[];
         user: {
             id: string;
@@ -145,6 +149,9 @@ export declare class AdminOrdersController {
     getReceipt(id: string): Promise<import("../orders/dto/receipt.dto").OrderReceiptDto>;
     updateStatus(user: CurrentUserPayload, id: string, dto: UpdateOrderStatusDto): Promise<{
         success: boolean;
+    } | {
+        success: boolean;
+        loyaltyEarned: number;
     }>;
     assignDriver(id: string, dto: AssignDriverDto, admin: CurrentUserPayload): Promise<{
         success: boolean;

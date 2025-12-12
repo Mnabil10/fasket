@@ -16,6 +16,7 @@ import { SanitizeInputPipe } from './common/pipes/sanitize-input.pipe';
 import { RequestContextService } from './common/context/request-context.service';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import * as bodyParser from 'body-parser';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const compression = require('compression');
@@ -39,6 +40,23 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const logger = app.get(Logger);
   app.useLogger(logger);
+
+  // Capture rawBody for HMAC verification on automation/support endpoints
+  app.use(
+    bodyParser.json({
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf.toString();
+      },
+    }),
+  );
+  app.use(
+    bodyParser.urlencoded({
+      extended: true,
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf.toString();
+      },
+    }),
+  );
 
   const context = app.get(RequestContextService);
   app.use((req: Request, res: Response, next: NextFunction) => {

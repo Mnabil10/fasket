@@ -7,11 +7,14 @@ import { AdjustLoyaltyPointsDto, LoyaltyHistoryQueryDto } from '../loyalty/dto/l
 declare class ResetPasswordDto {
     newPassword: string;
 }
+declare class AdminCustomerQueryDto extends PaginationDto {
+    q?: string;
+}
 export declare class AdminCustomersController {
     private readonly svc;
     private readonly loyalty;
     constructor(svc: AdminService, loyalty: LoyaltyService);
-    list(q?: string, page?: PaginationDto): Promise<{
+    list(query: AdminCustomerQueryDto): Promise<{
         items: {
             id: string;
             email: string | null;

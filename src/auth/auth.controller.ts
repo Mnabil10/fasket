@@ -56,4 +56,10 @@ export class AuthController {
   disableAdminTwoFa(@Req() req: any) {
     return this.service.disableAdminTwoFa(req.user.userId);
   }
+
+  @Post('logout')
+  @UseGuards(AuthGuard('jwt-refresh'))
+  logout(@Req() req: any) {
+    return this.service.revokeRefreshToken(req.user.userId, req.user.jti);
+  }
 }

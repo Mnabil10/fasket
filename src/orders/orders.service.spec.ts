@@ -2,8 +2,9 @@ import { OrderStatus } from '@prisma/client';
 import { OrdersService } from './orders.service';
 
 describe('OrdersService.awardLoyaltyForOrder', () => {
-  const mockNotify = { notify: jest.fn() } as any;
   const mockAudit = { log: jest.fn() } as any;
+  const mockCache = {} as any;
+  const mockAutomation = { emit: jest.fn(), enqueueMany: jest.fn() } as any;
 
   const baseConfig = {
     enabled: true,
@@ -53,7 +54,7 @@ describe('OrdersService.awardLoyaltyForOrder', () => {
       awardPoints: jest.fn().mockResolvedValue(awardPointsReturn),
     } as any;
 
-    const service = new OrdersService(prisma, mockNotify, settings, loyalty, mockAudit);
+    const service = new OrdersService(prisma, settings, loyalty, mockAudit, mockCache, mockAutomation);
     return { service, prisma, tx, settings, loyalty };
   };
 

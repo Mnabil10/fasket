@@ -7,7 +7,6 @@ import { UpdateOrderStatusDto } from './dto/order-status.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CurrentUserPayload } from '../common/types/current-user.type';
 import { AssignDriverDto } from '../delivery-drivers/dto/driver.dto';
-import { NotificationsService } from '../notifications/notifications.service';
 import { ReceiptService } from '../orders/receipt.service';
 import { OrderStatus } from '@prisma/client';
 import { AuditLogService } from '../common/audit/audit-log.service';
@@ -15,6 +14,7 @@ import { OrdersService } from '../orders/orders.service';
 import { AdminOrderListDto } from './dto/admin-order-list.dto';
 import { DomainError, ErrorCode } from '../common/errors';
 import { Throttle } from '@nestjs/throttler';
+import { AutomationEventRef, AutomationEventsService } from '../automation/automation-events.service';
 
 @ApiTags('Admin/Orders')
 @ApiBearerAuth()
@@ -26,10 +26,10 @@ export class AdminOrdersController {
 
   constructor(
     private readonly svc: AdminService,
-    private readonly notifications: NotificationsService,
     private readonly receipts: ReceiptService,
     private readonly audit: AuditLogService,
     private readonly orders: OrdersService,
+    private readonly automation: AutomationEventsService,
   ) {}
 
   @Get()
@@ -110,49 +110,10 @@ export class AdminOrdersController {
 
   @Patch(':id/status')
   async updateStatus(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
-    const before = await this.svc.prisma.order.findUnique({ where: { id } });
-    if (!before) {
-      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
-    }
-
     const nextStatus = dto.to as OrderStatus;
-    if (nextStatus === OrderStatus.CANCELED) {
-      const result = await this.orders.adminCancelOrder(id, user.userId, dto.note);
-      this.logger.log({ msg: 'Order canceled by admin', orderId: id, actorId: user.userId });
-      return result;
-    }
-
-    let loyaltyEarned = 0;
-    await this.svc.prisma.$transaction(async (tx) => {
-      await tx.order.update({ where: { id }, data: { status: nextStatus } });
-      await tx.orderStatusHistory.create({
-        data: { orderId: id, from: before.status as any, to: nextStatus as any, note: dto.note, actorId: user.userId },
-      });
-      if (nextStatus === OrderStatus.DELIVERED) {
-        loyaltyEarned = await this.orders.awardLoyaltyForOrder(id, tx);
-      }
-    });
-
-    const statusKey =
-      nextStatus === OrderStatus.OUT_FOR_DELIVERY
-        ? 'order_out_for_delivery'
-        : nextStatus === OrderStatus.DELIVERED
-          ? 'order_delivered'
-          : 'order_status_changed';
-    await this.notifications.notify(statusKey, before.userId, { orderId: id, status: nextStatus });
-    if (loyaltyEarned > 0) {
-      await this.notifications.notify('loyalty_earned', before.userId, { orderId: id, points: loyaltyEarned });
-    }
-    await this.audit.log({
-      action: 'order.status.change',
-      entity: 'order',
-      entityId: id,
-      before: { status: before.status },
-      after: { status: nextStatus, note: dto.note },
-    });
-    this.logger.log({ msg: 'Order status updated', orderId: id, from: before.status, to: dto.to, actorId: user.userId });
-    await this.orders.clearCachesForOrder(id, before.userId);
-    return { success: true };
+    const result = await this.orders.updateStatus(id, nextStatus, user.userId, dto.note);
+    this.logger.log({ msg: 'Order status updated', orderId: id, to: dto.to, actorId: user.userId });
+    return result;
   }
 
   @Patch(':id/assign-driver')
