@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as Sentry from '@sentry/node';
 import { AutomationEventsService } from '../automation/automation-events.service';
@@ -8,7 +8,10 @@ export class OpsAlertService {
   private readonly logger = new Logger(OpsAlertService.name);
   private readonly sentryEnabled: boolean;
 
-  constructor(private readonly automation: AutomationEventsService, private readonly config: ConfigService) {
+  constructor(
+    @Inject(forwardRef(() => AutomationEventsService)) private readonly automation: AutomationEventsService,
+    private readonly config: ConfigService,
+  ) {
     this.sentryEnabled = Boolean(this.config.get<string>('SENTRY_DSN'));
     this.logger.log({
       msg: 'OpsAlert sinks enabled',

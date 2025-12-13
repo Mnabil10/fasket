@@ -1,4 +1,5 @@
-import { Logger, Module } from '@nestjs/common';
+import { Logger, Module, forwardRef } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AutomationEventsService } from './automation-events.service';
@@ -41,6 +42,7 @@ const queueProviders = redisEnabled
 @Module({
   imports: [
     PrismaModule,
+    ConfigModule,
     ...queueImports,
   ],
   providers: [AutomationEventsService, OpsAlertService, ...queueProviders],
