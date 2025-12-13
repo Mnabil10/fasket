@@ -29,7 +29,8 @@ let AdminAutomationController = class AdminAutomationController {
         this.automation = automation;
     }
     async list(query) {
-        const pageSize = Math.min(Math.max(Number(query.pageSize) || 20, 1), 200);
+        const rawPageSize = query.pageSize ?? query.limit;
+        const pageSize = Math.min(Math.max(Number(rawPageSize) || 20, 1), 200);
         const page = Math.max(Number(query.page) || 1, 1);
         const where = {};
         if (query.status)

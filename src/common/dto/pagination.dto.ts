@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Expose, Transform } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, Min } from 'class-validator';
 
 export class PaginationDto {
@@ -12,7 +12,7 @@ export class PaginationDto {
 
   @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
   @Transform(({ value, obj }) => {
-    const source = value ?? obj?.limit ?? obj?.take;
+    const source = value ?? obj?.limit ?? obj?.take ?? obj?.takeParam;
     const raw = source ?? 20;
     return Math.min(100, Number(raw));
   })
@@ -39,17 +39,20 @@ export class PaginationDto {
     minimum: 1,
     maximum: 100,
   })
+  @Expose({ name: 'take' })
   @Transform(({ value }) => (value === undefined ? undefined : Math.min(100, Number(value))))
   @IsOptional()
   @IsInt()
   @Min(1)
-  take?: number;
+  takeParam?: number;
 
   get skip() {
     return ((this.page ?? 1) - 1) * (this.pageSize ?? 20);
   }
+
   get take() {
-    return this.pageSize ?? 20;
+    // Prefer explicit take alias, otherwise fall back to resolved pageSize
+    return this.takeParam ?? this.pageSize ?? 20;
   }
 }
 

@@ -22,7 +22,7 @@ class PaginationDto {
         return ((this.page ?? 1) - 1) * (this.pageSize ?? 20);
     }
     get take() {
-        return this.pageSize ?? 20;
+        return this.takeParam ?? this.pageSize ?? 20;
     }
 }
 exports.PaginationDto = PaginationDto;
@@ -37,7 +37,7 @@ __decorate([
 __decorate([
     (0, swagger_1.ApiPropertyOptional)({ default: 20, minimum: 1, maximum: 100 }),
     (0, class_transformer_1.Transform)(({ value, obj }) => {
-        const source = value ?? obj?.limit ?? obj?.take;
+        const source = value ?? obj?.limit ?? obj?.take ?? obj?.takeParam;
         const raw = source ?? 20;
         return Math.min(100, Number(raw));
     }),
@@ -66,6 +66,7 @@ __decorate([
         minimum: 1,
         maximum: 100,
     }),
+    (0, class_transformer_1.Expose)({ name: 'take' }),
     (0, class_transformer_1.Transform)(({ value }) => (value === undefined ? undefined : Math.min(100, Number(value)))),
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsInt)(),

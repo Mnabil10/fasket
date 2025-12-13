@@ -27,6 +27,7 @@ const delivery_zones_controller_1 = require("./delivery-zones.controller");
 const automation_module_1 = require("../automation/automation.module");
 const reports_controller_1 = require("./reports.controller");
 const automation_controller_1 = require("./automation.controller");
+const support_controller_1 = require("./support.controller");
 let AdminModule = class AdminModule {
 };
 exports.AdminModule = AdminModule;
@@ -45,6 +46,7 @@ exports.AdminModule = AdminModule = __decorate([
             loyalty_controller_1.AdminLoyaltyController,
             reports_controller_1.AdminReportsController,
             automation_controller_1.AdminAutomationController,
+            support_controller_1.AdminSupportController,
         ],
         imports: [
             uploads_module_1.UploadsModule,

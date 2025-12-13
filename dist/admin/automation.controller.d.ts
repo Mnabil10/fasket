@@ -8,6 +8,7 @@ declare class AutomationEventsQuery {
     to?: string;
     page?: number;
     pageSize?: number;
+    limit?: number;
 }
 declare class AutomationReplayDto {
     status?: AutomationEventStatus;
