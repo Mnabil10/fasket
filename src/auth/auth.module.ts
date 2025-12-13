@@ -9,9 +9,10 @@ import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
 import { AuthRateLimitService } from './auth-rate-limit.service';
 import { TwoFaGuard } from '../common/guards/twofa.guard';
 import { PasswordResetModule } from '../password-reset/password-reset.module';
+import { OtpModule } from '../otp/otp.module';
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), forwardRef(() => PasswordResetModule)],
+  imports: [PassportModule, JwtModule.register({}), forwardRef(() => PasswordResetModule), forwardRef(() => OtpModule)],
   controllers: [AuthController, AuthCompatController],
   providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy, AuthRateLimitService, TwoFaGuard],
   exports: [AuthService],
