@@ -83,7 +83,7 @@ export class AutomationSupportService {
       }));
 
       success = true;
-      await this.auditSupport('order-status', phone, true, params.correlationId, params.ip);
+      await this.auditSupport('order-status', phone, true, params.correlationId, params.ip, orders[0]?.code ?? orders[0]?.id, mapped.map((m) => `${m.orderCode}:${m.status}`).join('; ').slice(0, 240));
       await this.automation.emit(
         'support.order_status.requested',
         { phone, orderCode: params.orderCode ?? null, results: mapped.length },
@@ -92,7 +92,7 @@ export class AutomationSupportService {
       return { orders: mapped };
     } finally {
       if (!success) {
-        await this.auditSupport('order-status', this.normalizePhoneSafe(params.phone), false, params.correlationId, params.ip);
+        await this.auditSupport('order-status', this.normalizePhoneSafe(params.phone), false, params.correlationId, params.ip, params.orderCode);
       }
     }
   }
@@ -166,15 +166,26 @@ export class AutomationSupportService {
     }
   }
 
-  private async auditSupport(endpoint: string, phone: string, success: boolean, correlationId?: string, ip?: string) {
+  private async auditSupport(
+    endpoint: string,
+    phone: string,
+    success: boolean,
+    correlationId?: string,
+    ip?: string,
+    orderCode?: string,
+    responseSnippet?: string,
+  ) {
     const phoneHash = phone ? createHash('sha256').update(phone).digest('hex') : undefined;
     await this.prisma.supportQueryAudit.create({
       data: {
         endpoint,
         phoneHash,
+        phoneMasked: this.maskPhone(phone),
         success,
         correlationId,
         ip,
+        orderCode: orderCode ?? null,
+        responseSnippet: responseSnippet ?? null,
       },
     });
   }

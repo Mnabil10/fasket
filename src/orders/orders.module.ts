@@ -3,11 +3,13 @@ import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { AutomationModule } from '../automation/automation.module';
 import { ReceiptService } from './receipt.service';
+import { PrismaModule } from '../prisma/prisma.module';
+import { OrdersStuckWatcher } from './orders-stuck.watcher';
 
 @Module({
-  imports: [AutomationModule],
+  imports: [AutomationModule, PrismaModule],
   controllers: [OrdersController],
-  providers: [OrdersService, ReceiptService],
+  providers: [OrdersService, ReceiptService, OrdersStuckWatcher],
   exports: [OrdersService, ReceiptService],
 })
 export class OrdersModule {}

@@ -1,5 +1,5 @@
 import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { Queue } from 'bullmq';
 import axios from 'axios';
@@ -7,10 +7,13 @@ import { createHmac } from 'crypto';
 import { AutomationEventStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { AutomationEventsService } from './automation-events.service';
 
 type AutomationJob = { eventId: string };
 
 const BACKOFF_MS = [60_000, 300_000, 900_000, 3_600_000];
+const MISCONFIG_DELAY_MS = 15 * 60 * 1000;
+let lastMisconfigAlertAt = 0;
 
 @Processor('automation-events')
 @Injectable()
@@ -22,6 +25,7 @@ export class AutomationProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly automation: AutomationEventsService,
     @InjectQueue('automation-events') @Optional() private readonly queue?: Queue,
   ) {
     super();
@@ -40,11 +44,37 @@ export class AutomationProcessor extends WorkerHost {
       return;
     }
     if (!this.webhookUrl || !this.hmacSecret) {
-      this.logger.error({ msg: 'Automation webhook/HMAC not configured; marking event dead', eventId });
+      const missing = {
+        webhook: !this.webhookUrl,
+        hmac: !this.hmacSecret,
+        nodeEnv: this.config.get<string>('NODE_ENV'),
+      };
+      this.logger.error({
+        msg: 'Automation misconfigured - deferring',
+        eventId,
+        missingWebhook: missing.webhook,
+        missingHmac: missing.hmac,
+        env: missing.nodeEnv,
+      });
+      const nextAttemptAt = new Date(Date.now() + MISCONFIG_DELAY_MS);
       await this.prisma.automationEvent.update({
         where: { id: eventId },
-        data: { status: AutomationEventStatus.DEAD },
+        data: {
+          status: AutomationEventStatus.FAILED,
+          nextAttemptAt,
+          lastError: 'AUTOMATION_MISCONFIGURED',
+          lastResponseAt: new Date(),
+        },
       });
+      if (Date.now() - lastMisconfigAlertAt > 60 * 60 * 1000) {
+        lastMisconfigAlertAt = Date.now();
+        await this.emitOpsMisconfigured(eventId, missing);
+      }
+      if (this.queue) {
+        await this.queue.add('deliver', { eventId }, { delay: MISCONFIG_DELAY_MS, removeOnComplete: 50, removeOnFail: 25 });
+      } else {
+        setTimeout(() => this.handleEventById(eventId).catch((err) => this.logger.error(err)), MISCONFIG_DELAY_MS);
+      }
       return;
     }
     if (event.status === AutomationEventStatus.SENT || event.status === AutomationEventStatus.DEAD) {
@@ -91,7 +121,6 @@ export class AutomationProcessor extends WorkerHost {
         timeout: 5000,
         validateStatus: () => true,
       });
-      const retryAfter = Number(response.headers?.['retry-after']);
       if (response.status === 409) {
         this.logger.warn({ msg: 'Received 409, treating as delivered (idempotent)', eventId: event.id });
       }
@@ -137,6 +166,9 @@ export class AutomationProcessor extends WorkerHost {
         delayMs: delay ?? undefined,
         error: (err as Error).message,
       });
+      if (status === AutomationEventStatus.DEAD || attemptNumber > BACKOFF_MS.length) {
+        await this.emitOpsDeliveryFailed(event, attemptNumber, (err as any)?.response?.status);
+      }
       if (status === AutomationEventStatus.FAILED) {
         const effectiveDelay = this.applyRetryAfter(delay!, err);
         if (this.queue) {
@@ -172,8 +204,47 @@ export class AutomationProcessor extends WorkerHost {
 
   private nextDelayMs(attempt: number): number | null {
     if (attempt <= BACKOFF_MS.length) {
-      return BACKOFF_MS[attempt - 1];
+      const base = BACKOFF_MS[attempt - 1];
+      const jitter = 0.2 * base;
+      const delta = Math.floor(Math.random() * jitter * 2 - jitter);
+      return Math.max(1_000, base + delta);
     }
     return null;
+  }
+
+  private async emitOpsMisconfigured(eventId: string, missing: { webhook: boolean; hmac: boolean; nodeEnv?: string | null }) {
+    try {
+      await this.automation.emit(
+        'ops.automation_misconfigured',
+        {
+          event_id: eventId,
+          missing_webhook: missing.webhook,
+          missing_hmac: missing.hmac,
+          node_env: missing.nodeEnv,
+          occurred_at: new Date().toISOString(),
+        },
+        { dedupeKey: `ops:automation:misconfigured:${Math.floor(Date.now() / (60 * 60 * 1000))}` },
+      );
+    } catch (error) {
+      this.logger.warn({ msg: 'Failed to emit ops misconfig alert', error: (error as Error).message });
+    }
+  }
+
+  private async emitOpsDeliveryFailed(event: any, attempt: number, status?: number) {
+    try {
+      await this.automation.emit(
+        'ops.automation_delivery_failed',
+        {
+          event_id: event.id,
+          event_type: event.type,
+          attempts: attempt,
+          last_status: status ?? null,
+          correlation_id: event.correlationId,
+        },
+        { dedupeKey: `ops:automation:delivery_failed:${event.id}:${attempt}` },
+      );
+    } catch (error) {
+      this.logger.warn({ msg: 'Failed to emit ops delivery failure alert', error: (error as Error).message });
+    }
   }
 }

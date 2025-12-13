@@ -1,10 +1,11 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { verifyAutomationSignature } from './hmac.util';
 import { Request } from 'express';
 
 @Injectable()
 export class AutomationHmacGuard implements CanActivate {
+  private readonly logger = new Logger(AutomationHmacGuard.name);
   constructor(private readonly config: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -19,9 +20,11 @@ export class AutomationHmacGuard implements CanActivate {
       .map((ip) => ip.trim())
       .filter(Boolean);
     const clientIp = (req.ip || '').replace('::ffff:', '');
-    const prod = (this.config.get<string>('NODE_ENV') ?? '').toLowerCase() === 'production';
-    if (prod && allowedIps.length === 0) {
-      throw new ForbiddenException('IP allowlist required in production');
+    const env = (this.config.get<string>('NODE_ENV') ?? '').toLowerCase();
+    const prodLike = env === 'production' || env === 'staging';
+    if (prodLike && allowedIps.length === 0) {
+      this.logger.error('Automation IP allowlist required but missing');
+      throw new ForbiddenException('IP allowlist required for automation');
     }
     if (allowedIps.length && !allowedIps.includes(clientIp)) {
       throw new ForbiddenException('IP not allowed');

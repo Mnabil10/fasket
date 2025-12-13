@@ -10,5 +10,6 @@ import { CommonModule } from '../common/common.module';
   imports: [OtpModule, PrismaModule, AutomationModule, CommonModule],
   controllers: [PasswordResetController],
   providers: [PasswordResetService],
+  exports: [PasswordResetService],
 })
 export class PasswordResetModule {}

@@ -743,6 +743,8 @@ export class OrdersService {
         dedupeKey: `order:${orderId}:${OrderStatus.CANCELED}:${history.id}`,
       });
       automationEvents.push(event);
+      const statusChanged = await this.emitStatusChanged(tx, orderId, order.status, OrderStatus.CANCELED, history.id, userId);
+      if (statusChanged) automationEvents.push(statusChanged);
     });
 
     await this.automation.enqueueMany(automationEvents);
@@ -774,7 +776,9 @@ export class OrdersService {
         nextStatus,
         `order:${orderId}:${nextStatus}:${history.id}`,
       );
+      const statusChanged = await this.emitStatusChanged(tx, orderId, before.status, nextStatus, history.id, actorId);
       if (automationEvent) automationEvents.push(automationEvent);
+      if (statusChanged) automationEvents.push(statusChanged);
     });
     await this.automation.enqueueMany(automationEvents);
     await this.audit.log({
@@ -829,6 +833,8 @@ export class OrdersService {
         dedupeKey: `order:${orderId}:${OrderStatus.CANCELED}:${history.id}`,
       });
       automationEvents.push(event);
+      const statusChanged = await this.emitStatusChanged(tx, orderId, order.status, OrderStatus.CANCELED, history.id, actorId);
+      if (statusChanged) automationEvents.push(statusChanged);
     });
 
     await this.automation.enqueueMany(automationEvents);
@@ -946,6 +952,31 @@ export class OrdersService {
       default:
         return null;
     }
+  }
+
+  private async emitStatusChanged(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    from: OrderStatus,
+    to: OrderStatus,
+    historyId: string,
+    actorId?: string,
+  ) {
+    const payload = await this.buildOrderEventPayload(orderId, tx);
+    return this.automation.emit(
+      'order.status_changed',
+      {
+        ...payload,
+        from_status: this.toPublicStatus(from),
+        to_status: this.toPublicStatus(to),
+        from_internal: from,
+        to_internal: to,
+        actor_id: actorId ?? null,
+        history_id: historyId,
+        changed_at: new Date().toISOString(),
+      },
+      { tx, dedupeKey: `order:${orderId}:status_changed:${historyId}` },
+    );
   }
 
   async emitOrderStatusAutomationEvent(

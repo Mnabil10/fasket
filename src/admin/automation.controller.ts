@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Param } from '@nestjs/common';
 import { ApiBearerAuth, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { AdminOnly } from './_admin-guards';
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,6 +6,7 @@ import { AutomationEventsService } from '../automation/automation-events.service
 import { AutomationEventStatus } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsDateString, IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Param } from '@nestjs/common';
 
 class AutomationEventsQuery {
   @ApiPropertyOptional({ enum: AutomationEventStatus })
@@ -50,6 +51,11 @@ class AutomationEventsQuery {
   @Min(1)
   @Max(200)
   limit?: number;
+
+  @ApiPropertyOptional({ description: 'Search in correlationId, order code, phone or dedupe' })
+  @IsOptional()
+  @IsString()
+  q?: string;
 }
 
 class AutomationReplayDto {
@@ -103,6 +109,17 @@ export class AdminAutomationController {
     if (query.from || query.to) where.createdAt = {};
     if (query.from) where.createdAt.gte = new Date(query.from);
     if (query.to) where.createdAt.lte = new Date(query.to);
+    if (query.q) {
+      const term = query.q.trim();
+      where.OR = [
+        { correlationId: { contains: term, mode: 'insensitive' } },
+        { dedupeKey: { contains: term, mode: 'insensitive' } },
+        { payload: { path: ['order_code'], string_contains: term } },
+        { payload: { path: ['order_id'], string_contains: term } },
+        { payload: { path: ['customer_phone'], string_contains: term } },
+        { payload: { path: ['phone'], string_contains: term } },
+      ];
+    }
     const [items, total] = await this.prisma.$transaction([
       this.prisma.automationEvent.findMany({
         where,
@@ -113,7 +130,7 @@ export class AdminAutomationController {
       this.prisma.automationEvent.count({ where }),
     ]);
     const aggregates = await this.aggregateCounts();
-    return { items, total, page, pageSize, aggregates };
+    return { items, total, page, pageSize, aggregates, counts: aggregates };
   }
 
   @Post('replay')
@@ -139,6 +156,21 @@ export class AdminAutomationController {
     });
     await this.automation.enqueueMany(events);
     return { success: true, replayed: events.length };
+  }
+
+  @Post('events/:id/replay')
+  async replaySingle(@Param('id') id: string) {
+    const event = await this.prisma.automationEvent.findUnique({ where: { id }, select: { id: true, status: true } });
+    if (!event) {
+      return { success: false, message: 'Event not found' };
+    }
+    const nextAttemptAt = new Date();
+    await this.prisma.automationEvent.update({
+      where: { id },
+      data: { status: AutomationEventStatus.PENDING, nextAttemptAt, lastError: null },
+    });
+    await this.automation.enqueue(id, nextAttemptAt);
+    return { success: true, id };
   }
 
   private async aggregateCounts() {

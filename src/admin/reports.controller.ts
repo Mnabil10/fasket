@@ -1,7 +1,8 @@
-import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { StaffOrAdmin } from './_admin-guards';
 import { PrismaService } from '../prisma/prisma.service';
+import { Response } from 'express';
 
 interface DateRange {
   from: Date;
@@ -31,6 +32,45 @@ export class AdminReportsController {
     const start = new Date(from);
     const end = new Date(to);
     return this.computeRange({ from: start, to: end });
+  }
+
+  @Get('profit/export')
+  async export(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('format') format = 'csv',
+    @Res() res: Response,
+  ) {
+    if (!from || !to) {
+      throw new BadRequestException('from and to are required');
+    }
+    const start = new Date(from);
+    const end = new Date(to);
+    const data = await this.computeRange({ from: start, to: end });
+    const rows = [
+      ['date', 'orders', 'salesCents', 'discountCents', 'deliveryFeeCents', 'netRevenueCents', 'cogsCents', 'grossProfitCents', 'grossMarginPct', 'missingCostCount'],
+      [
+        data.date,
+        data.ordersCount,
+        data.salesCents,
+        data.discountCents,
+        data.deliveryFeeCents,
+        data.netRevenueCents,
+        data.cogsCents,
+        data.grossProfitCents,
+        data.grossMarginPct,
+        data.missingCostCount,
+      ],
+    ];
+    const csv = rows.map((r) => r.join(',')).join('\n');
+    const ext = format === 'xlsx' ? 'xlsx' : 'csv';
+    const filename = `profit_${from}_${to}.${ext}`;
+    res.setHeader(
+      'Content-Type',
+      ext === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(csv);
   }
 
   private async computeRange(window: DateRange) {

@@ -230,9 +230,12 @@ model SupportQueryAudit {
   id            String   @id @default(cuid())
   endpoint      String
   phoneHash     String?
+  phoneMasked   String?
+  orderCode     String?
   success       Boolean  @default(false)
   correlationId String?
   ip            String?
+  responseSnippet String?
   createdAt     DateTime @default(now())
 
   @@index([endpoint, createdAt])
