@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AutomationEventsService } from '../automation/automation-events.service';
 import { OpsAlertService } from '../ops/ops-alert.service';
 
-interface Threshold {
+export interface Threshold {
   status: OrderStatus;
   minutes: number;
 }
