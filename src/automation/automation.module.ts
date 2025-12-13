@@ -3,6 +3,7 @@ import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AutomationEventsService } from './automation-events.service';
 import { AutomationProcessor } from './automation.processor';
+import { OpsAlertService } from '../ops/ops-alert.service';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -42,7 +43,7 @@ const queueProviders = redisEnabled
     PrismaModule,
     ...queueImports,
   ],
-  providers: [AutomationEventsService, ...queueProviders],
-  exports: [AutomationEventsService],
+  providers: [AutomationEventsService, OpsAlertService, ...queueProviders],
+  exports: [AutomationEventsService, OpsAlertService],
 })
 export class AutomationModule {}

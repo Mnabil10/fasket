@@ -8,6 +8,8 @@ import { AutomationEventStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { AutomationEventsService } from './automation-events.service';
+import { OpsAlertService } from '../ops/ops-alert.service';
+import * as Sentry from '@sentry/node';
 
 type AutomationJob = { eventId: string };
 
@@ -26,6 +28,7 @@ export class AutomationProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly automation: AutomationEventsService,
+    private readonly opsAlerts: OpsAlertService,
     @InjectQueue('automation-events') @Optional() private readonly queue?: Queue,
   ) {
     super();
@@ -70,6 +73,10 @@ export class AutomationProcessor extends WorkerHost {
         lastMisconfigAlertAt = Date.now();
         await this.emitOpsMisconfigured(eventId, missing);
       }
+      Sentry.captureMessage('Automation misconfigured', {
+        level: 'error',
+        extra: { eventId, missingWebhook: missing.webhook, missingHmac: missing.hmac, env: missing.nodeEnv },
+      });
       if (this.queue) {
         await this.queue.add('deliver', { eventId }, { delay: MISCONFIG_DELAY_MS, removeOnComplete: 50, removeOnFail: 25 });
       } else {
@@ -168,6 +175,10 @@ export class AutomationProcessor extends WorkerHost {
       });
       if (status === AutomationEventStatus.DEAD || attemptNumber > BACKOFF_MS.length) {
         await this.emitOpsDeliveryFailed(event, attemptNumber, (err as any)?.response?.status);
+        Sentry.captureMessage('Automation delivery failed', {
+          level: 'error',
+          extra: { eventId: event.id, type: event.type, attempts: attemptNumber, httpStatus: (err as any)?.response?.status },
+        });
       }
       if (status === AutomationEventStatus.FAILED) {
         const effectiveDelay = this.applyRetryAfter(delay!, err);
@@ -213,38 +224,30 @@ export class AutomationProcessor extends WorkerHost {
   }
 
   private async emitOpsMisconfigured(eventId: string, missing: { webhook: boolean; hmac: boolean; nodeEnv?: string | null }) {
-    try {
-      await this.automation.emit(
-        'ops.automation_misconfigured',
-        {
-          event_id: eventId,
-          missing_webhook: missing.webhook,
-          missing_hmac: missing.hmac,
-          node_env: missing.nodeEnv,
-          occurred_at: new Date().toISOString(),
-        },
-        { dedupeKey: `ops:automation:misconfigured:${Math.floor(Date.now() / (60 * 60 * 1000))}` },
-      );
-    } catch (error) {
-      this.logger.warn({ msg: 'Failed to emit ops misconfig alert', error: (error as Error).message });
-    }
+    await this.opsAlerts.notify(
+      'ops.automation_misconfigured',
+      {
+        event_id: eventId,
+        missing_webhook: missing.webhook,
+        missing_hmac: missing.hmac,
+        node_env: missing.nodeEnv,
+        occurred_at: new Date().toISOString(),
+      },
+      `ops:automation:misconfigured:${Math.floor(Date.now() / (60 * 60 * 1000))}`,
+    );
   }
 
   private async emitOpsDeliveryFailed(event: any, attempt: number, status?: number) {
-    try {
-      await this.automation.emit(
-        'ops.automation_delivery_failed',
-        {
-          event_id: event.id,
-          event_type: event.type,
-          attempts: attempt,
-          last_status: status ?? null,
-          correlation_id: event.correlationId,
-        },
-        { dedupeKey: `ops:automation:delivery_failed:${event.id}:${attempt}` },
-      );
-    } catch (error) {
-      this.logger.warn({ msg: 'Failed to emit ops delivery failure alert', error: (error as Error).message });
-    }
+    await this.opsAlerts.notify(
+      'ops.automation_delivery_failed',
+      {
+        event_id: event.id,
+        event_type: event.type,
+        attempts: attempt,
+        last_status: status ?? null,
+        correlation_id: event.correlationId,
+      },
+      `ops:automation:delivery_failed:${event.id}:${attempt}`,
+    );
   }
 }

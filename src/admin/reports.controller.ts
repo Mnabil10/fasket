@@ -44,8 +44,20 @@ export class AdminReportsController {
     if (!from || !to) {
       throw new BadRequestException('from and to are required');
     }
-    const start = new Date(from);
-    const end = new Date(to);
+    if (format && format.toLowerCase() !== 'csv') {
+      throw new BadRequestException('Only CSV export is supported');
+    }
+    const maxRangeDays = Number(process.env.PROFIT_EXPORT_MAX_DAYS ?? 90);
+    const startDate = new Date(from);
+    const endDate = new Date(to);
+    const diffMs = Math.abs(endDate.getTime() - startDate.getTime());
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+    if (diffDays > maxRangeDays) {
+      throw new BadRequestException(`Date range too large. Max ${maxRangeDays} days`);
+    }
+    format = 'csv';
+    const start = startDate;
+    const end = endDate;
     const data = await this.computeRange({ from: start, to: end });
     const rows = [
       ['date', 'orders', 'salesCents', 'discountCents', 'deliveryFeeCents', 'netRevenueCents', 'cogsCents', 'grossProfitCents', 'grossMarginPct', 'missingCostCount'],

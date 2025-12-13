@@ -720,32 +720,34 @@ export class OrdersService {
     }
 
     const automationEvents: AutomationEventRef[] = [];
-    await this.prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: orderId },
-        data: { status: OrderStatus.CANCELED },
-      });
-      const history = await tx.orderStatusHistory.create({
-        data: {
-          orderId,
-          from: order.status,
-          to: OrderStatus.CANCELED,
-          note: 'Cancelled by customer',
-          actorId: userId,
-        },
-      });
-      await this.restockInventory(orderId, order.items, tx, userId);
-      await this.refundRedeemedPoints(orderId, tx);
-      await this.revokeLoyaltyForOrder(orderId, tx);
-      const payload = await this.buildOrderEventPayload(orderId, tx);
-      const event = await this.automation.emit('order.canceled', payload, {
-        tx,
-        dedupeKey: `order:${orderId}:${OrderStatus.CANCELED}:${history.id}`,
-      });
-      automationEvents.push(event);
-      const statusChanged = await this.emitStatusChanged(tx, orderId, order.status, OrderStatus.CANCELED, history.id, userId);
-      if (statusChanged) automationEvents.push(statusChanged);
-    });
+    await this.prisma.allowStatusUpdates(async () =>
+      this.prisma.$transaction(async (tx) => {
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: OrderStatus.CANCELED },
+        });
+        const history = await tx.orderStatusHistory.create({
+          data: {
+            orderId,
+            from: order.status,
+            to: OrderStatus.CANCELED,
+            note: 'Cancelled by customer',
+            actorId: userId,
+          },
+        });
+        await this.restockInventory(orderId, order.items, tx, userId);
+        await this.refundRedeemedPoints(orderId, tx);
+        await this.revokeLoyaltyForOrder(orderId, tx);
+        const payload = await this.buildOrderEventPayload(orderId, tx);
+        const event = await this.automation.emit('order.canceled', payload, {
+          tx,
+          dedupeKey: `order:${orderId}:${OrderStatus.CANCELED}:${history.id}`,
+        });
+        automationEvents.push(event);
+        const statusChanged = await this.emitStatusChanged(tx, orderId, order.status, OrderStatus.CANCELED, history.id, userId);
+        if (statusChanged) automationEvents.push(statusChanged);
+      }),
+    );
 
     await this.automation.enqueueMany(automationEvents);
     await this.clearCachesForOrder(orderId, userId);
@@ -762,24 +764,26 @@ export class OrdersService {
     }
     let loyaltyEarned = 0;
     const automationEvents: AutomationEventRef[] = [];
-    await this.prisma.$transaction(async (tx) => {
-      await tx.order.update({ where: { id: orderId }, data: { status: nextStatus } });
-      const history = await tx.orderStatusHistory.create({
-        data: { orderId, from: before.status as any, to: nextStatus as any, note: note ?? undefined, actorId },
-      });
-      if (nextStatus === OrderStatus.DELIVERED) {
-        loyaltyEarned = await this.awardLoyaltyForOrder(orderId, tx);
-      }
-      const automationEvent = await this.emitOrderStatusAutomationEvent(
-        tx,
-        orderId,
-        nextStatus,
-        `order:${orderId}:${nextStatus}:${history.id}`,
-      );
-      const statusChanged = await this.emitStatusChanged(tx, orderId, before.status, nextStatus, history.id, actorId);
-      if (automationEvent) automationEvents.push(automationEvent);
-      if (statusChanged) automationEvents.push(statusChanged);
-    });
+    await this.prisma.allowStatusUpdates(async () =>
+      this.prisma.$transaction(async (tx) => {
+        await tx.order.update({ where: { id: orderId }, data: { status: nextStatus } });
+        const history = await tx.orderStatusHistory.create({
+          data: { orderId, from: before.status as any, to: nextStatus as any, note: note ?? undefined, actorId },
+        });
+        if (nextStatus === OrderStatus.DELIVERED) {
+          loyaltyEarned = await this.awardLoyaltyForOrder(orderId, tx);
+        }
+        const automationEvent = await this.emitOrderStatusAutomationEvent(
+          tx,
+          orderId,
+          nextStatus,
+          `order:${orderId}:${nextStatus}:${history.id}`,
+        );
+        const statusChanged = await this.emitStatusChanged(tx, orderId, before.status, nextStatus, history.id, actorId);
+        if (automationEvent) automationEvents.push(automationEvent);
+        if (statusChanged) automationEvents.push(statusChanged);
+      }),
+    );
     await this.automation.enqueueMany(automationEvents);
     await this.audit.log({
       action: 'order.status.change',
@@ -810,32 +814,34 @@ export class OrdersService {
     }
 
     const automationEvents: AutomationEventRef[] = [];
-    await this.prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: orderId },
-        data: { status: OrderStatus.CANCELED },
-      });
-      const history = await tx.orderStatusHistory.create({
-        data: {
-          orderId,
-          from: order.status,
-          to: OrderStatus.CANCELED,
-          note: note ?? 'Cancelled by admin',
-          actorId,
-        },
-      });
-      await this.restockInventory(orderId, order.items, tx, actorId);
-      await this.refundRedeemedPoints(orderId, tx);
-      await this.revokeLoyaltyForOrder(orderId, tx);
-      const payload = await this.buildOrderEventPayload(orderId, tx);
-      const event = await this.automation.emit('order.canceled', payload, {
-        tx,
-        dedupeKey: `order:${orderId}:${OrderStatus.CANCELED}:${history.id}`,
-      });
-      automationEvents.push(event);
-      const statusChanged = await this.emitStatusChanged(tx, orderId, order.status, OrderStatus.CANCELED, history.id, actorId);
-      if (statusChanged) automationEvents.push(statusChanged);
-    });
+    await this.prisma.allowStatusUpdates(async () =>
+      this.prisma.$transaction(async (tx) => {
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: OrderStatus.CANCELED },
+        });
+        const history = await tx.orderStatusHistory.create({
+          data: {
+            orderId,
+            from: order.status,
+            to: OrderStatus.CANCELED,
+            note: note ?? 'Cancelled by admin',
+            actorId,
+          },
+        });
+        await this.restockInventory(orderId, order.items, tx, actorId);
+        await this.refundRedeemedPoints(orderId, tx);
+        await this.revokeLoyaltyForOrder(orderId, tx);
+        const payload = await this.buildOrderEventPayload(orderId, tx);
+        const event = await this.automation.emit('order.canceled', payload, {
+          tx,
+          dedupeKey: `order:${orderId}:${OrderStatus.CANCELED}:${history.id}`,
+        });
+        automationEvents.push(event);
+        const statusChanged = await this.emitStatusChanged(tx, orderId, order.status, OrderStatus.CANCELED, history.id, actorId);
+        if (statusChanged) automationEvents.push(statusChanged);
+      }),
+    );
 
     await this.automation.enqueueMany(automationEvents);
     await this.audit.log({
@@ -1019,7 +1025,7 @@ export class OrdersService {
       order_code: order.code ?? order.id,
       status: this.toPublicStatus(order.status),
       status_internal: order.status,
-      customer_phone: order.user?.phone,
+      customer_phone: order.user?.phone ?? null,
       total_cents: order.totalCents,
       total_formatted: (order.totalCents / 100).toFixed(2),
       payment_method: order.paymentMethod,

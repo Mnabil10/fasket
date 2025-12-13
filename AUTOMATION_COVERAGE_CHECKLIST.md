@@ -1,0 +1,8 @@
+- [ ] All order status changes funnel through OrdersService.updateStatus (search for direct prisma order.update)
+- [ ] order.status_changed emitted for every transition (with dedupe and history id)
+- [ ] Ops alerts: ops.order_stuck, ops.automation_misconfigured, ops.automation_delivery_failed logged + sent to outbox + Sentry
+- [ ] Automation queue misconfig/dead-letter does not block core flows (events stay PENDING/FAILED with nextAttemptAt)
+- [ ] Support audit backfill run (masked phone/order code populated)
+- [ ] Profit export guarded by max range; XLSX disabled unless implemented
+- [ ] Automation HMAC/IP enforced with explicit config (AUTOMATION_ALLOWED_IPS, AUTMATION_HMAC_SECRET)
+- [ ] Stuck-order watcher enabled/disabled explicitly and logs thresholds at startup

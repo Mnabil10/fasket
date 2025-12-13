@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { OrderStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AutomationEventsService } from '../automation/automation-events.service';
+import { OpsAlertService } from '../ops/ops-alert.service';
 
 interface Threshold {
   status: OrderStatus;
@@ -15,9 +16,15 @@ export class OrdersStuckWatcher implements OnModuleInit, OnModuleDestroy {
   private readonly scanIntervalMs: number;
   private readonly bucketMinutes = 15;
   private readonly thresholds: Threshold[];
+  private lastRunAt: Date | null = null;
+  private enabled = false;
 
-  constructor(private readonly prisma: PrismaService, private readonly automation: AutomationEventsService) {
-    this.scanIntervalMs = (Number(process.env.ORDER_STUCK_SCAN_MINUTES || 15) || 15) * 60 * 1000;
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly automation: AutomationEventsService,
+    private readonly opsAlerts: OpsAlertService,
+  ) {
+    this.scanIntervalMs = (Number(process.env.ORDER_STUCK_SCAN_MINUTES || 5) || 5) * 60 * 1000;
     this.thresholds = [
       { status: OrderStatus.PENDING, minutes: Number(process.env.ORDER_STUCK_PENDING_MINUTES || 30) || 30 },
       { status: OrderStatus.PROCESSING, minutes: Number(process.env.ORDER_STUCK_PROCESSING_MINUTES || 60) || 60 },
@@ -26,6 +33,17 @@ export class OrdersStuckWatcher implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
+    const enabled = (process.env.ORDER_STUCK_WATCHER ?? 'true') !== 'false';
+    if (!enabled) {
+      this.logger.warn('OrdersStuckWatcher disabled via ORDER_STUCK_WATCHER');
+      return;
+    }
+    this.enabled = true;
+    this.logger.log({
+      msg: 'OrdersStuckWatcher starting',
+      thresholds: this.thresholds,
+      intervalMs: this.scanIntervalMs,
+    });
     await this.scan();
     this.timer = setInterval(() => {
       this.scan().catch((err) => this.logger.error(err));
@@ -37,6 +55,7 @@ export class OrdersStuckWatcher implements OnModuleInit, OnModuleDestroy {
   }
 
   private async scan() {
+    this.lastRunAt = new Date();
     const now = Date.now();
     for (const threshold of this.thresholds) {
       const cutoff = new Date(now - threshold.minutes * 60 * 1000);
@@ -61,24 +80,30 @@ export class OrdersStuckWatcher implements OnModuleInit, OnModuleDestroy {
         const ageMinutes = Math.floor((now - (order.updatedAt?.getTime?.() ?? order.createdAt.getTime())) / 60000);
         const bucket = Math.floor(ageMinutes / this.bucketMinutes);
         const dedupeKey = `ops:order_stuck:${order.id}:${bucket}`;
-        await this.automation.emit(
-          'ops.order_stuck',
-          {
-            order_id: order.id,
-            order_code: order.code ?? order.id,
-            status_internal: order.status,
-            status: this.toPublicStatus(order.status),
-            threshold_minutes: threshold.minutes,
-            age_minutes: ageMinutes,
-            customer_phone: order.user?.phone,
-            total_cents: order.totalCents,
-            delivery_zone: { id: order.deliveryZoneId, name: order.deliveryZoneName },
-            updated_at: order.updatedAt,
-          },
-          { dedupeKey },
-        );
+        const payload = {
+          order_id: order.id,
+          order_code: order.code ?? order.id,
+          status_internal: order.status,
+          status: this.toPublicStatus(order.status),
+          threshold_minutes: threshold.minutes,
+          age_minutes: ageMinutes,
+          customer_phone: order.user?.phone,
+          total_cents: order.totalCents,
+          delivery_zone: { id: order.deliveryZoneId, name: order.deliveryZoneName },
+          updated_at: order.updatedAt,
+        };
+        await this.opsAlerts.notify('ops.order_stuck', payload, dedupeKey);
       }
     }
+  }
+
+  getStatus() {
+    return {
+      enabled: this.enabled,
+      thresholds: this.thresholds,
+      intervalMs: this.scanIntervalMs,
+      lastRunAt: this.lastRunAt,
+    };
   }
 
   private toPublicStatus(status: OrderStatus): 'PENDING' | 'CONFIRMED' | 'DELIVERING' | 'COMPLETED' | 'CANCELED' {

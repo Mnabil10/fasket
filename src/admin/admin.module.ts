@@ -19,6 +19,8 @@ import { AutomationModule } from '../automation/automation.module';
 import { AdminReportsController } from './reports.controller';
 import { AdminAutomationController } from './automation.controller';
 import { AdminSupportController } from './support.controller';
+import { SupportBackfillController } from './support-backfill.controller';
+import { AdminOpsController } from './ops.controller';
 
 @Module({
   controllers: [
@@ -35,6 +37,8 @@ import { AdminSupportController } from './support.controller';
     AdminReportsController,
     AdminAutomationController,
     AdminSupportController,
+    SupportBackfillController,
+    AdminOpsController,
   ],
   imports: [
     // Additional modules can be wired here when needed
