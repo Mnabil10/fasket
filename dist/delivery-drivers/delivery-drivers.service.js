@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DeliveryDriversService = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const errors_1 = require("../common/errors");
 let DeliveryDriversService = class DeliveryDriversService {
@@ -55,53 +56,63 @@ let DeliveryDriversService = class DeliveryDriversService {
         }
         return driver;
     }
-    create(dto) {
-        return this.prisma.$transaction(async (tx) => {
-            const driver = await tx.deliveryDriver.create({
+    async create(dto) {
+        try {
+            return await this.prisma.$transaction(async (tx) => {
+                const driver = await tx.deliveryDriver.create({
+                    data: {
+                        fullName: dto.fullName,
+                        phone: dto.phone,
+                        nationalId: dto.nationalId,
+                        nationalIdImageUrl: dto.nationalIdImageUrl,
+                        isActive: dto.isActive ?? true,
+                    },
+                });
+                if (dto.vehicle) {
+                    await tx.deliveryVehicle.upsert({
+                        where: { driverId: driver.id },
+                        update: {
+                            type: dto.vehicle.type,
+                            plateNumber: dto.vehicle.plateNumber,
+                            licenseImageUrl: dto.vehicle.licenseImageUrl,
+                            color: dto.vehicle.color,
+                        },
+                        create: {
+                            driverId: driver.id,
+                            type: dto.vehicle.type,
+                            plateNumber: dto.vehicle.plateNumber,
+                            licenseImageUrl: dto.vehicle.licenseImageUrl,
+                            color: dto.vehicle.color,
+                        },
+                    });
+                }
+                return tx.deliveryDriver.findUnique({
+                    where: { id: driver.id },
+                    include: { vehicle: true },
+                });
+            });
+        }
+        catch (error) {
+            this.handlePrismaError(error);
+        }
+    }
+    async update(id, dto) {
+        await this.ensureDriver(id);
+        try {
+            return await this.prisma.deliveryDriver.update({
+                where: { id },
                 data: {
                     fullName: dto.fullName,
                     phone: dto.phone,
                     nationalId: dto.nationalId,
                     nationalIdImageUrl: dto.nationalIdImageUrl,
-                    isActive: dto.isActive ?? true,
+                    isActive: dto.isActive,
                 },
             });
-            if (dto.vehicle) {
-                await tx.deliveryVehicle.upsert({
-                    where: { driverId: driver.id },
-                    update: {
-                        type: dto.vehicle.type,
-                        plateNumber: dto.vehicle.plateNumber,
-                        licenseImageUrl: dto.vehicle.licenseImageUrl,
-                        color: dto.vehicle.color,
-                    },
-                    create: {
-                        driverId: driver.id,
-                        type: dto.vehicle.type,
-                        plateNumber: dto.vehicle.plateNumber,
-                        licenseImageUrl: dto.vehicle.licenseImageUrl,
-                        color: dto.vehicle.color,
-                    },
-                });
-            }
-            return tx.deliveryDriver.findUnique({
-                where: { id: driver.id },
-                include: { vehicle: true },
-            });
-        });
-    }
-    async update(id, dto) {
-        await this.ensureDriver(id);
-        return this.prisma.deliveryDriver.update({
-            where: { id },
-            data: {
-                fullName: dto.fullName,
-                phone: dto.phone,
-                nationalId: dto.nationalId,
-                nationalIdImageUrl: dto.nationalIdImageUrl,
-                isActive: dto.isActive,
-            },
-        });
+        }
+        catch (error) {
+            this.handlePrismaError(error);
+        }
     }
     async updateStatus(id, dto) {
         await this.ensureDriver(id);
@@ -112,26 +123,31 @@ let DeliveryDriversService = class DeliveryDriversService {
     }
     async upsertVehicle(driverId, dto) {
         await this.ensureDriver(driverId);
-        await this.prisma.deliveryVehicle.upsert({
-            where: { driverId },
-            update: {
-                type: dto.type,
-                plateNumber: dto.plateNumber,
-                licenseImageUrl: dto.licenseImageUrl,
-                color: dto.color,
-            },
-            create: {
-                driverId,
-                type: dto.type,
-                plateNumber: dto.plateNumber,
-                licenseImageUrl: dto.licenseImageUrl,
-                color: dto.color,
-            },
-        });
-        return this.prisma.deliveryDriver.findUnique({
-            where: { id: driverId },
-            include: { vehicle: true },
-        });
+        try {
+            await this.prisma.deliveryVehicle.upsert({
+                where: { driverId },
+                update: {
+                    type: dto.type,
+                    plateNumber: dto.plateNumber,
+                    licenseImageUrl: dto.licenseImageUrl,
+                    color: dto.color,
+                },
+                create: {
+                    driverId,
+                    type: dto.type,
+                    plateNumber: dto.plateNumber,
+                    licenseImageUrl: dto.licenseImageUrl,
+                    color: dto.color,
+                },
+            });
+            return this.prisma.deliveryDriver.findUnique({
+                where: { id: driverId },
+                include: { vehicle: true },
+            });
+        }
+        catch (error) {
+            this.handlePrismaError(error);
+        }
     }
     async assignDriverToOrder(orderId, driverId) {
         const driver = await this.prisma.deliveryDriver.findUnique({
@@ -167,6 +183,32 @@ let DeliveryDriversService = class DeliveryDriversService {
             throw new errors_1.DomainError(errors_1.ErrorCode.DRIVER_NOT_FOUND, 'Driver not found');
         }
         return exists;
+    }
+    handlePrismaError(error) {
+        if (error instanceof client_1.Prisma.PrismaClientKnownRequestError) {
+            if (error.code === 'P2002') {
+                const targets = this.extractTargets(error);
+                if (targets.includes('phone')) {
+                    throw new errors_1.DomainError(errors_1.ErrorCode.VALIDATION_FAILED, 'Phone number already exists for another driver', common_1.HttpStatus.CONFLICT, { target: 'phone' });
+                }
+                if (targets.includes('nationalId')) {
+                    throw new errors_1.DomainError(errors_1.ErrorCode.VALIDATION_FAILED, 'National ID already exists for another driver', common_1.HttpStatus.CONFLICT, { target: 'nationalId' });
+                }
+                if (targets.includes('plateNumber')) {
+                    throw new errors_1.DomainError(errors_1.ErrorCode.VALIDATION_FAILED, 'Vehicle plate number already assigned to another driver', common_1.HttpStatus.CONFLICT, { target: 'plateNumber' });
+                }
+                throw new errors_1.DomainError(errors_1.ErrorCode.VALIDATION_FAILED, 'Duplicate driver record', common_1.HttpStatus.CONFLICT, { target: targets });
+            }
+        }
+        throw error;
+    }
+    extractTargets(error) {
+        const targetMeta = error.meta?.target;
+        if (Array.isArray(targetMeta))
+            return targetMeta.map(String);
+        if (typeof targetMeta === 'string')
+            return [targetMeta];
+        return [];
     }
 };
 exports.DeliveryDriversService = DeliveryDriversService;

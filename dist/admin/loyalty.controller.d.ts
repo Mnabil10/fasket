@@ -35,9 +35,9 @@ export declare class AdminLoyaltyController {
             id: string;
             createdAt: Date;
             userId: string;
+            orderId: string | null;
             points: number;
             metadata: import("@prisma/client/runtime/library").JsonValue | null;
-            orderId: string | null;
             cycleId: string | null;
         };
     }>;
@@ -57,9 +57,9 @@ export declare class AdminLoyaltyController {
             id: string;
             createdAt: Date;
             userId: string;
+            orderId: string | null;
             points: number;
             metadata: import("@prisma/client/runtime/library").JsonValue | null;
-            orderId: string | null;
             cycleId: string | null;
         }[];
         total: number;

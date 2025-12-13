@@ -35,6 +35,7 @@ let OtpService = OtpService_1 = class OtpService {
         this.maxAttempts = Number(this.config.get('OTP_MAX_ATTEMPTS') ?? 5);
         this.lockMinutes = Number(this.config.get('OTP_LOCK_MINUTES') ?? 15);
         this.secret = this.config.get('OTP_SECRET') ?? this.config.get('JWT_ACCESS_SECRET') ?? 'otp-secret';
+        this.ensureSecretStrength();
     }
     async requestOtp(phone, purpose, ip) {
         const normalizedPhone = this.normalizePhone(phone);
@@ -135,6 +136,26 @@ let OtpService = OtpService_1 = class OtpService {
         }
         await this.cache.del(this.resetKey(hashed));
         return entry;
+    }
+    async verifyOtpLegacy(phone, purpose, otp, ip) {
+        const record = await this.cache.get(this.otpKey(purpose, this.normalizePhone(phone)));
+        if (!record) {
+            throw new common_1.UnauthorizedException('Invalid or expired OTP');
+        }
+        return this.verifyOtp(phone, purpose, record.otpId, otp, ip);
+    }
+    ensureSecretStrength() {
+        const env = (this.config.get('NODE_ENV') || '').toLowerCase();
+        const prodLike = env === 'production' || env === 'staging';
+        const tooWeak = !this.secret || this.secret === 'otp-secret' || this.secret.length < 16;
+        if (tooWeak) {
+            const msg = 'OTP_SECRET is missing or too weak';
+            if (prodLike) {
+                this.logger.error(msg);
+                throw new Error(msg);
+            }
+            this.logger.warn(msg);
+        }
     }
     ensurePurpose(purpose) {
         if (!['LOGIN', 'PASSWORD_RESET'].includes(purpose)) {

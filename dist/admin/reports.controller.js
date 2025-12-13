@@ -35,6 +35,47 @@ let AdminReportsController = class AdminReportsController {
         const end = new Date(to);
         return this.computeRange({ from: start, to: end });
     }
+    async export(from, to, format = 'csv', res) {
+        if (!from || !to) {
+            throw new common_1.BadRequestException('from and to are required');
+        }
+        if (format && format.toLowerCase() !== 'csv') {
+            throw new common_1.BadRequestException('Only CSV export is supported');
+        }
+        const maxRangeDays = Number(process.env.PROFIT_EXPORT_MAX_DAYS ?? 90);
+        const startDate = new Date(from);
+        const endDate = new Date(to);
+        const diffMs = Math.abs(endDate.getTime() - startDate.getTime());
+        const diffDays = diffMs / (1000 * 60 * 60 * 24);
+        if (diffDays > maxRangeDays) {
+            throw new common_1.BadRequestException(`Date range too large. Max ${maxRangeDays} days`);
+        }
+        format = 'csv';
+        const start = startDate;
+        const end = endDate;
+        const data = await this.computeRange({ from: start, to: end });
+        const rows = [
+            ['date', 'orders', 'salesCents', 'discountCents', 'deliveryFeeCents', 'netRevenueCents', 'cogsCents', 'grossProfitCents', 'grossMarginPct', 'missingCostCount'],
+            [
+                data.date,
+                data.ordersCount,
+                data.salesCents,
+                data.discountCents,
+                data.deliveryFeeCents,
+                data.netRevenueCents,
+                data.cogsCents,
+                data.grossProfitCents,
+                data.grossMarginPct,
+                data.missingCostCount,
+            ],
+        ];
+        const csv = rows.map((r) => r.join(',')).join('\n');
+        const ext = format === 'xlsx' ? 'xlsx' : 'csv';
+        const filename = `profit_${from}_${to}.${ext}`;
+        res.setHeader('Content-Type', ext === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        return res.send(csv);
+    }
     async computeRange(window) {
         const orders = await this.prisma.order.findMany({
             where: {
@@ -106,6 +147,16 @@ __decorate([
     __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", Promise)
 ], AdminReportsController.prototype, "range", null);
+__decorate([
+    (0, common_1.Get)('profit/export'),
+    __param(0, (0, common_1.Query)('from')),
+    __param(1, (0, common_1.Query)('to')),
+    __param(2, (0, common_1.Query)('format')),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, Object, Object]),
+    __metadata("design:returntype", Promise)
+], AdminReportsController.prototype, "export", null);
 exports.AdminReportsController = AdminReportsController = __decorate([
     (0, swagger_1.ApiTags)('Admin/Reports'),
     (0, swagger_1.ApiBearerAuth)(),

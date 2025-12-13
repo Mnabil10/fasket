@@ -22,6 +22,7 @@ exports.PasswordResetModule = PasswordResetModule = __decorate([
         imports: [otp_module_1.OtpModule, prisma_module_1.PrismaModule, automation_module_1.AutomationModule, common_module_1.CommonModule],
         controllers: [password_reset_controller_1.PasswordResetController],
         providers: [password_reset_service_1.PasswordResetService],
+        exports: [password_reset_service_1.PasswordResetService],
     })
 ], PasswordResetModule);
 //# sourceMappingURL=password-reset.module.js.map

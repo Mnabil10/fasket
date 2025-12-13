@@ -640,7 +640,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             return this.detail(userId, orderId);
         }
         const automationEvents = [];
-        await this.prisma.$transaction(async (tx) => {
+        await this.prisma.allowStatusUpdates(async () => this.prisma.$transaction(async (tx) => {
             await tx.order.update({
                 where: { id: orderId },
                 data: { status: client_1.OrderStatus.CANCELED },
@@ -663,7 +663,10 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 dedupeKey: `order:${orderId}:${client_1.OrderStatus.CANCELED}:${history.id}`,
             });
             automationEvents.push(event);
-        });
+            const statusChanged = await this.emitStatusChanged(tx, orderId, order.status, client_1.OrderStatus.CANCELED, history.id, userId);
+            if (statusChanged)
+                automationEvents.push(statusChanged);
+        }));
         await this.automation.enqueueMany(automationEvents);
         await this.clearCachesForOrder(orderId, userId);
         return this.detail(userId, orderId);
@@ -678,7 +681,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         }
         let loyaltyEarned = 0;
         const automationEvents = [];
-        await this.prisma.$transaction(async (tx) => {
+        await this.prisma.allowStatusUpdates(async () => this.prisma.$transaction(async (tx) => {
             await tx.order.update({ where: { id: orderId }, data: { status: nextStatus } });
             const history = await tx.orderStatusHistory.create({
                 data: { orderId, from: before.status, to: nextStatus, note: note ?? undefined, actorId },
@@ -687,9 +690,12 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 loyaltyEarned = await this.awardLoyaltyForOrder(orderId, tx);
             }
             const automationEvent = await this.emitOrderStatusAutomationEvent(tx, orderId, nextStatus, `order:${orderId}:${nextStatus}:${history.id}`);
+            const statusChanged = await this.emitStatusChanged(tx, orderId, before.status, nextStatus, history.id, actorId);
             if (automationEvent)
                 automationEvents.push(automationEvent);
-        });
+            if (statusChanged)
+                automationEvents.push(statusChanged);
+        }));
         await this.automation.enqueueMany(automationEvents);
         await this.audit.log({
             action: 'order.status.change',
@@ -718,7 +724,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             return { success: true };
         }
         const automationEvents = [];
-        await this.prisma.$transaction(async (tx) => {
+        await this.prisma.allowStatusUpdates(async () => this.prisma.$transaction(async (tx) => {
             await tx.order.update({
                 where: { id: orderId },
                 data: { status: client_1.OrderStatus.CANCELED },
@@ -741,7 +747,10 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 dedupeKey: `order:${orderId}:${client_1.OrderStatus.CANCELED}:${history.id}`,
             });
             automationEvents.push(event);
-        });
+            const statusChanged = await this.emitStatusChanged(tx, orderId, order.status, client_1.OrderStatus.CANCELED, history.id, actorId);
+            if (statusChanged)
+                automationEvents.push(statusChanged);
+        }));
         await this.automation.enqueueMany(automationEvents);
         await this.audit.log({
             action: 'order.cancel',
@@ -849,6 +858,19 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 return null;
         }
     }
+    async emitStatusChanged(tx, orderId, from, to, historyId, actorId) {
+        const payload = await this.buildOrderEventPayload(orderId, tx);
+        return this.automation.emit('order.status_changed', {
+            ...payload,
+            from_status: this.toPublicStatus(from),
+            to_status: this.toPublicStatus(to),
+            from_internal: from,
+            to_internal: to,
+            actor_id: actorId ?? null,
+            history_id: historyId,
+            changed_at: new Date().toISOString(),
+        }, { tx, dedupeKey: `order:${orderId}:status_changed:${historyId}` });
+    }
     async emitOrderStatusAutomationEvent(tx, orderId, status, dedupeKey) {
         const eventType = this.mapStatusToAutomationEvent(status);
         if (!eventType)
@@ -881,7 +903,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             order_code: order.code ?? order.id,
             status: this.toPublicStatus(order.status),
             status_internal: order.status,
-            customer_phone: order.user?.phone,
+            customer_phone: order.user?.phone ?? null,
             total_cents: order.totalCents,
             total_formatted: (order.totalCents / 100).toFixed(2),
             payment_method: order.paymentMethod,

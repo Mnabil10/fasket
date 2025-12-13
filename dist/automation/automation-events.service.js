@@ -21,6 +21,7 @@ const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const request_context_service_1 = require("../common/context/request-context.service");
 const automation_processor_1 = require("./automation.processor");
+const crypto_1 = require("crypto");
 let AutomationEventsService = AutomationEventsService_1 = class AutomationEventsService {
     constructor(prisma, context, queue, processor) {
         this.prisma = prisma;
@@ -112,8 +113,41 @@ let AutomationEventsService = AutomationEventsService_1 = class AutomationEvents
         await Promise.all(events.map((event) => this.enqueue(event.id, event.nextAttemptAt ?? undefined)));
     }
     defaultDedupeKey(type, payload) {
-        const hint = payload?.order_id || payload?.orderId || payload?.otpId || payload?.event_id;
-        return hint ? `${type}:${hint}` : `${type}:${Date.now()}`;
+        try {
+            if (type.startsWith('order.')) {
+                const orderId = payload?.order_id || payload?.orderId;
+                const status = payload?.status_internal || payload?.status || type.split('.').slice(1).join('.');
+                const history = payload?.history_id || payload?.historyId || payload?.changed_at || payload?.changedAt;
+                if (orderId) {
+                    return `order:${orderId}:${status || 'unknown'}:${history ?? '0'}`;
+                }
+            }
+            if (type.startsWith('ops.')) {
+                const entity = payload?.order_id || payload?.entity_id || payload?.zone_id || 'generic';
+                const bucket = payload?.bucket || payload?.status || 'default';
+                return `${type}:${entity}:${bucket}`;
+            }
+            if (type.startsWith('auth.')) {
+                const phone = payload?.phone || payload?.phoneHash || payload?.user_phone;
+                const purpose = payload?.purpose || type.split('.').slice(1).join('.');
+                const otpId = payload?.otpId || payload?.otp_id;
+                if (phone) {
+                    return `auth:${this.hashFragment(phone)}:${purpose}:${otpId ?? 'n'}`;
+                }
+            }
+            if (payload?.event_id) {
+                return `${type}:${payload.event_id}`;
+            }
+            const hashed = this.hashFragment(payload);
+            return `${type}:${hashed}`;
+        }
+        catch {
+            return `${type}:fallback`;
+        }
+    }
+    hashFragment(value) {
+        const input = typeof value === 'string' ? value : JSON.stringify(value ?? {});
+        return (0, crypto_1.createHash)('sha256').update(input).digest('hex').slice(0, 12);
     }
 };
 exports.AutomationEventsService = AutomationEventsService;

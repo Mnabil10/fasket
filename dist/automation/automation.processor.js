@@ -22,12 +22,19 @@ const crypto_1 = require("crypto");
 const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const config_1 = require("@nestjs/config");
+const automation_events_service_1 = require("./automation-events.service");
+const ops_alert_service_1 = require("../ops/ops-alert.service");
+const Sentry = require("@sentry/node");
 const BACKOFF_MS = [60_000, 300_000, 900_000, 3_600_000];
+const MISCONFIG_DELAY_MS = 15 * 60 * 1000;
+let lastMisconfigAlertAt = 0;
 let AutomationProcessor = AutomationProcessor_1 = class AutomationProcessor extends bullmq_1.WorkerHost {
-    constructor(prisma, config, queue) {
+    constructor(prisma, config, automation, opsAlerts, queue) {
         super();
         this.prisma = prisma;
         this.config = config;
+        this.automation = automation;
+        this.opsAlerts = opsAlerts;
         this.queue = queue;
         this.logger = new common_1.Logger(AutomationProcessor_1.name);
         this.webhookUrl = this.config.get('AUTOMATION_WEBHOOK_URL') ?? '';
@@ -43,11 +50,42 @@ let AutomationProcessor = AutomationProcessor_1 = class AutomationProcessor exte
             return;
         }
         if (!this.webhookUrl || !this.hmacSecret) {
-            this.logger.error({ msg: 'Automation webhook/HMAC not configured; marking event dead', eventId });
+            const missing = {
+                webhook: !this.webhookUrl,
+                hmac: !this.hmacSecret,
+                nodeEnv: this.config.get('NODE_ENV'),
+            };
+            this.logger.error({
+                msg: 'Automation misconfigured - deferring',
+                eventId,
+                missingWebhook: missing.webhook,
+                missingHmac: missing.hmac,
+                env: missing.nodeEnv,
+            });
+            const nextAttemptAt = new Date(Date.now() + MISCONFIG_DELAY_MS);
             await this.prisma.automationEvent.update({
                 where: { id: eventId },
-                data: { status: client_1.AutomationEventStatus.DEAD },
+                data: {
+                    status: client_1.AutomationEventStatus.FAILED,
+                    nextAttemptAt,
+                    lastError: 'AUTOMATION_MISCONFIGURED',
+                    lastResponseAt: new Date(),
+                },
             });
+            if (Date.now() - lastMisconfigAlertAt > 60 * 60 * 1000) {
+                lastMisconfigAlertAt = Date.now();
+                await this.emitOpsMisconfigured(eventId, missing);
+            }
+            Sentry.captureMessage('Automation misconfigured', {
+                level: 'error',
+                extra: { eventId, missingWebhook: missing.webhook, missingHmac: missing.hmac, env: missing.nodeEnv },
+            });
+            if (this.queue) {
+                await this.queue.add('deliver', { eventId }, { delay: MISCONFIG_DELAY_MS, removeOnComplete: 50, removeOnFail: 25 });
+            }
+            else {
+                setTimeout(() => this.handleEventById(eventId).catch((err) => this.logger.error(err)), MISCONFIG_DELAY_MS);
+            }
             return;
         }
         if (event.status === client_1.AutomationEventStatus.SENT || event.status === client_1.AutomationEventStatus.DEAD) {
@@ -91,7 +129,6 @@ let AutomationProcessor = AutomationProcessor_1 = class AutomationProcessor exte
                 timeout: 5000,
                 validateStatus: () => true,
             });
-            const retryAfter = Number(response.headers?.['retry-after']);
             if (response.status === 409) {
                 this.logger.warn({ msg: 'Received 409, treating as delivered (idempotent)', eventId: event.id });
             }
@@ -137,6 +174,13 @@ let AutomationProcessor = AutomationProcessor_1 = class AutomationProcessor exte
                 delayMs: delay ?? undefined,
                 error: err.message,
             });
+            if (status === client_1.AutomationEventStatus.DEAD || attemptNumber > BACKOFF_MS.length) {
+                await this.emitOpsDeliveryFailed(event, attemptNumber, err?.response?.status);
+                Sentry.captureMessage('Automation delivery failed', {
+                    level: 'error',
+                    extra: { eventId: event.id, type: event.type, attempts: attemptNumber, httpStatus: err?.response?.status },
+                });
+            }
             if (status === client_1.AutomationEventStatus.FAILED) {
                 const effectiveDelay = this.applyRetryAfter(delay, err);
                 if (this.queue) {
@@ -170,19 +214,42 @@ let AutomationProcessor = AutomationProcessor_1 = class AutomationProcessor exte
     }
     nextDelayMs(attempt) {
         if (attempt <= BACKOFF_MS.length) {
-            return BACKOFF_MS[attempt - 1];
+            const base = BACKOFF_MS[attempt - 1];
+            const jitter = 0.2 * base;
+            const delta = Math.floor(Math.random() * jitter * 2 - jitter);
+            return Math.max(1_000, base + delta);
         }
         return null;
+    }
+    async emitOpsMisconfigured(eventId, missing) {
+        await this.opsAlerts.notify('ops.automation_misconfigured', {
+            event_id: eventId,
+            missing_webhook: missing.webhook,
+            missing_hmac: missing.hmac,
+            node_env: missing.nodeEnv,
+            occurred_at: new Date().toISOString(),
+        }, `ops:automation:misconfigured:${Math.floor(Date.now() / (60 * 60 * 1000))}`);
+    }
+    async emitOpsDeliveryFailed(event, attempt, status) {
+        await this.opsAlerts.notify('ops.automation_delivery_failed', {
+            event_id: event.id,
+            event_type: event.type,
+            attempts: attempt,
+            last_status: status ?? null,
+            correlation_id: event.correlationId,
+        }, `ops:automation:delivery_failed:${event.id}:${attempt}`);
     }
 };
 exports.AutomationProcessor = AutomationProcessor;
 exports.AutomationProcessor = AutomationProcessor = AutomationProcessor_1 = __decorate([
     (0, bullmq_1.Processor)('automation-events'),
     (0, common_1.Injectable)(),
-    __param(2, (0, bullmq_1.InjectQueue)('automation-events')),
-    __param(2, (0, common_1.Optional)()),
+    __param(4, (0, bullmq_1.InjectQueue)('automation-events')),
+    __param(4, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         config_1.ConfigService,
+        automation_events_service_1.AutomationEventsService,
+        ops_alert_service_1.OpsAlertService,
         bullmq_2.Queue])
 ], AutomationProcessor);
 //# sourceMappingURL=automation.processor.js.map

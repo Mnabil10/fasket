@@ -114,8 +114,8 @@ export declare class AdminOrdersController {
             id: string;
             createdAt: Date;
             orderId: string;
-            note: string | null;
             actorId: string | null;
+            note: string | null;
             from: import(".prisma/client").$Enums.OrderStatus | null;
             to: import(".prisma/client").$Enums.OrderStatus;
         }[];

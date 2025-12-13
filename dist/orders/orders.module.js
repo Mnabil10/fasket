@@ -12,14 +12,16 @@ const orders_controller_1 = require("./orders.controller");
 const orders_service_1 = require("./orders.service");
 const automation_module_1 = require("../automation/automation.module");
 const receipt_service_1 = require("./receipt.service");
+const prisma_module_1 = require("../prisma/prisma.module");
+const orders_stuck_watcher_1 = require("./orders-stuck.watcher");
 let OrdersModule = class OrdersModule {
 };
 exports.OrdersModule = OrdersModule;
 exports.OrdersModule = OrdersModule = __decorate([
     (0, common_1.Module)({
-        imports: [automation_module_1.AutomationModule],
+        imports: [automation_module_1.AutomationModule, prisma_module_1.PrismaModule],
         controllers: [orders_controller_1.OrdersController],
-        providers: [orders_service_1.OrdersService, receipt_service_1.ReceiptService],
+        providers: [orders_service_1.OrdersService, receipt_service_1.ReceiptService, orders_stuck_watcher_1.OrdersStuckWatcher],
         exports: [orders_service_1.OrdersService, receipt_service_1.ReceiptService],
     })
 ], OrdersModule);

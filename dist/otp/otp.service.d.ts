@@ -45,6 +45,26 @@ export declare class OtpService {
         phone: string;
         otpId?: string;
     }>;
+    verifyOtpLegacy(phone: string, purpose: OtpPurpose, otp: string, ip?: string): Promise<{
+        success: boolean;
+        tokens: {
+            accessToken: string;
+            refreshToken: string;
+        };
+        resetToken?: undefined;
+        expiresInSeconds?: undefined;
+    } | {
+        success: boolean;
+        resetToken: `${string}-${string}-${string}-${string}-${string}`;
+        expiresInSeconds: number;
+        tokens?: undefined;
+    } | {
+        success: boolean;
+        tokens?: undefined;
+        resetToken?: undefined;
+        expiresInSeconds?: undefined;
+    }>;
+    private ensureSecretStrength;
     private ensurePurpose;
     private ensureRateLimit;
     private bumpOrThrow;

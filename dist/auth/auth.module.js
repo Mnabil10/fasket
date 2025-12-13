@@ -12,17 +12,19 @@ const jwt_1 = require("@nestjs/jwt");
 const passport_1 = require("@nestjs/passport");
 const auth_service_1 = require("./auth.service");
 const auth_controller_1 = require("./auth.controller");
+const auth_compat_controller_1 = require("./auth-compat.controller");
 const jwt_access_strategy_1 = require("./strategies/jwt-access.strategy");
 const jwt_refresh_strategy_1 = require("./strategies/jwt-refresh.strategy");
 const auth_rate_limit_service_1 = require("./auth-rate-limit.service");
 const twofa_guard_1 = require("../common/guards/twofa.guard");
+const password_reset_module_1 = require("../password-reset/password-reset.module");
 let AuthModule = class AuthModule {
 };
 exports.AuthModule = AuthModule;
 exports.AuthModule = AuthModule = __decorate([
     (0, common_1.Module)({
-        imports: [passport_1.PassportModule, jwt_1.JwtModule.register({})],
-        controllers: [auth_controller_1.AuthController],
+        imports: [passport_1.PassportModule, jwt_1.JwtModule.register({}), password_reset_module_1.PasswordResetModule],
+        controllers: [auth_controller_1.AuthController, auth_compat_controller_1.AuthCompatController],
         providers: [auth_service_1.AuthService, jwt_access_strategy_1.JwtAccessStrategy, jwt_refresh_strategy_1.JwtRefreshStrategy, auth_rate_limit_service_1.AuthRateLimitService, twofa_guard_1.TwoFaGuard],
         exports: [auth_service_1.AuthService],
     })

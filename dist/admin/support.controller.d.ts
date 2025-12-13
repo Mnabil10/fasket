@@ -13,11 +13,11 @@ export declare class AdminSupportController {
         items: {
             id: string;
             createdAt: Date;
-            phone: null;
-            orderCode: null;
+            phone: any;
+            orderCode: any;
             intent: string;
             status: string;
-            responseSnippet: null;
+            responseSnippet: any;
             correlationId: string | null;
         }[];
         total: number;

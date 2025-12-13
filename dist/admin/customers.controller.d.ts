@@ -110,9 +110,9 @@ export declare class AdminCustomersController {
             id: string;
             createdAt: Date;
             userId: string;
+            orderId: string | null;
             points: number;
             metadata: import("@prisma/client/runtime/library").JsonValue | null;
-            orderId: string | null;
             cycleId: string | null;
         };
     }>;

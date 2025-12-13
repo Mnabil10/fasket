@@ -30,6 +30,10 @@ let AdminSupportController = class AdminSupportController {
             where.endpoint = query.intent;
         if (query.status)
             where.success = query.status.toUpperCase() === 'SUCCESS';
+        if (query.phone)
+            where.phoneMasked = { contains: query.phone, mode: 'insensitive' };
+        if (query.code)
+            where.orderCode = { contains: query.code, mode: 'insensitive' };
         const [items, total] = await this.svc.prisma.$transaction([
             this.svc.prisma.supportQueryAudit.findMany({
                 where,
@@ -42,11 +46,11 @@ let AdminSupportController = class AdminSupportController {
         const mapped = items.map((row) => ({
             id: row.id,
             createdAt: row.createdAt,
-            phone: null,
-            orderCode: null,
+            phone: row.phoneMasked ?? null,
+            orderCode: row.orderCode ?? null,
             intent: row.endpoint,
             status: row.success ? 'SUCCESS' : 'FAILED',
-            responseSnippet: null,
+            responseSnippet: row.responseSnippet ?? null,
             correlationId: row.correlationId,
         }));
         return {

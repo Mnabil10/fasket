@@ -12,6 +12,7 @@ const bullmq_1 = require("@nestjs/bullmq");
 const prisma_module_1 = require("../prisma/prisma.module");
 const automation_events_service_1 = require("./automation-events.service");
 const automation_processor_1 = require("./automation.processor");
+const ops_alert_service_1 = require("../ops/ops-alert.service");
 const dotenv = require("dotenv");
 dotenv.config();
 const redisEnabled = (process.env.REDIS_ENABLED ?? 'true') !== 'false';
@@ -50,8 +51,8 @@ exports.AutomationModule = AutomationModule = __decorate([
             prisma_module_1.PrismaModule,
             ...queueImports,
         ],
-        providers: [automation_events_service_1.AutomationEventsService, ...queueProviders],
-        exports: [automation_events_service_1.AutomationEventsService],
+        providers: [automation_events_service_1.AutomationEventsService, ops_alert_service_1.OpsAlertService, ...queueProviders],
+        exports: [automation_events_service_1.AutomationEventsService, ops_alert_service_1.OpsAlertService],
     })
 ], AutomationModule);
 //# sourceMappingURL=automation.module.js.map

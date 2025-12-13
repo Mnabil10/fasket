@@ -184,22 +184,61 @@ async function bootstrap() {
     else {
         logger.log('Swagger is disabled for production. Set SWAGGER_ENABLED=true to re-enable.', 'Bootstrap');
     }
-    const allowedOrigins = new Set([
+    const defaultOrigins = [
         'https://fasket.shop',
+        'https://admin.fasket.cloud',
+        'https://automation.fasket.cloud',
         'http://localhost:3000',
         'http://localhost:8100',
         'http://localhost:4200',
         'capacitor://localhost',
         'ionic://localhost',
-        'https://admin.fasket.cloud',
-    ]);
+    ];
+    const parseOrigins = (raw) => (raw || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const envOrigins = [
+        ...parseOrigins(configService.get('ALLOWED_ORIGINS')),
+        ...parseOrigins(configService.get('CORS_ALLOWED_ORIGINS')),
+        ...parseOrigins(configService.get('CORS_DEV_ORIGINS')),
+    ];
+    const allowLocalhost = (configService.get('CORS_ALLOW_LOCALHOST') ?? 'false') === 'true';
+    const exactOrigins = new Set([...defaultOrigins, ...envOrigins]
+        .filter((v) => !v.startsWith('regex:'))
+        .map((v) => v.replace(/\/+$/, '')));
+    const regexOrigins = envOrigins
+        .filter((v) => v.startsWith('regex:'))
+        .map((v) => v.replace(/^regex:/, ''))
+        .map((pattern) => {
+        try {
+            return new RegExp(pattern);
+        }
+        catch (err) {
+            logger.warn(`Invalid CORS regex "${pattern}": ${err.message}`);
+            return null;
+        }
+    })
+        .filter((v) => Boolean(v));
+    const isLocalhost = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
     app.enableCors({
         origin(origin, callback) {
             if (!origin)
                 return callback(null, true);
-            if (allowedOrigins.has(origin)) {
+            const normalized = origin.replace(/\/+$/, '');
+            if (exactOrigins.has(normalized))
                 return callback(null, true);
-            }
+            if (allowLocalhost && isLocalhost(normalized))
+                return callback(null, true);
+            if (regexOrigins.some((rx) => rx.test(normalized)))
+                return callback(null, true);
+            const withoutPort = normalized.replace(/:\d+$/, '');
+            if (exactOrigins.has(withoutPort))
+                return callback(null, true);
+            if (allowLocalhost && isLocalhost(withoutPort))
+                return callback(null, true);
+            if (regexOrigins.some((rx) => rx.test(withoutPort)))
+                return callback(null, true);
             logger.warn(`Rejected CORS origin "${origin}"`);
             return callback(new Error('CORS origin not allowed'), false);
         },

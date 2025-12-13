@@ -49,6 +49,7 @@ declare const baseSchema: z.ZodObject<{
     SENTRY_TRACES_SAMPLE_RATE: z.ZodOptional<z.ZodNumber>;
     SENTRY_PROFILES_SAMPLE_RATE: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
+    NODE_ENV: "production" | "development" | "test";
     AUTH_BRUTE_TTL: number;
     AUTH_BRUTE_MAX: number;
     JWT_ACCESS_SECRET: string;
@@ -58,18 +59,17 @@ declare const baseSchema: z.ZodObject<{
     CACHE_DEFAULT_TTL: number;
     UPLOADS_DRIVER: "s3" | "local" | "inline";
     UPLOADS_DIR: string;
-    NODE_ENV: "production" | "development" | "test";
     DATABASE_URL: string;
     RATE_LIMIT_TTL: number;
     RATE_LIMIT_MAX: number;
     AUTH_REQUIRE_ADMIN_2FA?: "true" | "false" | undefined;
-    AUTH_ADMIN_STATIC_OTP?: string | undefined;
+    SENTRY_DSN?: string | undefined;
+    REDIS_ENABLED?: "true" | "false" | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
-    REDIS_ENABLED?: "true" | "false" | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
     S3_PUBLIC_BASE_URL?: string | undefined;
@@ -86,6 +86,7 @@ declare const baseSchema: z.ZodObject<{
     REDIS_URL?: string | undefined;
     API_PREFIX?: string | undefined;
     ENFORCE_HTTPS?: "true" | "false" | undefined;
+    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
     CORS_DEV_ORIGINS?: string | undefined;
@@ -94,19 +95,20 @@ declare const baseSchema: z.ZodObject<{
     SWAGGER_ENABLED?: string | undefined;
     SWAGGER_BASIC_USER?: string | undefined;
     SWAGGER_BASIC_PASS?: string | undefined;
-    SENTRY_DSN?: string | undefined;
     SENTRY_TRACES_SAMPLE_RATE?: number | undefined;
     SENTRY_PROFILES_SAMPLE_RATE?: number | undefined;
 }, {
     JWT_ACCESS_SECRET: string;
     JWT_REFRESH_SECRET: string;
     DATABASE_URL: string;
+    NODE_ENV?: "production" | "development" | "test" | undefined;
     AUTH_BRUTE_TTL?: number | undefined;
     AUTH_BRUTE_MAX?: number | undefined;
     JWT_ACCESS_TTL?: number | undefined;
     JWT_REFRESH_TTL?: number | undefined;
     AUTH_REQUIRE_ADMIN_2FA?: "true" | "false" | undefined;
-    AUTH_ADMIN_STATIC_OTP?: string | undefined;
+    SENTRY_DSN?: string | undefined;
+    REDIS_ENABLED?: "true" | "false" | undefined;
     CACHE_DEFAULT_TTL?: number | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
@@ -114,7 +116,6 @@ declare const baseSchema: z.ZodObject<{
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
-    REDIS_ENABLED?: "true" | "false" | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
     S3_PUBLIC_BASE_URL?: string | undefined;
@@ -122,7 +123,6 @@ declare const baseSchema: z.ZodObject<{
     UPLOAD_ALLOWED_MIME?: string | undefined;
     UPLOAD_MAX_BYTES?: number | undefined;
     S3_SSE?: string | undefined;
-    NODE_ENV?: "production" | "development" | "test" | undefined;
     S3_REGION?: string | undefined;
     S3_ENDPOINT?: string | undefined;
     S3_FORCE_PATH_STYLE?: string | undefined;
@@ -135,6 +135,7 @@ declare const baseSchema: z.ZodObject<{
     ENFORCE_HTTPS?: "true" | "false" | undefined;
     RATE_LIMIT_TTL?: number | undefined;
     RATE_LIMIT_MAX?: number | undefined;
+    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
     CORS_DEV_ORIGINS?: string | undefined;
@@ -143,12 +144,12 @@ declare const baseSchema: z.ZodObject<{
     SWAGGER_ENABLED?: string | undefined;
     SWAGGER_BASIC_USER?: string | undefined;
     SWAGGER_BASIC_PASS?: string | undefined;
-    SENTRY_DSN?: string | undefined;
     SENTRY_TRACES_SAMPLE_RATE?: number | undefined;
     SENTRY_PROFILES_SAMPLE_RATE?: number | undefined;
 }>;
 export type EnvShape = z.infer<typeof baseSchema>;
 export declare function validateEnv(config: Record<string, unknown>): {
+    NODE_ENV: "production" | "development" | "test";
     AUTH_BRUTE_TTL: number;
     AUTH_BRUTE_MAX: number;
     JWT_ACCESS_SECRET: string;
@@ -158,18 +159,17 @@ export declare function validateEnv(config: Record<string, unknown>): {
     CACHE_DEFAULT_TTL: number;
     UPLOADS_DRIVER: "s3" | "local" | "inline";
     UPLOADS_DIR: string;
-    NODE_ENV: "production" | "development" | "test";
     DATABASE_URL: string;
     RATE_LIMIT_TTL: number;
     RATE_LIMIT_MAX: number;
     AUTH_REQUIRE_ADMIN_2FA?: "true" | "false" | undefined;
-    AUTH_ADMIN_STATIC_OTP?: string | undefined;
+    SENTRY_DSN?: string | undefined;
+    REDIS_ENABLED?: "true" | "false" | undefined;
     LOCAL_UPLOADS_BASE_URL?: string | undefined;
     PORT?: number | undefined;
     CATEGORIES_CACHE_TTL?: number | undefined;
     PRODUCT_LIST_CACHE_TTL?: number | undefined;
     HOME_CACHE_TTL?: number | undefined;
-    REDIS_ENABLED?: "true" | "false" | undefined;
     BULK_PRODUCT_BATCH_SIZE?: number | undefined;
     S3_BUCKET?: string | undefined;
     S3_PUBLIC_BASE_URL?: string | undefined;
@@ -186,6 +186,7 @@ export declare function validateEnv(config: Record<string, unknown>): {
     REDIS_URL?: string | undefined;
     API_PREFIX?: string | undefined;
     ENFORCE_HTTPS?: "true" | "false" | undefined;
+    AUTH_ADMIN_STATIC_OTP?: string | undefined;
     ALLOWED_ORIGINS?: string | undefined;
     CORS_ALLOWED_ORIGINS?: string | undefined;
     CORS_DEV_ORIGINS?: string | undefined;
@@ -194,7 +195,6 @@ export declare function validateEnv(config: Record<string, unknown>): {
     SWAGGER_ENABLED?: string | undefined;
     SWAGGER_BASIC_USER?: string | undefined;
     SWAGGER_BASIC_PASS?: string | undefined;
-    SENTRY_DSN?: string | undefined;
     SENTRY_TRACES_SAMPLE_RATE?: number | undefined;
     SENTRY_PROFILES_SAMPLE_RATE?: number | undefined;
 };

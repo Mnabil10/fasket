@@ -134,4 +134,6 @@ export declare class DeliveryDriversService {
         };
     }>;
     private ensureDriver;
+    private handlePrismaError;
+    private extractTargets;
 }

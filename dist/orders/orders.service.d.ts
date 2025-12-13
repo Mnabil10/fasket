@@ -273,6 +273,7 @@ export declare class OrdersService {
     private rollbackStockFromCart;
     private rollbackStockForOrderItems;
     private mapStatusToAutomationEvent;
+    private emitStatusChanged;
     emitOrderStatusAutomationEvent(tx: Prisma.TransactionClient, orderId: string, status: OrderStatus, dedupeKey: string): Promise<AutomationEventRef | null>;
     private buildOrderEventPayload;
     private toPublicStatus;

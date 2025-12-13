@@ -1,4 +1,5 @@
 import { PrismaService } from '../prisma/prisma.service';
+import { Response } from 'express';
 export declare class AdminReportsController {
     private readonly prisma;
     constructor(prisma: PrismaService);
@@ -26,5 +27,6 @@ export declare class AdminReportsController {
         grossMarginPct: number;
         missingCostCount: number;
     }>;
+    export(from: string, to: string, format: string | undefined, res: Response): Promise<Response<any, Record<string, any>>>;
     private computeRange;
 }

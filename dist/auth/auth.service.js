@@ -92,27 +92,21 @@ let AuthService = AuthService_1 = class AuthService {
             throw new common_1.UnauthorizedException('Invalid credentials');
         }
         const requireAdmin2fa = (this.config.get('AUTH_REQUIRE_ADMIN_2FA') ?? 'true') === 'true';
-        const staticAdminOtp = this.config.get('AUTH_ADMIN_STATIC_OTP');
         const providedOtp = input.otp?.trim();
-        const otpMatchesStatic = Boolean(staticAdminOtp && providedOtp && providedOtp === staticAdminOtp);
         let twoFaVerified = !user.twoFaEnabled;
         if (user.role === 'ADMIN') {
             if (!requireAdmin2fa) {
                 twoFaVerified = true;
             }
             else {
-                if (otpMatchesStatic) {
-                    twoFaVerified = true;
+                if (!user.twoFaEnabled) {
+                    throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Admin accounts must enable two-factor authentication');
                 }
-                else {
-                    if (!user.twoFaEnabled) {
-                        throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Admin accounts must enable two-factor authentication');
-                    }
-                    if (!providedOtp || !this.verifyTotp(providedOtp, user.twoFaSecret ?? '')) {
-                        throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
-                    }
-                    twoFaVerified = true;
+                if (!providedOtp || !this.verifyTotp(providedOtp, user.twoFaSecret ?? '')) {
+                    this.logger.warn({ msg: 'Admin 2FA verification failed', userId: user.id, ip: metadata.ip });
+                    throw new errors_1.DomainError(errors_1.ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
                 }
+                twoFaVerified = true;
             }
         }
         await this.rateLimiter.reset(identifier, metadata.ip);

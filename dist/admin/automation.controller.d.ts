@@ -9,6 +9,7 @@ declare class AutomationEventsQuery {
     page?: number;
     pageSize?: number;
     limit?: number;
+    q?: string;
 }
 declare class AutomationReplayDto {
     status?: AutomationEventStatus;
@@ -28,10 +29,10 @@ export declare class AdminAutomationController {
             id: string;
             createdAt: Date;
             correlationId: string | null;
+            dedupeKey: string | null;
             payload: import("@prisma/client/runtime/library").JsonValue;
             attempts: number;
             nextAttemptAt: Date | null;
-            dedupeKey: string | null;
             lastHttpStatus: number | null;
             lastError: string | null;
             lastResponseAt: Date | null;
@@ -47,10 +48,25 @@ export declare class AdminAutomationController {
             deadCount: number;
             sentCount: number;
         };
+        counts: {
+            pendingCount: number;
+            failedCount: number;
+            deadCount: number;
+            sentCount: number;
+        };
     }>;
     replay(dto: AutomationReplayDto): Promise<{
         success: boolean;
         replayed: number;
+    }>;
+    replaySingle(id: string): Promise<{
+        success: boolean;
+        message: string;
+        id?: undefined;
+    } | {
+        success: boolean;
+        id: string;
+        message?: undefined;
     }>;
     private aggregateCounts;
 }

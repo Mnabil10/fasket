@@ -2,8 +2,14 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AdminOnly } from './_admin-guards';
 import { OrdersStuckWatcher } from '../orders/orders-stuck.watcher';
+import { OrderStatus } from '@prisma/client';
 
-type OrdersStuckStatus = ReturnType<OrdersStuckWatcher['getStatus']>;
+type OrdersStuckStatus = {
+  enabled: boolean;
+  thresholds: { status: OrderStatus; minutes: number }[];
+  intervalMs: number;
+  lastRunAt: Date | null;
+};
 
 @ApiTags('Admin/Ops')
 @ApiBearerAuth()

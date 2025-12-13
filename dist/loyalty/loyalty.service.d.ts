@@ -75,9 +75,9 @@ export declare class LoyaltyService {
             id: string;
             createdAt: Date;
             userId: string;
+            orderId: string | null;
             points: number;
             metadata: Prisma.JsonValue | null;
-            orderId: string | null;
             cycleId: string | null;
         };
     }>;

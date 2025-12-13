@@ -24,4 +24,5 @@ export declare class AutomationEventsService {
     enqueue(eventId: string, nextAttemptAt?: Date): Promise<void>;
     enqueueMany(events: AutomationEventRef[]): Promise<void>;
     private defaultDedupeKey;
+    private hashFragment;
 }
