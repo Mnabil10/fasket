@@ -1,25 +1,84 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { AdminOnly } from './_admin-guards';
 import { PrismaService } from '../prisma/prisma.service';
 import { AutomationEventsService } from '../automation/automation-events.service';
 import { AutomationEventStatus } from '@prisma/client';
+import { Transform } from 'class-transformer';
+import { IsDateString, IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 class AutomationEventsQuery {
+  @ApiPropertyOptional({ enum: AutomationEventStatus })
+  @IsOptional()
+  @IsEnum(AutomationEventStatus)
   status?: AutomationEventStatus;
+
+  @ApiPropertyOptional({ description: 'Automation event type' })
+  @IsOptional()
+  @IsString()
   type?: string;
+
+  @ApiPropertyOptional({ description: 'ISO date string (inclusive)' })
+  @IsOptional()
+  @IsDateString()
   from?: string;
+
+  @ApiPropertyOptional({ description: 'ISO date string (inclusive)' })
+  @IsOptional()
+  @IsDateString()
   to?: string;
+
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
   page?: number;
+
+  @ApiPropertyOptional({ description: 'Page size; alias: limit', default: 20, minimum: 1, maximum: 200 })
+  @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
   pageSize?: number;
+
+  @ApiPropertyOptional({ description: 'Alias for pageSize', minimum: 1, maximum: 200 })
+  @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
   limit?: number;
 }
 
 class AutomationReplayDto {
+  @ApiPropertyOptional({ enum: AutomationEventStatus, description: 'Defaults to FAILED/DEAD when omitted' })
+  @IsOptional()
+  @IsEnum(AutomationEventStatus)
   status?: AutomationEventStatus;
+
+  @ApiPropertyOptional({ description: 'Automation event type' })
+  @IsOptional()
+  @IsString()
   type?: string;
+
+  @ApiPropertyOptional({ description: 'ISO date string (inclusive)' })
+  @IsOptional()
+  @IsDateString()
   from?: string;
+
+  @ApiPropertyOptional({ description: 'ISO date string (inclusive)' })
+  @IsOptional()
+  @IsDateString()
   to?: string;
+
+  @ApiPropertyOptional({ default: 50, minimum: 1, maximum: 200 })
+  @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
   limit?: number;
 }
 
