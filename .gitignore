@@ -1,0 +1,12 @@
+# Node / Nest artifacts
+node_modules
+dist
+
+# Environment & local
+.env
+.env.local
+.DS_Store
+tmp
+temp.txt
+coverage
+

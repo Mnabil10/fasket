@@ -10,6 +10,6 @@ import { OrdersStuckWatcher } from './orders-stuck.watcher';
   imports: [AutomationModule, PrismaModule],
   controllers: [OrdersController],
   providers: [OrdersService, ReceiptService, OrdersStuckWatcher],
-  exports: [OrdersService, ReceiptService],
+  exports: [OrdersService, ReceiptService, OrdersStuckWatcher],
 })
 export class OrdersModule {}
