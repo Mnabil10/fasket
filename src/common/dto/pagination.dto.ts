@@ -43,7 +43,7 @@ export class PaginationDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  takeParam?: number;
+  take?: number;
 
   get skip() {
     return ((this.page ?? 1) - 1) * (this.pageSize ?? 20);

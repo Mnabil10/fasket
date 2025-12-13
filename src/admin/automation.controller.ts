@@ -12,6 +12,7 @@ class AutomationEventsQuery {
   to?: string;
   page?: number;
   pageSize?: number;
+  limit?: number;
 }
 
 class AutomationReplayDto {
@@ -34,7 +35,8 @@ export class AdminAutomationController {
 
   @Get('events')
   async list(@Query() query: AutomationEventsQuery) {
-    const pageSize = Math.min(Math.max(Number(query.pageSize) || 20, 1), 200);
+    const rawPageSize = query.pageSize ?? query.limit;
+    const pageSize = Math.min(Math.max(Number(rawPageSize) || 20, 1), 200);
     const page = Math.max(Number(query.page) || 1, 1);
     const where: any = {};
     if (query.status) where.status = query.status;

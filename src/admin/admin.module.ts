@@ -18,6 +18,7 @@ import { AdminDeliveryZonesController } from './delivery-zones.controller';
 import { AutomationModule } from '../automation/automation.module';
 import { AdminReportsController } from './reports.controller';
 import { AdminAutomationController } from './automation.controller';
+import { AdminSupportController } from './support.controller';
 
 @Module({
   controllers: [
@@ -33,6 +34,7 @@ import { AdminAutomationController } from './automation.controller';
     AdminLoyaltyController,
     AdminReportsController,
     AdminAutomationController,
+    AdminSupportController,
   ],
   imports: [
     // Additional modules can be wired here when needed
