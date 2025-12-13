@@ -6,7 +6,6 @@ import { AutomationEventsService } from '../automation/automation-events.service
 import { AutomationEventStatus } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsDateString, IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
-import { Param } from '@nestjs/common';
 
 class AutomationEventsQuery {
   @ApiPropertyOptional({ enum: AutomationEventStatus })
