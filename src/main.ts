@@ -251,6 +251,8 @@ async function bootstrap() {
       'x-refresh-token',
       'X-Correlation-Id',
       'x-correlation-id',
+      'X-User-Agent',
+      'x-user-agent',
     ],
     exposedHeaders: ['X-Refresh-Token', 'x-refresh-token', 'X-Correlation-Id', 'x-correlation-id'],
     preflightContinue: false,
