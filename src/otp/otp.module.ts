@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { OtpService } from './otp.service';
 import { OtpController } from './otp.controller';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -6,7 +6,7 @@ import { AuthModule } from '../auth/auth.module';
 import { AutomationModule } from '../automation/automation.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, AutomationModule],
+  imports: [PrismaModule, forwardRef(() => AuthModule), AutomationModule],
   controllers: [OtpController],
   providers: [OtpService],
   exports: [OtpService],

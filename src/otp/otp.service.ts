@@ -1,5 +1,5 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException, forwardRef } from '@nestjs/common';
 import type { Cache } from 'cache-manager';
 import { randomBytes, randomUUID, createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -30,7 +30,7 @@ export class OtpService {
     private readonly prisma: PrismaService,
     private readonly automation: AutomationEventsService,
     private readonly config: ConfigService,
-    private readonly auth: AuthService,
+    @Inject(forwardRef(() => AuthService)) private readonly auth: AuthService,
     private readonly audit: AuditLogService,
   ) {
     this.otpTtlSec = Number(this.config.get('OTP_TTL_SECONDS') ?? 300);

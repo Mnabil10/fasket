@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
@@ -11,7 +11,7 @@ import { TwoFaGuard } from '../common/guards/twofa.guard';
 import { PasswordResetModule } from '../password-reset/password-reset.module';
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), PasswordResetModule],
+  imports: [PassportModule, JwtModule.register({}), forwardRef(() => PasswordResetModule)],
   controllers: [AuthController, AuthCompatController],
   providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy, AuthRateLimitService, TwoFaGuard],
   exports: [AuthService],
