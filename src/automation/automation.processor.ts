@@ -1,5 +1,5 @@
 import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { Queue } from 'bullmq';
 import axios from 'axios';
@@ -27,7 +27,7 @@ export class AutomationProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    private readonly automation: AutomationEventsService,
+    @Inject(forwardRef(() => AutomationEventsService)) private readonly automation: AutomationEventsService,
     private readonly opsAlerts: OpsAlertService,
     @InjectQueue('automation-events') @Optional() private readonly queue?: Queue,
   ) {

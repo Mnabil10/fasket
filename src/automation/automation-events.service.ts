@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Prisma, AutomationEventStatus } from '@prisma/client';
@@ -27,7 +27,7 @@ export class AutomationEventsService {
     private readonly prisma: PrismaService,
     private readonly context: RequestContextService,
     @InjectQueue('automation-events') @Optional() private readonly queue?: Queue,
-    @Optional() private readonly processor?: AutomationProcessor,
+    @Optional() @Inject(forwardRef(() => AutomationProcessor)) private readonly processor?: AutomationProcessor,
   ) {}
 
   async emit(type: string, payload: Record<string, any>, options: AutomationEmitOptions = {}): Promise<AutomationEventRef> {
