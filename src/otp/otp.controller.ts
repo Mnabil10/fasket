@@ -9,14 +9,14 @@ import { IsIn, IsString } from 'class-validator';
 class OtpRequestDto {
   @ApiProperty() @IsString()
   phone!: string;
-  @ApiProperty({ enum: ['LOGIN', 'PASSWORD_RESET'] }) @IsIn(['LOGIN', 'PASSWORD_RESET'])
+  @ApiProperty({ enum: ['LOGIN', 'PASSWORD_RESET', 'SIGNUP'] }) @IsIn(['LOGIN', 'PASSWORD_RESET', 'SIGNUP'])
   purpose!: OtpPurpose;
 }
 
 class OtpVerifyDto {
   @ApiProperty() @IsString()
   phone!: string;
-  @ApiProperty({ enum: ['LOGIN', 'PASSWORD_RESET'] }) @IsIn(['LOGIN', 'PASSWORD_RESET'])
+  @ApiProperty({ enum: ['LOGIN', 'PASSWORD_RESET', 'SIGNUP'] }) @IsIn(['LOGIN', 'PASSWORD_RESET', 'SIGNUP'])
   purpose!: OtpPurpose;
   @ApiProperty() @IsString()
   otpId!: string;

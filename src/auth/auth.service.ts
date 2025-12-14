@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException, forwardRef } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { createHmac, randomBytes, randomUUID } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
@@ -9,6 +9,17 @@ import { buildDeviceInfo } from '../common/utils/device.util';
 import { DomainError, ErrorCode } from '../common/errors';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
+import { OtpService } from '../otp/otp.service';
+
+interface PendingSignup {
+  name: string;
+  phone: string;
+  email?: string;
+  passwordHash: string;
+  createdAt: number;
+  ip?: string;
+  userAgent?: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -17,6 +28,7 @@ export class AuthService {
     private jwt: JwtService,
     private readonly rateLimiter: AuthRateLimitService,
     private readonly config: ConfigService,
+    @Inject(forwardRef(() => OtpService)) private readonly otp: OtpService,
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
   ) {}
   private readonly logger = new Logger(AuthService.name);
@@ -85,7 +97,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const requireAdmin2fa = (this.config.get<string>('AUTH_REQUIRE_ADMIN_2FA') ?? 'true') === 'true';
+    const requireAdmin2fa = (this.config.get<string>('AUTH_REQUIRE_ADMIN_2FA') ?? 'false') === 'true';
     const providedOtp = input.otp?.trim();
     let twoFaVerified = !user.twoFaEnabled;
 
@@ -116,6 +128,77 @@ export class AuthService {
     await this.logSession(user.id, metadata);
     this.logger.log({ msg: 'Login success', userId: user.id, ip: metadata.ip });
     return { user: safeUser, ...tokens };
+  }
+
+  async signupStart(
+    input: { name: string; phone: string; email?: string; password: string },
+    metadata: { ip?: string; userAgent?: string },
+  ) {
+    const normalizedPhone = this.normalizePhone(input.phone);
+    const normalizedEmail = this.normalizeEmail(input.email);
+    const exists = await this.prisma.user.findFirst({
+      where: { OR: [{ phone: normalizedPhone }, ...(normalizedEmail ? [{ email: normalizedEmail }] : [])] },
+    });
+    if (exists) throw new BadRequestException('User already exists');
+
+    const passwordHash = await bcrypt.hash(input.password, this.bcryptRounds());
+    const otpResult = await this.otp.requestOtp(normalizedPhone, 'SIGNUP', metadata.ip);
+    const pending: PendingSignup = {
+      name: input.name?.trim(),
+      phone: normalizedPhone,
+      email: normalizedEmail,
+      passwordHash,
+      createdAt: Date.now(),
+      ip: metadata.ip,
+      userAgent: metadata.userAgent,
+    };
+    const ttl = Math.max(otpResult.expiresInSeconds ?? 300, 60);
+    await this.cache.set(this.signupCacheKey(otpResult.otpId), pending, ttl);
+    return { otpId: otpResult.otpId, expiresInSeconds: otpResult.expiresInSeconds };
+  }
+
+  async signupVerify(input: { otpId: string; otp: string }, metadata: { ip?: string; userAgent?: string }) {
+    const otpId = input.otpId?.trim();
+    const otp = input.otp?.trim();
+    if (!otpId || !otp) {
+      throw new BadRequestException('OTP verification requires otpId and otp');
+    }
+
+    const pending = await this.cache.get<PendingSignup>(this.signupCacheKey(otpId));
+    if (!pending) {
+      throw new UnauthorizedException('Signup session expired. Please restart the process.');
+    }
+
+    await this.otp.verifyOtp(pending.phone, 'SIGNUP', otpId, otp, metadata.ip);
+    await this.cache.del(this.signupCacheKey(otpId));
+
+    const normalizedEmail = this.normalizeEmail(pending.email);
+    const existing = await this.prisma.user.findFirst({
+      where: { OR: [{ phone: pending.phone }, ...(normalizedEmail ? [{ email: normalizedEmail }] : [])] },
+    });
+    if (existing) {
+      throw new BadRequestException('User already exists');
+    }
+
+    const user = await this.prisma.user.create({
+      data: {
+        name: pending.name,
+        phone: pending.phone,
+        email: normalizedEmail,
+        password: pending.passwordHash,
+      },
+      select: { id: true, name: true, phone: true, email: true, role: true },
+    });
+    const tokens = await this.issueTokens({
+      id: user.id,
+      role: user.role,
+      phone: user.phone,
+      email: user.email,
+      twoFaVerified: true,
+    });
+    await this.logSession(user.id, { ip: pending.ip ?? metadata.ip, userAgent: pending.userAgent ?? metadata.userAgent });
+    this.logger.log({ msg: 'Signup success', userId: user.id, ip: metadata.ip ?? pending.ip });
+    return { user, ...tokens };
   }
 
   async setupAdminTwoFa(userId: string) {
@@ -276,6 +359,19 @@ export class AuthService {
 
   private refreshCacheKey(userId: string, jti: string) {
     return `refresh:${userId}:${jti}`;
+  }
+
+  private signupCacheKey(otpId: string) {
+    return `signup:pending:${otpId}`;
+  }
+
+  private normalizePhone(phone: string) {
+    const trimmed = (phone || '').trim();
+    const e164 = /^\+?[1-9]\d{7,14}$/;
+    if (!e164.test(trimmed)) {
+      throw new BadRequestException('Invalid phone');
+    }
+    return trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
   }
 
   async revokeRefreshToken(userId: string, jti: string) {

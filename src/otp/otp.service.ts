@@ -8,7 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth/auth.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
 
-export type OtpPurpose = 'LOGIN' | 'PASSWORD_RESET';
+export type OtpPurpose = 'LOGIN' | 'PASSWORD_RESET' | 'SIGNUP';
 
 interface OtpRecord {
   otpHash: string;
@@ -138,6 +138,10 @@ export class OtpService {
       return { success: true, tokens };
     }
 
+    if (purpose === 'SIGNUP') {
+      return { success: true };
+    }
+
     if (purpose === 'PASSWORD_RESET') {
       const resetToken = randomUUID();
       const hashedToken = this.hashOtp(resetToken);
@@ -182,7 +186,7 @@ export class OtpService {
   }
 
   private ensurePurpose(purpose: OtpPurpose) {
-    if (!['LOGIN', 'PASSWORD_RESET'].includes(purpose)) {
+    if (!['LOGIN', 'PASSWORD_RESET', 'SIGNUP'].includes(purpose)) {
       throw new BadRequestException('Invalid OTP purpose');
     }
   }

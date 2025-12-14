@@ -114,3 +114,18 @@ export class VerifyTwoFaDto {
   @IsString()
   otp!: string;
 }
+
+export class SignupStartDto extends RegisterDto {}
+
+export class SignupVerifyDto {
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  otpId!: string;
+
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  @Matches(/^\d{4,8}$/, { message: 'Invalid OTP format' })
+  otp!: string;
+}
