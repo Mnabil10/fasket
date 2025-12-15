@@ -1,10 +1,21 @@
-import { Body, Controller, Post, UseGuards, Req } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Req, Get, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
-import { LoginDto, RefreshDto, RegisterDto, SignupStartDto, SignupVerifyDto, VerifyTwoFaDto } from './dto';
+import {
+  LoginDto,
+  RefreshDto,
+  RegisterDto,
+  SignupStartDto,
+  SignupVerifyDto,
+  VerifyTwoFaDto,
+  SignupSessionStartDto,
+  SignupLinkTokenDto,
+  SignupSessionIdDto,
+  SignupVerifySessionDto,
+} from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -29,10 +40,45 @@ export class AuthController {
     });
   }
 
+  // New session-based signup flow (Telegram first)
+  @Post('signup/start-session')
+  @Throttle({ authRegister: {} })
+  signupStartSession(@Body() dto: SignupSessionStartDto, @Req() req: Request) {
+    return this.service.signupStartSession(dto, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+  }
+
+  @Post('signup/telegram/link-token')
+  signupTelegramLink(@Body() dto: SignupLinkTokenDto) {
+    return this.service.signupCreateLinkToken(dto.signupSessionId);
+  }
+
+  @Get('signup/telegram/link-status')
+  signupLinkStatus(@Query() query: SignupSessionIdDto) {
+    return this.service.signupLinkStatus(query.signupSessionId);
+  }
+
+  @Post('signup/request-otp')
+  @Throttle({ otpSignup: {} })
+  signupRequestOtp(@Body() dto: SignupSessionIdDto, @Req() req: Request) {
+    return this.service.signupRequestOtp(dto.signupSessionId, { ip: req.ip });
+  }
+
   @Post('signup/verify')
   @Throttle({ otpVerify: {} })
   signupVerify(@Body() dto: SignupVerifyDto, @Req() req: Request) {
     return this.service.signupVerify(dto, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+  }
+
+  @Post('signup/verify-session')
+  @Throttle({ otpVerify: {} })
+  signupVerifySession(@Body() dto: SignupVerifySessionDto, @Req() req: Request) {
+    return this.service.signupVerifySession(dto, {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });

@@ -213,6 +213,40 @@ export class TelegramService {
     });
   }
 
+  async sendSignupOtp(params: { telegramChatId: bigint; otp: string; expiresInSeconds: number; requestId: string }) {
+    if (!this.webhookUrl || !this.webhookSecret) {
+      this.logger.error('Telegram OTP webhook misconfigured');
+      return { ok: false, blocked: false, error: 'webhook_misconfigured' };
+    }
+    const expiresMinutes = Math.max(1, Math.ceil(params.expiresInSeconds / 60));
+    const chatId = this.normalizeNumeric(params.telegramChatId);
+    const body = {
+      telegramChatId: chatId,
+      otp: params.otp,
+      expires: expiresMinutes,
+      requestId: params.requestId,
+    };
+    try {
+      const response = await axios.post(this.webhookUrl, body, {
+        headers: {
+          'content-type': 'application/json',
+          'x-n8n-secret': this.webhookSecret,
+        },
+        timeout: 5000,
+        validateStatus: () => true,
+      });
+      const blocked = this.shouldBlock(response.data);
+      const success = response.status >= 200 && response.status < 300 && response.data?.success !== false;
+      if (success) {
+        return { ok: true, blocked: false, status: response.status };
+      }
+      return { ok: false, blocked, status: response.status, error: response.data?.error || 'send_failed' };
+    } catch (err) {
+      this.logger.error({ msg: 'Telegram OTP send failed', err: (err as Error)?.message });
+      return { ok: false, blocked: false, error: 'exception' };
+    }
+  }
+
   async sendOtp(params: TelegramOtpPayload): Promise<TelegramOtpResult> {
     if (!this.webhookUrl || !this.webhookSecret) {
       this.logger.error('Telegram OTP webhook misconfigured');

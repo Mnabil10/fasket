@@ -10,6 +10,8 @@ import { DomainError, ErrorCode } from '../common/errors';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import { OtpService } from '../otp/otp.service';
+import { normalizePhoneToE164 } from '../common/utils/phone.util';
+import { TelegramService } from '../telegram/telegram.service';
 
 interface PendingSignup {
   name: string;
@@ -21,6 +23,24 @@ interface PendingSignup {
   userAgent?: string;
 }
 
+interface SignupSession {
+  id: string;
+  phoneE164: string;
+  country: string;
+  fullName: string;
+  createdAt: number;
+  expiresAt: number;
+  linked: boolean;
+  telegramChatId?: bigint;
+  telegramUserId?: bigint;
+  telegramUsername?: string;
+  requestId?: string;
+  otpHash?: string;
+  otpExpiresAt?: number;
+  otpAttempts?: number;
+  completedAt?: number;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -30,6 +50,7 @@ export class AuthService {
     private readonly config: ConfigService,
     @Inject(forwardRef(() => OtpService)) private readonly otp: OtpService,
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
+    private readonly telegram: TelegramService,
   ) {}
   private readonly logger = new Logger(AuthService.name);
   private readonly otpDigits = 6;
@@ -199,6 +220,158 @@ export class AuthService {
     await this.logSession(user.id, { ip: pending.ip ?? metadata.ip, userAgent: pending.userAgent ?? metadata.userAgent });
     this.logger.log({ msg: 'Signup success', userId: user.id, ip: metadata.ip ?? pending.ip });
     return { user, ...tokens };
+  }
+
+  // --- New signup session (Telegram-first) ---
+  async signupStartSession(
+    input: { phone: string; country: string; fullName: string },
+    metadata: { ip?: string; userAgent?: string },
+  ) {
+    const phoneE164 = normalizePhoneToE164(input.phone);
+    const exists = await this.prisma.user.findFirst({ where: { phone: phoneE164 }, select: { id: true } });
+    if (exists) {
+      return this.fail('PHONE_ALREADY_USED', 'Phone already registered');
+    }
+    const sessionId = `sess_${randomUUID().replace(/-/g, '')}`;
+    const ttlSeconds = Number(this.config.get('SIGNUP_SESSION_TTL_SECONDS') ?? 900);
+    const expiresAt = Date.now() + ttlSeconds * 1000;
+    const session: SignupSession = {
+      id: sessionId,
+      phoneE164,
+      country: input.country?.trim() || 'EG',
+      fullName: input.fullName?.trim() || 'User',
+      createdAt: Date.now(),
+      expiresAt,
+      linked: false,
+      otpAttempts: 0,
+    };
+    await this.cache.set(this.signupSessionKey(sessionId), session, ttlSeconds);
+    return this.ok({
+      signupSessionId: sessionId,
+      expiresInSeconds: ttlSeconds,
+      next: { requiresTelegramLink: true, telegramOnly: true },
+    });
+  }
+
+  async signupCreateLinkToken(signupSessionId: string) {
+    const session = await this.getSignupSession(signupSessionId);
+    if (!session.ok) return session;
+    const token = `lt_${randomUUID().replace(/-/g, '')}`;
+    const ttl = Number(this.config.get('TELEGRAM_LINK_TOKEN_TTL_MIN') ?? 10) * 60;
+    const data = { signupSessionId: session.data.id, expiresAt: Date.now() + ttl * 1000, usedAt: undefined as number | undefined };
+    await this.cache.set(this.signupLinkTokenKey(token), data, ttl);
+    return this.ok({
+      linkToken: token,
+      deeplink: `https://t.me/${this.config.get<string>('TELEGRAM_BOT_USERNAME') || 'FasketSuberBot'}?start=${token}`,
+      expiresInSeconds: ttl,
+    });
+  }
+
+  async signupLinkStatus(signupSessionId: string) {
+    const session = await this.getSignupSession(signupSessionId);
+    if (!session.ok) return session;
+    return this.ok({
+      linked: session.data.linked,
+      telegramChatIdMasked: session.data.telegramChatId ? this.maskChatId(session.data.telegramChatId) : undefined,
+    });
+  }
+
+  async signupConfirmLinkToken(linkToken: string, payload: { chatId: bigint; telegramUserId?: bigint; telegramUsername?: string }) {
+    const stored = await this.cache.get<any>(this.signupLinkTokenKey(linkToken));
+    if (!stored) return this.fail('TOKEN_INVALID', 'Invalid link token');
+    if (stored.usedAt) return this.fail('TOKEN_USED', 'Token already used');
+    if (stored.expiresAt < Date.now()) return this.fail('TOKEN_EXPIRED', 'Token expired');
+    const session = await this.getSignupSession(stored.signupSessionId);
+    if (!session.ok) return session;
+    const data = { ...session.data, linked: true, telegramChatId: payload.chatId, telegramUserId: payload.telegramUserId, telegramUsername: payload.telegramUsername };
+    await this.cache.set(this.signupSessionKey(session.data.id), data, Math.max(60, Math.ceil((session.data.expiresAt - Date.now()) / 1000)));
+    stored.usedAt = Date.now();
+    await this.cache.set(this.signupLinkTokenKey(linkToken), stored, Math.max(60, Math.ceil((stored.expiresAt - Date.now()) / 1000)));
+    return this.ok({ signupSessionId: session.data.id, linked: true });
+  }
+
+  async signupRequestOtp(signupSessionId: string, metadata: { ip?: string }) {
+    const session = await this.getSignupSession(signupSessionId);
+    if (!session.ok) return session;
+    if (!session.data.linked || !session.data.telegramChatId) {
+      return this.fail('NOT_LINKED', 'Telegram is not linked for this signup session.');
+    }
+    const otp = this.generateOtpCode();
+    const requestId = randomUUID();
+    const expiresInSeconds = Number(this.config.get('OTP_TTL_SECONDS') ?? this.config.get('OTP_TTL_MIN') ?? 300);
+    const hash = this.hashOtp(otp);
+    const updated: SignupSession = {
+      ...session.data,
+      otpHash: hash,
+      otpExpiresAt: Date.now() + expiresInSeconds * 1000,
+      otpAttempts: 0,
+      requestId,
+    };
+    const ttl = Math.max(60, Math.ceil((updated.expiresAt - Date.now()) / 1000));
+    await this.cache.set(this.signupSessionKey(updated.id), updated, ttl);
+    const send = await this.telegram.sendSignupOtp({
+      telegramChatId: updated.telegramChatId!,
+      otp,
+      expiresInSeconds,
+      requestId,
+    });
+    if (!send.ok) {
+      return this.fail('TELEGRAM_SEND_FAILED', 'Unable to send OTP via Telegram.');
+    }
+    return this.ok({
+      channel: 'telegram',
+      expiresInSeconds,
+      requestId,
+    });
+  }
+
+  async signupVerifySession(
+    input: { signupSessionId: string; otp: string },
+    metadata: { ip?: string; userAgent?: string },
+  ) {
+    const session = await this.getSignupSession(input.signupSessionId);
+    if (!session.ok) return session;
+    const data = session.data;
+    if (!data.otpHash || !data.otpExpiresAt || data.otpExpiresAt < Date.now()) {
+      return this.fail('OTP_EXPIRED', 'OTP expired');
+    }
+    const attempts = (data.otpAttempts ?? 0) + 1;
+    if (attempts > Number(this.config.get('OTP_MAX_ATTEMPTS') ?? 5)) {
+      return this.fail('OTP_TOO_MANY_ATTEMPTS', 'Too many attempts');
+    }
+    const valid = this.hashOtp(input.otp?.trim()) === data.otpHash;
+    data.otpAttempts = attempts;
+    await this.cache.set(this.signupSessionKey(data.id), data, Math.max(60, Math.ceil((data.expiresAt - Date.now()) / 1000)));
+    if (!valid) {
+      return this.fail('OTP_INVALID', 'Invalid OTP');
+    }
+
+    const existing = await this.prisma.user.findFirst({ where: { phone: data.phoneE164 }, select: { id: true } });
+    if (existing) {
+      return this.fail('PHONE_ALREADY_USED', 'Phone already registered');
+    }
+
+    const passwordHash = await bcrypt.hash(randomUUID(), this.bcryptRounds());
+    const user = await this.prisma.user.create({
+      data: { name: data.fullName, phone: data.phoneE164, password: passwordHash },
+      select: { id: true, name: true, phone: true, email: true, role: true },
+    });
+    const tokens = await this.issueTokens({
+      id: user.id,
+      role: user.role,
+      phone: user.phone,
+      email: user.email,
+      twoFaVerified: true,
+    });
+    await this.logSession(user.id, { ip: metadata.ip, userAgent: metadata.userAgent });
+    data.completedAt = Date.now();
+    await this.cache.del(this.signupSessionKey(data.id));
+    return this.ok({
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresInSeconds: Number(this.config.get('JWT_ACCESS_TTL_SECONDS') ?? 3600),
+      user: { id: user.id, phoneE164: user.phone },
+    });
   }
 
   async setupAdminTwoFa(userId: string) {
@@ -372,6 +545,50 @@ export class AuthService {
       throw new BadRequestException('Invalid phone');
     }
     return trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
+  }
+
+  // --- signup session helpers ---
+  private signupSessionKey(id: string) {
+    return `signup:session:${id}`;
+  }
+
+  private signupLinkTokenKey(token: string) {
+    return `signup:linktoken:${token}`;
+  }
+
+  private async getSignupSession(
+    id: string,
+  ): Promise<{ ok: true; data: SignupSession; success: true } | { ok: false; error: string; message: string; success: false }> {
+    const session = await this.cache.get<SignupSession>(this.signupSessionKey(id));
+    if (!session) return { ok: false, error: 'SESSION_INVALID', message: 'Signup session not found', success: false };
+    if (session.expiresAt < Date.now()) {
+      return { ok: false, error: 'SESSION_EXPIRED', message: 'Signup session expired', success: false };
+    }
+    return { ok: true, data: session, success: true };
+  }
+
+  private maskChatId(chatId: bigint) {
+    const s = chatId.toString();
+    if (s.length <= 4) return '****';
+    return `${'*'.repeat(Math.max(0, s.length - 4))}${s.slice(-4)}`;
+  }
+
+  private generateOtpCode() {
+    const code = Math.floor(100000 + Math.random() * 900000);
+    return code.toString().padStart(6, '0');
+  }
+
+  private hashOtp(otp: string) {
+    const secret = this.config.get<string>('OTP_SECRET') ?? this.config.get<string>('JWT_ACCESS_SECRET') ?? 'otp-secret';
+    return createHmac('sha256', secret).update(otp).digest('hex');
+  }
+
+  private ok<T extends Record<string, any>>(payload: T) {
+    return { success: true, ...payload };
+  }
+
+  private fail(error: string, message: string) {
+    return { success: false, error, message };
   }
 
   async revokeRefreshToken(userId: string, jti: string) {

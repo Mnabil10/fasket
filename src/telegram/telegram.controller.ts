@@ -3,6 +3,7 @@ import { ApiProperty, ApiTags } from '@nestjs/swagger';
 import { IsOptional, IsString, Matches } from 'class-validator';
 import { Request } from 'express';
 import { TelegramService } from './telegram.service';
+import { AuthService } from '../auth/auth.service';
 import { InternalSecretGuard } from '../common/guards/internal-secret.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
@@ -34,11 +35,21 @@ export class TelegramController {
 @UseGuards(InternalSecretGuard)
 @Controller({ path: 'internal/telegram', version: ['1', '2'] })
 export class TelegramInternalController {
-  constructor(private readonly telegram: TelegramService) {}
+  constructor(private readonly telegram: TelegramService, private readonly auth: AuthService) {}
 
   @Post('confirm-link')
   async confirmLink(@Body() dto: ConfirmLinkDto) {
     try {
+      // First, try to handle signup-session link tokens (no user yet)
+      const sessionResult = await this.auth.signupConfirmLinkToken(dto.linkToken.trim(), {
+        chatId: this.toBigInt(dto.telegramChatId, 'telegramChatId'),
+        telegramUserId: dto.telegramUserId ? this.toBigInt(dto.telegramUserId, 'telegramUserId') : undefined,
+        telegramUsername: dto.telegramUsername?.trim(),
+      });
+      if (sessionResult && (sessionResult as any).success !== undefined) {
+        return sessionResult;
+      }
+
       const token = await this.telegram.consumeLinkToken(dto.linkToken.trim());
       const telegramChatId = this.toBigInt(dto.telegramChatId, 'telegramChatId');
       const telegramUserId = dto.telegramUserId ? this.toBigInt(dto.telegramUserId, 'telegramUserId') : undefined;

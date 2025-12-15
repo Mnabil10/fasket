@@ -129,3 +129,38 @@ export class SignupVerifyDto {
   @Matches(/^\d{4,8}$/, { message: 'Invalid OTP format' })
   otp!: string;
 }
+
+// --- New signup session (Telegram-first) DTOs ---
+export class SignupSessionStartDto {
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsPhoneNumber('EG')
+  phone!: string;
+
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  country!: string;
+
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  fullName!: string;
+}
+
+export class SignupSessionIdDto {
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  signupSessionId!: string;
+}
+
+export class SignupLinkTokenDto extends SignupSessionIdDto {}
+
+export class SignupVerifySessionDto extends SignupSessionIdDto {
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  @Matches(/^\d{4,8}$/, { message: 'Invalid OTP format' })
+  otp!: string;
+}

@@ -10,9 +10,16 @@ import { AuthRateLimitService } from './auth-rate-limit.service';
 import { TwoFaGuard } from '../common/guards/twofa.guard';
 import { PasswordResetModule } from '../password-reset/password-reset.module';
 import { OtpModule } from '../otp/otp.module';
+import { TelegramModule } from '../telegram/telegram.module';
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), forwardRef(() => PasswordResetModule), forwardRef(() => OtpModule)],
+  imports: [
+    PassportModule,
+    JwtModule.register({}),
+    forwardRef(() => PasswordResetModule),
+    forwardRef(() => OtpModule),
+    forwardRef(() => TelegramModule),
+  ],
   controllers: [AuthController, AuthCompatController],
   providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy, AuthRateLimitService, TwoFaGuard],
   exports: [AuthService],
