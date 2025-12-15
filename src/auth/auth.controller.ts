@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards, Req, Get, Query, Param } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Req, Get, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
@@ -49,23 +49,27 @@ export class AuthController {
     return this.service.signupStartSession(dto, {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
+      correlationId: req.headers['x-correlation-id'] as string | undefined,
     });
   }
 
   @Post('signup/telegram/link-token')
-  signupTelegramLink(@Body() dto: SignupLinkTokenDto) {
-    return this.service.signupCreateLinkToken(dto.signupSessionId);
+  signupTelegramLink(@Body() dto: SignupLinkTokenDto, @Req() req: Request) {
+    return this.service.signupCreateLinkToken(dto.signupSessionId, req.headers['x-correlation-id'] as string | undefined);
   }
 
   @Get('signup/telegram/link-status')
-  signupLinkStatus(@Query() query: SignupSessionIdDto) {
-    return this.service.signupLinkStatus(query.signupSessionId);
+  signupLinkStatus(@Query() query: SignupSessionIdDto, @Req() req: Request) {
+    return this.service.signupLinkStatus(query.signupSessionId, req.headers['x-correlation-id'] as string | undefined);
   }
 
   @Post('signup/request-otp')
   @Throttle({ otpSignup: {} })
   signupRequestOtp(@Body() dto: SignupSessionIdDto, @Req() req: Request) {
-    return this.service.signupRequestOtp(dto.signupSessionId, { ip: req.ip });
+    return this.service.signupRequestOtp(dto.signupSessionId, {
+      ip: req.ip,
+      correlationId: req.headers['x-correlation-id'] as string | undefined,
+    });
   }
 
   @Post('signup/verify')
@@ -83,6 +87,7 @@ export class AuthController {
     return this.service.signupVerifySession(dto, {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
+      correlationId: req.headers['x-correlation-id'] as string | undefined,
     });
   }
 

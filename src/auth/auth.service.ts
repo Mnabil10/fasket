@@ -1,4 +1,13 @@
-import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException, forwardRef } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+  forwardRef,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { createHmac, randomBytes, randomUUID } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
@@ -233,15 +242,19 @@ export class AuthService {
   // --- New signup session (Telegram-first) ---
   async signupStartSession(
     input: { phone: string; country: string; fullName: string },
-    metadata: { ip?: string; userAgent?: string },
+    metadata: { ip?: string; userAgent?: string; correlationId?: string },
   ) {
+    if (!this.isRedisStore()) {
+      this.logger.error('Signup sessions require Redis. Start backend with Redis enabled.');
+      throw new ServiceUnavailableException({ success: false, error: 'SERVER_CONFIG', message: 'Redis is required' });
+    }
     const phoneE164 = normalizePhoneToE164(input.phone);
     const exists = await this.prisma.user.findFirst({ where: { phone: phoneE164 }, select: { id: true } });
     if (exists) {
       return this.fail('PHONE_ALREADY_USED', 'Phone already registered');
     }
     const sessionId = `sess_${randomUUID().replace(/-/g, '')}`;
-    const ttlSeconds = this.signupSessionTtlSeconds || 900;
+    const ttlSeconds = 900;
     const expiresAt = Date.now() + ttlSeconds * 1000;
     const session: SignupSession = {
       id: sessionId,
@@ -253,12 +266,14 @@ export class AuthService {
       linked: false,
       otpAttempts: 0,
     };
-    await this.cache.set(this.signupSessionKey(sessionId), session, ttlSeconds);
+    const cacheResult = await this.cache.set(this.signupSessionKey(sessionId), session, ttlSeconds);
     this.debugLog('signup.start-session', {
       store: this.cache.constructor?.name?.toLowerCase().includes('redis') ? 'redis' : 'memory',
       key: this.signupSessionKey(sessionId),
       ttl: ttlSeconds,
       redisUrl: this.safeRedisUrl(),
+      correlationId: metadata.correlationId,
+      result: cacheResult,
     });
     return this.ok({
       signupSessionId: sessionId,
@@ -267,19 +282,20 @@ export class AuthService {
     });
   }
 
-  async signupCreateLinkToken(signupSessionId: string) {
-    const session = await this.getSignupSession(signupSessionId);
-    if (!session.ok) return session;
+  async signupCreateLinkToken(signupSessionId: string, correlationId?: string) {
+    const session = await this.getSignupSessionOrThrow(signupSessionId, correlationId);
     const token = `lt_${randomUUID().replace(/-/g, '')}`;
     const ttl = this.linkTokenTtlSeconds || 600;
-    const data = { signupSessionId: session.data.id, expiresAt: Date.now() + ttl * 1000, usedAt: undefined as number | undefined };
-    await this.cache.set(this.signupLinkTokenKey(token), data, ttl);
+    const data = { signupSessionId: session.id, expiresAt: Date.now() + ttl * 1000, usedAt: undefined as number | undefined };
+    const cacheResult = await this.cache.set(this.signupLinkTokenKey(token), data, ttl);
     this.debugLog('signup.link-token.write', {
       store: this.cache.constructor?.name?.toLowerCase().includes('redis') ? 'redis' : 'memory',
       key: this.signupLinkTokenKey(token),
       ttl,
       redisUrl: this.safeRedisUrl(),
-      sessionKey: this.signupSessionKey(session.data.id),
+      sessionKey: this.signupSessionKey(session.id),
+      correlationId,
+      result: cacheResult,
     });
     return this.ok({
       linkToken: token,
@@ -288,12 +304,11 @@ export class AuthService {
     });
   }
 
-  async signupLinkStatus(signupSessionId: string) {
-    const session = await this.getSignupSession(signupSessionId);
-    if (!session.ok) return session;
+  async signupLinkStatus(signupSessionId: string, correlationId?: string) {
+    const session = await this.getSignupSessionOrThrow(signupSessionId, correlationId);
     return this.ok({
-      linked: session.data.linked,
-      telegramChatIdMasked: session.data.telegramChatId ? this.maskChatId(session.data.telegramChatId) : undefined,
+      linked: session.linked,
+      telegramChatIdMasked: session.telegramChatId ? this.maskChatId(session.telegramChatId) : undefined,
     });
   }
 
@@ -308,19 +323,30 @@ export class AuthService {
     if (!stored) return this.fail('TOKEN_INVALID', 'Invalid link token');
     if (stored.usedAt) return this.fail('TOKEN_USED', 'Token already used');
     if (stored.expiresAt < Date.now()) return this.fail('TOKEN_EXPIRED', 'Token expired');
-    const session = await this.getSignupSession(stored.signupSessionId);
-    if (!session.ok) return session;
-    const data = { ...session.data, linked: true, telegramChatId: payload.chatId, telegramUserId: payload.telegramUserId, telegramUsername: payload.telegramUsername };
-    await this.cache.set(this.signupSessionKey(session.data.id), data, Math.max(60, Math.ceil((session.data.expiresAt - Date.now()) / 1000)));
+    const session = await this.getSignupSessionOrThrow(stored.signupSessionId, undefined);
+    const data = {
+      ...session,
+      linked: true,
+      telegramChatId: payload.chatId,
+      telegramUserId: payload.telegramUserId,
+      telegramUsername: payload.telegramUsername,
+    };
+    const ttlSession = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
+    await this.cache.set(this.signupSessionKey(session.id), data, ttlSession);
+    this.debugLog('signup.session.write', {
+      key: this.signupSessionKey(session.id),
+      ttl: ttlSession,
+      result: 'linked',
+      store: this.isRedisStore() ? 'redis' : 'memory',
+    });
     stored.usedAt = Date.now();
     await this.cache.set(this.signupLinkTokenKey(linkToken), stored, Math.max(60, Math.ceil((stored.expiresAt - Date.now()) / 1000)));
-    return this.ok({ signupSessionId: session.data.id, linked: true });
+    return this.ok({ signupSessionId: session.id, linked: true });
   }
 
-  async signupRequestOtp(signupSessionId: string, metadata: { ip?: string }) {
-    const session = await this.getSignupSession(signupSessionId);
-    if (!session.ok) return session;
-    if (!session.data.linked || !session.data.telegramChatId) {
+  async signupRequestOtp(signupSessionId: string, metadata: { ip?: string; correlationId?: string }) {
+    const session = await this.getSignupSessionOrThrow(signupSessionId, metadata.correlationId);
+    if (!session.linked || !session.telegramChatId) {
       return this.fail('NOT_LINKED', 'Telegram is not linked for this signup session.');
     }
     const otp = this.generateOtpCode();
@@ -328,7 +354,7 @@ export class AuthService {
     const expiresInSeconds = Number(this.config.get('OTP_TTL_SECONDS') ?? this.config.get('OTP_TTL_MIN') ?? 300);
     const hash = this.hashOtp(otp);
     const updated: SignupSession = {
-      ...session.data,
+      ...session,
       otpHash: hash,
       otpExpiresAt: Date.now() + expiresInSeconds * 1000,
       otpAttempts: 0,
@@ -336,6 +362,13 @@ export class AuthService {
     };
     const ttl = Math.max(60, Math.ceil((updated.expiresAt - Date.now()) / 1000));
     await this.cache.set(this.signupSessionKey(updated.id), updated, ttl);
+    this.debugLog('signup.session.write', {
+      key: this.signupSessionKey(updated.id),
+      ttl,
+      correlationId: metadata.correlationId,
+      result: 'otp-stored',
+      store: this.isRedisStore() ? 'redis' : 'memory',
+    });
     const send = await this.telegram.sendSignupOtp({
       telegramChatId: updated.telegramChatId!,
       otp,
@@ -354,11 +387,10 @@ export class AuthService {
 
   async signupVerifySession(
     input: { signupSessionId: string; otp: string },
-    metadata: { ip?: string; userAgent?: string },
+    metadata: { ip?: string; userAgent?: string; correlationId?: string },
   ) {
-    const session = await this.getSignupSession(input.signupSessionId);
-    if (!session.ok) return session;
-    const data = session.data;
+    const session = await this.getSignupSessionOrThrow(input.signupSessionId, metadata.correlationId);
+    const data = session;
     if (!data.otpHash || !data.otpExpiresAt || data.otpExpiresAt < Date.now()) {
       return this.fail('OTP_EXPIRED', 'OTP expired');
     }
@@ -368,7 +400,15 @@ export class AuthService {
     }
     const valid = this.hashOtp(input.otp?.trim()) === data.otpHash;
     data.otpAttempts = attempts;
-    await this.cache.set(this.signupSessionKey(data.id), data, Math.max(60, Math.ceil((data.expiresAt - Date.now()) / 1000)));
+    const ttlUpdated = Math.max(60, Math.ceil((data.expiresAt - Date.now()) / 1000));
+    await this.cache.set(this.signupSessionKey(data.id), data, ttlUpdated);
+    this.debugLog('signup.session.write', {
+      key: this.signupSessionKey(data.id),
+      ttl: ttlUpdated,
+      correlationId: metadata.correlationId,
+      result: valid ? 'otp-verified' : 'otp-attempt',
+      store: this.isRedisStore() ? 'redis' : 'memory',
+    });
     if (!valid) {
       return this.fail('OTP_INVALID', 'Invalid OTP');
     }
@@ -393,6 +433,13 @@ export class AuthService {
     await this.logSession(user.id, { ip: metadata.ip, userAgent: metadata.userAgent });
     data.completedAt = Date.now();
     await this.cache.del(this.signupSessionKey(data.id));
+    this.debugLog('signup.session.write', {
+      key: this.signupSessionKey(data.id),
+      ttl: 0,
+      correlationId: metadata.correlationId,
+      result: 'session-completed',
+      store: this.isRedisStore() ? 'redis' : 'memory',
+    });
     return this.ok({
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -583,17 +630,6 @@ export class AuthService {
     return `linkToken:${token}`;
   }
 
-  private async getSignupSession(
-    id: string,
-  ): Promise<{ ok: true; data: SignupSession; success: true } | { ok: false; error: string; message: string; success: false }> {
-    const session = await this.cache.get<SignupSession>(this.signupSessionKey(id));
-    if (!session) return { ok: false, error: 'SESSION_INVALID', message: 'Signup session not found', success: false };
-    if (session.expiresAt < Date.now()) {
-      return { ok: false, error: 'SESSION_EXPIRED', message: 'Signup session expired', success: false };
-    }
-    return { ok: true, data: session, success: true };
-  }
-
   private maskChatId(chatId: bigint) {
     const s = chatId.toString();
     if (s.length <= 4) return '****';
@@ -603,6 +639,29 @@ export class AuthService {
   private generateOtpCode() {
     const code = Math.floor(100000 + Math.random() * 900000);
     return code.toString().padStart(6, '0');
+  }
+
+  private isRedisStore() {
+    return this.cache.constructor?.name?.toLowerCase().includes('redis');
+  }
+
+  private async getSignupSessionOrThrow(id: string, correlationId?: string): Promise<SignupSession> {
+    const key = this.signupSessionKey(id);
+    const session = await this.cache.get<SignupSession>(key);
+    this.debugLog('signup.session.read', {
+      key,
+      found: Boolean(session),
+      correlationId,
+      store: this.isRedisStore() ? 'redis' : 'memory',
+      redisUrl: this.safeRedisUrl(),
+    });
+    if (!session) {
+      throw new NotFoundException({ success: false, error: 'SESSION_INVALID', message: 'Signup session not found' });
+    }
+    if (session.expiresAt < Date.now()) {
+      throw new NotFoundException({ success: false, error: 'SESSION_INVALID', message: 'Signup session not found' });
+    }
+    return session;
   }
 
   private hashOtp(otp: string) {
