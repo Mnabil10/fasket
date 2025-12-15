@@ -52,6 +52,7 @@ export class OtpService {
   private readonly automationWebhookUrl?: string;
   private readonly automationHmacSecret?: string;
   private readonly secret: string;
+  private readonly requestIdTtlSeconds: number;
 
   constructor(
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
@@ -72,6 +73,7 @@ export class OtpService {
     this.otpPerIpLimit = Number(this.config.get('OTP_PER_IP_LIMIT') ?? 20);
     this.automationWebhookUrl = this.config.get('AUTOMATION_WEBHOOK_URL') ?? undefined;
     this.automationHmacSecret = this.config.get('AUTOMATION_HMAC_SECRET') ?? undefined;
+    this.requestIdTtlSeconds = Math.max(this.otpTtlSec, this.otpRateLimitSeconds);
     this.secret = this.config.get('OTP_SECRET') ?? this.config.get('JWT_ACCESS_SECRET') ?? 'otp-secret';
     this.ensureSecretStrength();
   }
@@ -79,7 +81,7 @@ export class OtpService {
   async requestOtp(phone: string, purpose: OtpPurpose, ip?: string) {
     const normalizedPhone = normalizePhoneToE164(phone);
     this.ensurePurpose(purpose);
-    await this.ensureRateLimit(normalizedPhone, ip);
+    await this.ensureRateLimit(purpose, normalizedPhone, ip);
     const existingUser = await this.prisma.user.findUnique({
       where: { phone: normalizedPhone },
       select: { id: true },
@@ -95,6 +97,11 @@ export class OtpService {
     const expiresAt = Date.now() + this.otpTtlSec * 1000;
     const record: OtpRecord = { otpHash: hash, otpId, attempts: 0, expiresAt, requestId };
     await this.cache.set(this.otpKey(purpose, normalizedPhone), record, this.otpTtlSec);
+
+    const deduped = await this.cachedDispatch(requestId);
+    if (deduped) {
+      return deduped;
+    }
 
     const dispatch = await this.dispatchOtp({
       phone: normalizedPhone,
@@ -127,6 +134,13 @@ export class OtpService {
       throw new BadRequestException('Unable to send OTP at this time. Please try again later.');
     }
 
+    await this.cacheDispatch(requestId, {
+      otpId,
+      expiresInSeconds: this.otpTtlSec,
+      channel: dispatch.channel,
+      requestId,
+    });
+
     await this.automation.emit(
       'auth.otp.requested',
       { phone: normalizedPhone, otpId, purpose, expiresInSeconds: this.otpTtlSec, channel: dispatch.channel, requestId },
@@ -142,7 +156,6 @@ export class OtpService {
     return {
       otpId,
       expiresInSeconds: this.otpTtlSec,
-      expires: Math.ceil(this.otpTtlSec / 60),
       channel: dispatch.channel,
       requestId,
     };
@@ -268,6 +281,7 @@ export class OtpService {
 
     const fallback = await this.sendFallbackOtp(params);
     if (fallback.delivered) {
+      await this.cacheDispatch(params.requestId, { otpId: params.otpId, expiresInSeconds: params.expiresInSeconds, channel: 'fallback', requestId: params.requestId });
       return { delivered: true, channel: 'fallback', blocked };
     }
     return { delivered: false, channel: 'sms_required', blocked, error: fallback.error };
@@ -345,6 +359,12 @@ export class OtpService {
         validateStatus: () => true,
       });
       if ((response.status >= 200 && response.status < 300) || response.status === 409) {
+        await this.cacheDispatch(params.requestId, {
+          otpId: params.otpId,
+          expiresInSeconds: params.expiresInSeconds,
+          channel: 'fallback',
+          requestId: params.requestId,
+        });
         return { delivered: true };
       }
       this.logger.warn({ msg: 'Fallback OTP webhook failed', status: response.status });
@@ -376,22 +396,22 @@ export class OtpService {
     }
   }
 
-  private async ensureRateLimit(phone: string, ip?: string) {
+  private async ensureRateLimit(purpose: OtpPurpose, phone: string, ip?: string) {
     await this.bumpOrThrow(
-      `otp:req:phone:${phone}:minute`,
+      `otp:req:${purpose}:phone:${phone}:minute`,
       1,
       this.otpRateLimitSeconds,
       'Please wait before requesting another OTP',
     );
     await this.bumpOrThrow(
-      `otp:req:phone:${phone}:day:${this.dayKey()}`,
+      `otp:req:${purpose}:phone:${phone}:day:${this.dayKey()}`,
       this.otpDailyLimit,
       24 * 60 * 60,
       'You have reached the OTP request limit for today',
     );
     if (ip) {
       await this.bumpOrThrow(
-        `otp:req:ip:${ip}:minute`,
+        `otp:req:${purpose}:ip:${ip}:minute`,
         this.otpPerIpLimit,
         this.otpRateLimitSeconds,
         'Too many OTP requests from this IP',
@@ -437,6 +457,28 @@ export class OtpService {
 
   private hashFragment(value: string) {
     return createHash('sha256').update(value).digest('hex').slice(0, 12);
+  }
+
+  private requestIdKey(requestId: string) {
+    return `otp:requestId:${requestId}`;
+  }
+
+  private async cacheDispatch(
+    requestId: string,
+    payload: { otpId: string; expiresInSeconds: number; channel: string; requestId: string },
+  ) {
+    await this.cache.set(this.requestIdKey(requestId), payload, this.requestIdTtlSeconds);
+  }
+
+  private async cachedDispatch(requestId: string) {
+    const cached = await this.cache.get<any>(this.requestIdKey(requestId));
+    if (!cached) return undefined;
+    return {
+      otpId: cached.otpId,
+      expiresInSeconds: cached.expiresInSeconds,
+      channel: cached.channel as 'telegram' | 'fallback' | 'sms_required',
+      requestId: cached.requestId,
+    };
   }
 
   private maskPhone(phone: string) {

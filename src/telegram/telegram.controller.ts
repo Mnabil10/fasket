@@ -61,14 +61,8 @@ export class TelegramInternalController {
       });
       return { success: true };
     } catch (err) {
-      const code = (err as Error)?.message || 'TOKEN_INVALID';
-      if (['TOKEN_EXPIRED', 'TOKEN_USED', 'TOKEN_INVALID'].includes(code)) {
-        return { success: false, error: code };
-      }
-      if (code.includes('Telegram chat already linked')) {
-        return { success: false, error: 'CHAT_ALREADY_LINKED' };
-      }
-      throw err;
+      const { error, message } = this.mapError(err);
+      return { success: false, error, message };
     }
   }
 
@@ -78,5 +72,15 @@ export class TelegramInternalController {
     } catch {
       throw new BadRequestException(`${field} must be a valid integer`);
     }
+  }
+
+  private mapError(err: unknown): { error: string; message: string } {
+    const msg = (err as Error)?.message ?? '';
+    const allowed = ['TOKEN_INVALID', 'TOKEN_EXPIRED', 'TOKEN_USED', 'CHAT_ALREADY_LINKED', 'USER_NOT_FOUND', 'UNAUTHORIZED'];
+    const matched = allowed.find((code) => msg.includes(code));
+    if (matched) return { error: matched, message: msg };
+    if (msg.toLowerCase().includes('not found')) return { error: 'USER_NOT_FOUND', message: msg };
+    if (msg.toLowerCase().includes('unauthorized')) return { error: 'UNAUTHORIZED', message: msg };
+    return { error: 'TOKEN_INVALID', message: msg || 'Invalid token' };
   }
 }
