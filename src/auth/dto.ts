@@ -153,6 +153,12 @@ export class SignupSessionIdDto {
   @Transform(({ value }) => cleanString(value))
   @IsString()
   signupSessionId!: string;
+
+  @ApiProperty({ required: false })
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  lang?: string;
 }
 
 export class SignupLinkTokenDto extends SignupSessionIdDto {}
