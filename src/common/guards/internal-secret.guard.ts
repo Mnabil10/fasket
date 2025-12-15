@@ -11,8 +11,9 @@ export class InternalSecretGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const secret =
-      this.config.get<string>('INTERNAL_TELEGRAM_SECRET') ??
-      this.config.get<string>('INTERNAL_SECRET') ??
+      this.config.get<string>('INTERNAL_TELEGRAM_SECRET') ||
+      this.config.get<string>('INTERNAL_SECRET') ||
+      this.config.get<string>('JWT_ACCESS_SECRET') ||
       '';
     if (!secret) {
       this.logger.error('INTERNAL_SECRET is not configured');

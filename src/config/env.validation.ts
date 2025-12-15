@@ -29,8 +29,8 @@ const baseSchema = z.object({
   AUTH_BRUTE_MAX: z.coerce.number().int().positive().default(5),
   AUTH_REQUIRE_ADMIN_2FA: z.enum(['true','false']).optional(),
   AUTH_ADMIN_STATIC_OTP: z.string().optional(),
-  INTERNAL_SECRET: z.string().min(16, 'INTERNAL_SECRET is required to protect internal endpoints'),
-  INTERNAL_TELEGRAM_SECRET: z.string().min(8).optional(),
+  INTERNAL_SECRET: z.string().optional(),
+  INTERNAL_TELEGRAM_SECRET: z.string().optional(),
 
   REDIS_ENABLED: z.enum(['true','false']).optional(),
   REDIS_URL: z.string().url().optional(),
