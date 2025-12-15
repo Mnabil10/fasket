@@ -304,13 +304,18 @@ export class AuthService {
   }
 
   async signupLinkStatus(signupSessionToken: string, correlationId?: string) {
-    const session = await this.verifySignupSessionTokenOrThrow(signupSessionToken, correlationId);
-    const link = await this.getSignupLink(session.nonce);
-    const linked = Boolean(link);
-    return this.ok({
-      linked,
-      telegramChatIdMasked: linked && link?.telegramChatId ? this.maskChatId(link.telegramChatId) : undefined,
-    });
+    try {
+      const session = await this.verifySignupSessionTokenOrThrow(signupSessionToken, correlationId);
+      const link = await this.getSignupLink(session.nonce);
+      const linked = Boolean(link);
+      return this.ok({
+        linked,
+        telegramChatIdMasked: linked && link?.telegramChatId ? this.maskChatId(link.telegramChatId) : undefined,
+      });
+    } catch (err) {
+      this.logger.warn({ msg: 'signup.link-status.invalid', correlationId, error: (err as Error)?.message });
+      return this.fail('SESSION_INVALID', 'Signup session expired or invalid');
+    }
   }
 
   async signupConfirmLinkToken(linkToken: string, payload: { chatId: bigint; telegramUserId?: bigint; telegramUsername?: string }) {
