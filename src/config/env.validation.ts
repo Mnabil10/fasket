@@ -11,7 +11,7 @@ const baseSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(10, 'JWT_REFRESH_SECRET is required'),
   JWT_ACCESS_TTL: z.coerce.number().int().positive().default(900),
   JWT_REFRESH_TTL: z.coerce.number().int().positive().default(1209600),
-  SIGNUP_SESSION_SECRET: z.string().min(10, 'SIGNUP_SESSION_SECRET is required'),
+  SIGNUP_SESSION_SECRET: z.string().min(10, 'SIGNUP_SESSION_SECRET is required').optional(),
   SIGNUP_SESSION_TTL_SECONDS: z.coerce.number().int().positive().optional(),
   SIGNUP_SESSION_TTL: z.coerce.number().int().positive().optional(),
 
