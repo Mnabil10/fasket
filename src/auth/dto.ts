@@ -154,6 +154,12 @@ export class SignupSessionTokenDto {
   @IsString()
   signupSessionToken!: string;
 
+  @ApiProperty({ required: false, description: 'Legacy compatibility' })
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  signupSessionId?: string;
+
   @ApiProperty({ required: false })
   @Transform(({ value }) => cleanNullableString(value))
   @IsOptional()
