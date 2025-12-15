@@ -11,6 +11,9 @@ const baseSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(10, 'JWT_REFRESH_SECRET is required'),
   JWT_ACCESS_TTL: z.coerce.number().int().positive().default(900),
   JWT_REFRESH_TTL: z.coerce.number().int().positive().default(1209600),
+  SIGNUP_SESSION_SECRET: z.string().min(10, 'SIGNUP_SESSION_SECRET is required'),
+  SIGNUP_SESSION_TTL_SECONDS: z.coerce.number().int().positive().optional(),
+  SIGNUP_SESSION_TTL: z.coerce.number().int().positive().optional(),
 
   OTP_SECRET: z.string().optional(),
   OTP_TTL_SECONDS: z.coerce.number().int().positive().optional(),
@@ -73,6 +76,7 @@ const baseSchema = z.object({
   TELEGRAM_OTP_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_BOT_USERNAME: z.string().optional(),
   TELEGRAM_LINK_TOKEN_TTL_MIN: z.coerce.number().int().positive().default(10),
+  TELEGRAM_LINK_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().optional(),
   N8N_SEND_TELEGRAM_OTP_URL: z.string().url().optional(),
   N8N_SECRET: z.string().optional(),
 

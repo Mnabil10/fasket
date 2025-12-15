@@ -13,7 +13,7 @@ import {
   VerifyTwoFaDto,
   SignupSessionStartDto,
   SignupLinkTokenDto,
-  SignupSessionIdDto,
+  SignupSessionTokenDto,
   SignupVerifySessionDto,
 } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -55,18 +55,18 @@ export class AuthController {
 
   @Post('signup/telegram/link-token')
   signupTelegramLink(@Body() dto: SignupLinkTokenDto, @Req() req: Request) {
-    return this.service.signupCreateLinkToken(dto.signupSessionId, req.headers['x-correlation-id'] as string | undefined);
+    return this.service.signupCreateLinkToken(dto.signupSessionToken, req.headers['x-correlation-id'] as string | undefined);
   }
 
   @Get('signup/telegram/link-status')
-  signupLinkStatus(@Query() query: SignupSessionIdDto, @Req() req: Request) {
-    return this.service.signupLinkStatus(query.signupSessionId, req.headers['x-correlation-id'] as string | undefined);
+  signupLinkStatus(@Query() query: SignupSessionTokenDto, @Req() req: Request) {
+    return this.service.signupLinkStatus(query.signupSessionToken, req.headers['x-correlation-id'] as string | undefined);
   }
 
   @Post('signup/request-otp')
   @Throttle({ otpSignup: {} })
-  signupRequestOtp(@Body() dto: SignupSessionIdDto, @Req() req: Request) {
-    return this.service.signupRequestOtp(dto.signupSessionId, {
+  signupRequestOtp(@Body() dto: SignupSessionTokenDto, @Req() req: Request) {
+    return this.service.signupRequestOtp(dto.signupSessionToken, {
       ip: req.ip,
       correlationId: req.headers['x-correlation-id'] as string | undefined,
     });

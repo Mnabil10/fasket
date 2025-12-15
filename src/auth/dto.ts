@@ -148,11 +148,11 @@ export class SignupSessionStartDto {
   fullName!: string;
 }
 
-export class SignupSessionIdDto {
+export class SignupSessionTokenDto {
   @ApiProperty()
-  @Transform(({ value }) => cleanString(value))
+  @Transform(({ value, obj }) => cleanString(value ?? obj.signupSessionId ?? obj.signupSessionToken))
   @IsString()
-  signupSessionId!: string;
+  signupSessionToken!: string;
 
   @ApiProperty({ required: false })
   @Transform(({ value }) => cleanNullableString(value))
@@ -161,9 +161,9 @@ export class SignupSessionIdDto {
   lang?: string;
 }
 
-export class SignupLinkTokenDto extends SignupSessionIdDto {}
+export class SignupLinkTokenDto extends SignupSessionTokenDto {}
 
-export class SignupVerifySessionDto extends SignupSessionIdDto {
+export class SignupVerifySessionDto extends SignupSessionTokenDto {
   @ApiProperty()
   @Transform(({ value }) => cleanString(value))
   @IsString()
