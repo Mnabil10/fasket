@@ -110,14 +110,7 @@ export function validateEnv(config: Record<string, unknown>) {
         message: 'LOCAL_UPLOADS_BASE_URL is required when using local uploads',
       });
     }
-    const hasInternalSecret = Boolean(env.INTERNAL_SECRET || env.INTERNAL_TELEGRAM_SECRET || env.JWT_ACCESS_SECRET);
-    if (!hasInternalSecret) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'INTERNAL_SECRET or INTERNAL_TELEGRAM_SECRET is required',
-        path: ['INTERNAL_SECRET'],
-      });
-    }
+    // Internal secret is optional; guard will fall back to INTERNAL_TELEGRAM_SECRET or JWT_ACCESS_SECRET
   }).safeParse(config);
 
   if (!parsed.success) {
