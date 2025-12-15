@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards, Req, Get, Query } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Req, Get, Query, Param } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
@@ -19,6 +19,8 @@ import {
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { InternalSecretGuard } from '../common/guards/internal-secret.guard';
+import { SignupDebugController } from './signup-debug.controller';
 
 @ApiTags('Auth')
 @Controller({ path: 'auth', version: ['1', '2'] })

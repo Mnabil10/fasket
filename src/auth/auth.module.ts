@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { SignupDebugController } from './signup-debug.controller';
 import { AuthCompatController } from './auth-compat.controller';
 import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
@@ -20,7 +21,7 @@ import { TelegramModule } from '../telegram/telegram.module';
     forwardRef(() => OtpModule),
     forwardRef(() => TelegramModule),
   ],
-  controllers: [AuthController, AuthCompatController],
+  controllers: [AuthController, AuthCompatController, SignupDebugController],
   providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy, AuthRateLimitService, TwoFaGuard],
   exports: [AuthService],
 })

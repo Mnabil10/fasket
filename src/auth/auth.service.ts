@@ -12,6 +12,7 @@ import type { Cache } from 'cache-manager';
 import { OtpService } from '../otp/otp.service';
 import { normalizePhoneToE164 } from '../common/utils/phone.util';
 import { TelegramService } from '../telegram/telegram.service';
+import { Request } from 'express';
 
 interface PendingSignup {
   name: string;
@@ -60,6 +61,7 @@ export class AuthService {
     Number(process.env.TELEGRAM_LINK_TOKEN_TTL_SECONDS) ||
     Number(process.env.TELEGRAM_LINK_TOKEN_TTL_MIN) * 60 ||
     600;
+  private readonly debugLogUntil = Date.now() + 10 * 60 * 1000;
 
   private normalizeEmail(email?: string | null) {
     return email ? email.trim().toLowerCase() : undefined;
@@ -252,6 +254,12 @@ export class AuthService {
       otpAttempts: 0,
     };
     await this.cache.set(this.signupSessionKey(sessionId), session, ttlSeconds);
+    this.debugLog('signup.start-session', {
+      store: this.cache.constructor?.name?.toLowerCase().includes('redis') ? 'redis' : 'memory',
+      key: this.signupSessionKey(sessionId),
+      ttl: ttlSeconds,
+      redisUrl: this.safeRedisUrl(),
+    });
     return this.ok({
       signupSessionId: sessionId,
       expiresInSeconds: ttlSeconds,
@@ -266,6 +274,13 @@ export class AuthService {
     const ttl = this.linkTokenTtlSeconds || 600;
     const data = { signupSessionId: session.data.id, expiresAt: Date.now() + ttl * 1000, usedAt: undefined as number | undefined };
     await this.cache.set(this.signupLinkTokenKey(token), data, ttl);
+    this.debugLog('signup.link-token.write', {
+      store: this.cache.constructor?.name?.toLowerCase().includes('redis') ? 'redis' : 'memory',
+      key: this.signupLinkTokenKey(token),
+      ttl,
+      redisUrl: this.safeRedisUrl(),
+      sessionKey: this.signupSessionKey(session.data.id),
+    });
     return this.ok({
       linkToken: token,
       deeplink: `https://t.me/${this.config.get<string>('TELEGRAM_BOT_USERNAME') || 'FasketSuberBot'}?start=${token}`,
@@ -284,6 +299,12 @@ export class AuthService {
 
   async signupConfirmLinkToken(linkToken: string, payload: { chatId: bigint; telegramUserId?: bigint; telegramUsername?: string }) {
     const stored = await this.cache.get<any>(this.signupLinkTokenKey(linkToken));
+    this.debugLog('signup.link-token.read', {
+      store: this.cache.constructor?.name?.toLowerCase().includes('redis') ? 'redis' : 'memory',
+      key: this.signupLinkTokenKey(linkToken),
+      exists: Boolean(stored),
+      redisUrl: this.safeRedisUrl(),
+    });
     if (!stored) return this.fail('TOKEN_INVALID', 'Invalid link token');
     if (stored.usedAt) return this.fail('TOKEN_USED', 'Token already used');
     if (stored.expiresAt < Date.now()) return this.fail('TOKEN_EXPIRED', 'Token expired');
@@ -595,6 +616,39 @@ export class AuthService {
 
   private fail(error: string, message: string) {
     return { success: false, error, message };
+  }
+
+  private safeRedisUrl() {
+    const url = this.config.get<string>('REDIS_URL') || '';
+    if (!url) return undefined;
+    try {
+      const parsed = new URL(url);
+      return { host: parsed.hostname, port: parsed.port };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private debugLog(event: string, payload: Record<string, any>) {
+    if (Date.now() > this.debugLogUntil) return;
+    this.logger.debug({ event, ...payload });
+  }
+
+  async debugSignupSession(id: string) {
+    const key = this.signupSessionKey(id);
+    const store = this.cache.constructor?.name?.toLowerCase().includes('redis') ? 'redis' : 'memory';
+    const exists = await this.cache.get(key);
+    let ttl: number | undefined;
+    try {
+      // cache-manager-ioredis supports .store.ttl(key)
+      const anyStore: any = (this.cache as any).store;
+      if (anyStore?.ttl) {
+        ttl = await anyStore.ttl(key);
+      }
+    } catch {
+      ttl = undefined;
+    }
+    return { exists: Boolean(exists), ttl, store, key };
   }
 
   async revokeRefreshToken(userId: string, jti: string) {
