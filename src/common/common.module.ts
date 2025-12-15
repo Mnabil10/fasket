@@ -6,6 +6,7 @@ import { CacheService } from './cache/cache.service';
 import { ResponseInterceptor } from './interceptors/response.interceptor';
 import { AllExceptionsFilter } from './filters/all-exceptions.filter';
 import { SlugService } from './slug/slug.service';
+import { InternalSecretGuard } from './guards/internal-secret.guard';
 
 @Global()
 @Module({
@@ -17,6 +18,7 @@ import { SlugService } from './slug/slug.service';
     ResponseInterceptor,
     AllExceptionsFilter,
     SlugService,
+    InternalSecretGuard,
   ],
   exports: [
     AuditLogService,
@@ -26,6 +28,7 @@ import { SlugService } from './slug/slug.service';
     ResponseInterceptor,
     AllExceptionsFilter,
     SlugService,
+    InternalSecretGuard,
   ],
 })
 export class CommonModule {}

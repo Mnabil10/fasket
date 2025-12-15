@@ -28,6 +28,7 @@ import { AutomationModule } from './automation/automation.module';
 import { OtpModule } from './otp/otp.module';
 import { PasswordResetModule } from './password-reset/password-reset.module';
 import { AutomationSupportModule } from './automation-support/automation-support.module';
+import { TelegramModule } from './telegram/telegram.module';
 
 @Module({
   imports: [
@@ -126,6 +127,7 @@ import { AutomationSupportModule } from './automation-support/automation-support
     LoyaltyModule,
     CommonModule,
     UploadsModule,
+    TelegramModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

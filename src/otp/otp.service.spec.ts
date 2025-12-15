@@ -3,6 +3,8 @@ import { AutomationEventsService } from '../automation/automation-events.service
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
+import { TelegramService } from '../telegram/telegram.service';
+import { RequestContextService } from '../common/context/request-context.service';
 
 class MemoryCache {
   private store = new Map<string, any>();
@@ -30,14 +32,29 @@ describe('OtpService', () => {
   } as unknown as AuthService;
   const audit = { log: jest.fn() } as unknown as AuditLogService;
   const config = { get: (k: string) => process.env[k] } as any;
+  const telegram = {
+    getActiveLinkForUser: jest.fn(),
+    sendOtp: jest.fn(),
+  } as unknown as TelegramService;
+  const context = { get: jest.fn() } as unknown as RequestContextService;
 
   beforeAll(() => {
     process.env.OTP_MAX_ATTEMPTS = '2';
     process.env.OTP_TTL_SECONDS = '120';
+    process.env.OTP_SECRET = 'very-strong-secret-value';
+    prisma.user.findUnique = jest.fn().mockResolvedValue({ id: 'user-1' } as any);
+    telegram.getActiveLinkForUser = jest.fn().mockResolvedValue({
+      id: 1,
+      telegramChatId: BigInt(123),
+      lastOtpAttempts: 0,
+      lastOtpSentAt: null,
+    } as any);
+    telegram.sendOtp = jest.fn().mockResolvedValue({ ok: true, blocked: false });
+    context.get = jest.fn().mockReturnValue(undefined);
   });
 
   it('locks after max failed attempts', async () => {
-    const service = new OtpService(cache, prisma, automation, config, auth, audit);
+    const service = new OtpService(cache, prisma, automation, config, auth, audit, telegram, context);
     (service as any).generateOtp = jest.fn().mockReturnValue('123456');
 
     const req = await service.requestOtp('+201234567890', 'LOGIN');

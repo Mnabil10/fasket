@@ -34,10 +34,12 @@ All events are delivered as JSON with HMAC-SHA256 signature over `"{timestamp}.{
   - `from_status`, `to_status`, `from_internal`, `to_internal`, `actor_id`, `history_id`, `changed_at`
 
 - `auth.otp.requested`
-  - `phone`, `otpId`, `purpose`, `expiresInSeconds`
+  - `phone`, `otpId`, `purpose`, `expiresInSeconds`, `channel`, `requestId`
 
 - `auth.otp.verified`
-  - `phone`, `otpId`, `purpose`
+  - `phone`, `otpId`, `purpose`, `requestId`
+
+> OTP values are only sent to delivery webhooks; outbox payloads intentionally omit the raw OTP to avoid storing secrets in the database.
 
 - `auth.password_reset.requested`
   - `phone`, `otpId`
