@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   UnauthorizedException,
   forwardRef,
 } from '@nestjs/common';
@@ -31,29 +32,29 @@ interface PendingSignup {
 }
 
 interface SignupSessionTokenPayload {
+  sessionId: string;
   phone: string;
   country: string;
   fullName?: string;
-  nonce: string;
   iat: number;
   exp: number;
 }
 
-interface SignupLinkTokenPayload {
-  sessionKey: string;
-  exp: number;
-}
-
-interface SignupLinkRecord {
-  sessionKey: string;
-  telegramChatId: bigint;
-  telegramUserId?: bigint | null;
-  telegramUsername?: string | null;
-  expiresAt: Date;
-  otpHash?: string | null;
-  otpExpiresAt?: Date | null;
-  otpAttempts?: number | null;
-  requestId?: string | null;
+interface SignupSession {
+  id: string;
+  phone: string;
+  country: string;
+  fullName?: string;
+  createdAt: number;
+  expiresAt: number;
+  linked: boolean;
+  telegramChatId?: bigint;
+  telegramUserId?: bigint;
+  telegramUsername?: string;
+  requestId?: string;
+  otpHash?: string;
+  otpExpiresAt?: number;
+  otpAttempts?: number;
 }
 
 @Injectable()
@@ -261,12 +262,24 @@ export class AuthService {
     if (exists) {
       return this.fail('PHONE_ALREADY_USED', 'Phone already registered');
     }
-    const nonce = randomUUID().replace(/-/g, '');
-    const { token, payload } = await this.signSignupSessionToken({
+    const sessionId = `sess_${randomUUID().replace(/-/g, '')}`;
+    const expiresAt = Date.now() + this.signupSessionTtlSeconds * 1000;
+    const session: SignupSession = {
+      id: sessionId,
       phone: phoneE164,
       country: input.country?.trim() || 'EG',
       fullName: input.fullName?.trim() || 'User',
-      nonce,
+      createdAt: Date.now(),
+      expiresAt,
+      linked: false,
+      otpAttempts: 0,
+    };
+    await this.cache.set(this.signupSessionKey(sessionId), session, this.signupSessionTtlSeconds);
+    const { token, payload } = await this.signSignupSessionToken({
+      sessionId,
+      phone: session.phone,
+      country: session.country,
+      fullName: session.fullName,
     });
     this.debugLog('signup.start-session', {
       correlationId: metadata.correlationId,
@@ -274,95 +287,87 @@ export class AuthService {
       expiresIn: this.signupSessionTtlSeconds,
     });
     return this.ok({
+      signupSessionId: sessionId,
       signupSessionToken: token,
       expiresInSeconds: Math.max(1, payload.exp - payload.iat),
       next: { requiresTelegramLink: true, telegramOnly: true },
     });
   }
 
-  async signupCreateLinkToken(signupSessionToken: string, correlationId?: string) {
-    const session = await this.verifySignupSessionTokenOrThrow(signupSessionToken, correlationId);
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const remainingSeconds = Math.max(0, session.exp - nowSeconds);
+  async signupCreateLinkToken(
+    ref: { signupSessionId?: string; signupSessionToken?: string },
+    correlationId?: string,
+  ) {
+    const { session, sessionId } = await this.resolveSignupSession(ref, correlationId);
+    const remainingSeconds = Math.max(0, Math.ceil((session.expiresAt - Date.now()) / 1000));
     if (remainingSeconds <= 0) {
-      throw new UnauthorizedException({ success: false, error: 'SESSION_INVALID', message: 'Signup session expired' });
+      throw new UnauthorizedException({ success: false, error: 'SESSION_EXPIRED', message: 'Signup session expired' });
     }
     const ttl = Math.min(this.linkTokenTtlSeconds, remainingSeconds);
-    const { token: linkToken, exp } = this.createSignupLinkToken(session, ttl);
+    const linkToken = `lt_${randomUUID().replace(/-/g, '')}`;
+    const data = { sessionId, expiresAt: Date.now() + ttl * 1000, usedAt: undefined as number | undefined };
+    await this.cache.set(this.signupLinkTokenKey(linkToken), data, ttl);
     this.debugLog('signup.link-token.write', {
       ttl,
       correlationId,
-      sessionKey: this.signupSessionKey(session.nonce),
+      sessionKey: this.signupSessionKey(sessionId),
     });
-    const expiresInSeconds = Math.max(1, exp - nowSeconds);
     return this.ok({
-      linkToken: linkToken, // backward compatibility
+      linkToken: linkToken,
       telegramLinkToken: linkToken,
       deeplink: `https://t.me/${this.config.get<string>('TELEGRAM_BOT_USERNAME') || 'FasketSuberBot'}?start=${linkToken}`,
-      expiresInSeconds,
+      expiresInSeconds: ttl,
     });
   }
 
-  async signupLinkStatus(signupSessionToken: string, correlationId?: string) {
-    try {
-      const session = await this.verifySignupSessionTokenOrThrow(signupSessionToken, correlationId);
-      const link = await this.getSignupLink(session.nonce);
-      const linked = Boolean(link);
-      return this.ok({
-        linked,
-        telegramChatIdMasked: linked && link?.telegramChatId ? this.maskChatId(link.telegramChatId) : undefined,
-      });
-    } catch (err) {
-      this.logger.warn({ msg: 'signup.link-status.invalid', correlationId, error: (err as Error)?.message });
-      return this.fail('SESSION_INVALID', 'Signup session expired or invalid');
-    }
+  async signupLinkStatus(ref: { signupSessionId?: string; signupSessionToken?: string }, correlationId?: string) {
+    const { session } = await this.resolveSignupSession(ref, correlationId);
+    return this.ok({
+      linked: session.linked,
+      telegramChatIdMasked: session.telegramChatId ? this.maskChatId(session.telegramChatId) : undefined,
+    });
   }
 
   async signupConfirmLinkToken(linkToken: string, payload: { chatId: bigint; telegramUserId?: bigint; telegramUsername?: string }) {
-    const decoded = await this.verifySignupLinkToken(linkToken);
-    const sessionKey = decoded.sessionKey;
-    const expiresAt = new Date(decoded.exp * 1000);
-    await this.prisma.signupLink.upsert({
-      where: { sessionKey },
-      create: {
-        sessionKey,
-        telegramChatId: payload.chatId,
-        telegramUserId: payload.telegramUserId ?? null,
-        telegramUsername: payload.telegramUsername ?? null,
-        expiresAt,
-      },
-      update: {
-        telegramChatId: payload.chatId,
-        telegramUserId: payload.telegramUserId ?? null,
-        telegramUsername: payload.telegramUsername ?? null,
-        expiresAt,
-      },
-    });
-    this.debugLog('signup.link-token.confirmed', { sessionKey });
-    return this.ok({ linked: true });
+    const stored = await this.cache.get<any>(this.signupLinkTokenKey(linkToken));
+    if (!stored) return this.fail('TOKEN_INVALID', 'Invalid link token');
+    if (stored.usedAt) return this.fail('TOKEN_USED', 'Token already used');
+    if (stored.expiresAt < Date.now()) return this.fail('TOKEN_EXPIRED', 'Token expired');
+    const session = await this.getSignupSessionOrThrow(stored.sessionId, undefined);
+    const updated: SignupSession = {
+      ...session,
+      linked: true,
+      telegramChatId: payload.chatId,
+      telegramUserId: payload.telegramUserId,
+      telegramUsername: payload.telegramUsername,
+    };
+    const ttlSession = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
+    await this.cache.set(this.signupSessionKey(session.id), updated, ttlSession);
+    stored.usedAt = Date.now();
+    await this.cache.set(this.signupLinkTokenKey(linkToken), stored, Math.max(60, Math.ceil((stored.expiresAt - Date.now()) / 1000)));
+    return this.ok({ signupSessionId: session.id, linked: true });
   }
 
-  async signupRequestOtp(signupSessionToken: string, metadata: { ip?: string; correlationId?: string }) {
-    const session = await this.verifySignupSessionTokenOrThrow(signupSessionToken, metadata.correlationId);
-    const link = await this.getLinkedSignupSession(session.nonce);
-    if (!link) {
-      return this.fail('NOT_LINKED', 'من فضلك اربط حساب تيليجرام أولاً من خلال الرابط المرسل لإكمال التسجيل.');
+  async signupRequestOtp(ref: { signupSessionId?: string; signupSessionToken?: string }, metadata: { ip?: string; correlationId?: string }) {
+    const { session, sessionId } = await this.resolveSignupSession(ref, metadata.correlationId);
+    if (!session.linked || !session.telegramChatId) {
+      return this.fail('NOT_LINKED', 'Please link your Telegram account first.');
     }
     const otp = this.generateOtpCode();
     const requestId = randomUUID();
     const expiresInSeconds = Number(this.config.get('OTP_TTL_SECONDS') ?? this.config.get('OTP_TTL_MIN') ?? 300);
     const hash = this.hashOtp(otp);
-    await this.prisma.signupLink.update({
-      where: { sessionKey: this.signupSessionKey(session.nonce) },
-      data: {
-        otpHash: hash,
-        otpExpiresAt: new Date(Date.now() + expiresInSeconds * 1000),
-        otpAttempts: 0,
-        requestId,
-      },
-    });
+    const updated: SignupSession = {
+      ...session,
+      otpHash: hash,
+      otpExpiresAt: Date.now() + expiresInSeconds * 1000,
+      otpAttempts: 0,
+      requestId,
+    };
+    const ttlUpdated = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
+    await this.cache.set(this.signupSessionKey(sessionId), updated, ttlUpdated);
     const send = await this.telegram.sendSignupOtp({
-      telegramChatId: link.telegramChatId,
+      telegramChatId: session.telegramChatId!,
       otp,
       expiresInSeconds,
       requestId,
@@ -378,32 +383,32 @@ export class AuthService {
   }
 
   async signupVerifySession(
-    input: { signupSessionToken: string; otp: string },
+    input: { signupSessionId?: string; signupSessionToken?: string; otp: string },
     metadata: { ip?: string; userAgent?: string; correlationId?: string },
   ) {
-    const session = await this.verifySignupSessionTokenOrThrow(input.signupSessionToken, metadata.correlationId);
-    const sessionKey = this.signupSessionKey(session.nonce);
-    const link = await this.getLinkedSignupSession(session.nonce);
-    if (!link) {
-      return this.fail('NOT_LINKED', 'من فضلك اربط حساب تيليجرام أولاً من خلال الرابط المرسل لإكمال التسجيل.');
+    const { session, sessionId } = await this.resolveSignupSession(
+      { signupSessionId: input.signupSessionId, signupSessionToken: input.signupSessionToken },
+      metadata.correlationId,
+    );
+    if (!session.linked || !session.telegramChatId) {
+      return this.fail('NOT_LINKED', 'Please link your Telegram account first.');
     }
-    if (!link.otpHash || !link.otpExpiresAt || link.otpExpiresAt.getTime() < Date.now()) {
+    if (!session.otpHash || !session.otpExpiresAt || session.otpExpiresAt < Date.now()) {
       return this.fail('OTP_EXPIRED', 'OTP expired');
     }
-    const attempts = (link.otpAttempts ?? 0) + 1;
+    const attempts = (session.otpAttempts ?? 0) + 1;
     const maxAttempts = Number(this.config.get('OTP_MAX_ATTEMPTS') ?? 5);
-    const valid = this.hashOtp(input.otp?.trim()) === link.otpHash;
+    const valid = this.hashOtp(input.otp?.trim()) === session.otpHash;
 
     if (!valid) {
-      await this.prisma.signupLink.update({
-        where: { sessionKey },
-        data: { otpAttempts: attempts },
-      });
+      const ttl = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
+      await this.cache.set(this.signupSessionKey(sessionId), { ...session, otpAttempts: attempts }, ttl);
       if (attempts >= maxAttempts) {
-        await this.prisma.signupLink.update({
-          where: { sessionKey },
-          data: { otpExpiresAt: new Date(), otpHash: null },
-        });
+        await this.cache.set(
+          this.signupSessionKey(sessionId),
+          { ...session, otpExpiresAt: Date.now(), otpHash: undefined },
+          ttl,
+        );
         return this.fail('OTP_TOO_MANY_ATTEMPTS', 'Too many attempts');
       }
       return this.fail('OTP_INVALID', 'Invalid OTP');
@@ -427,7 +432,7 @@ export class AuthService {
       twoFaVerified: true,
     });
     await this.logSession(user.id, { ip: metadata.ip, userAgent: metadata.userAgent });
-    await this.prisma.signupLink.delete({ where: { sessionKey } }).catch(() => undefined);
+    await this.cache.del(this.signupSessionKey(sessionId));
     return this.ok({
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -610,8 +615,8 @@ export class AuthService {
   }
 
   // --- signup session helpers ---
-  private signupSessionKey(nonce: string) {
-    return createHmac('sha256', this.signupSessionSecret()).update(nonce).digest('base64url').slice(0, 24);
+  private signupSessionKey(id: string) {
+    return `signupSession:${id}`;
   }
 
   private signupSessionSecret() {
@@ -635,24 +640,15 @@ export class AuthService {
     return { token, payload };
   }
 
-  private createSignupLinkToken(session: SignupSessionTokenPayload, ttlSeconds: number) {
-    const sessionKey = this.signupSessionKey(session.nonce);
-    const exp = Math.floor(Date.now() / 1000) + Math.max(1, Math.floor(ttlSeconds));
-    const payload = `${sessionKey}.${exp}`;
-    const signature = createHmac('sha256', this.signupSessionSecret()).update(payload).digest('base64url').slice(0, 24);
-    const token = `lt_${payload}.${signature}`;
-    return { token, exp };
-  }
-
   private async verifySignupSessionTokenOrThrow(token: string, correlationId?: string) {
     if (!token) {
-      throw new UnauthorizedException({ success: false, error: 'SESSION_INVALID', message: 'Signup session token missing' });
+      throw new UnauthorizedException({ success: false, error: 'SESSION_EXPIRED', message: 'Signup session token missing' });
     }
     try {
       const payload = await this.jwt.verifyAsync<SignupSessionTokenPayload>(token, {
         secret: this.signupSessionSecret(),
       });
-      if (!payload?.nonce || !payload.phone) {
+      if (!payload?.sessionId || !payload.phone) {
         throw new Error('SESSION_INVALID');
       }
       return payload;
@@ -664,51 +660,44 @@ export class AuthService {
       });
       throw new UnauthorizedException({
         success: false,
-        error: 'SESSION_INVALID',
+        error: 'SESSION_EXPIRED',
         message: 'Signup session expired or invalid',
       });
     }
   }
 
-  private async verifySignupLinkToken(token: string): Promise<SignupLinkTokenPayload> {
-    if (!token?.startsWith('lt_')) {
-      throw new BadRequestException('TOKEN_INVALID');
+  private async resolveSignupSession(
+    ref: { signupSessionId?: string; signupSessionToken?: string },
+    correlationId?: string,
+  ): Promise<{ sessionId: string; session: SignupSession }> {
+    const sessionId = ref.signupSessionId?.trim();
+    if (sessionId) {
+      const session = await this.getSignupSessionOrThrow(sessionId, correlationId);
+      return { sessionId, session };
     }
-    const raw = token.replace(/^lt_/, '');
-    const parts = raw.split('.');
-    if (parts.length !== 3) {
-      throw new BadRequestException('TOKEN_INVALID');
+    if (ref.signupSessionToken) {
+      const payload = await this.verifySignupSessionTokenOrThrow(ref.signupSessionToken, correlationId);
+      const session = await this.getSignupSessionOrThrow(payload.sessionId, correlationId);
+      return { sessionId: payload.sessionId, session };
     }
-    const [sessionKey, expStr, signature] = parts;
-    const exp = Number(expStr);
-    if (!sessionKey || !Number.isFinite(exp)) {
-      throw new BadRequestException('TOKEN_INVALID');
-    }
-    const expectedSig = createHmac('sha256', this.signupSessionSecret())
-      .update(`${sessionKey}.${exp}`)
-      .digest('base64url')
-      .slice(0, 24);
-    if (signature !== expectedSig) {
-      throw new BadRequestException('TOKEN_INVALID');
-    }
-    if (exp * 1000 < Date.now()) {
-      throw new BadRequestException('TOKEN_EXPIRED');
-    }
-    return { sessionKey, exp };
+    throw new UnauthorizedException({ success: false, error: 'SESSION_EXPIRED', message: 'Signup session expired' });
   }
 
-  private async getSignupLink(nonce: string): Promise<SignupLinkRecord | null> {
-    const sessionKey = this.signupSessionKey(nonce);
-    const record = await this.prisma.signupLink.findUnique({ where: { sessionKey } });
-    if (!record) return null;
-    if (record.expiresAt.getTime() < Date.now()) return null;
-    return record as SignupLinkRecord;
+  private async getSignupSessionOrThrow(id: string, correlationId?: string): Promise<SignupSession> {
+    const key = this.signupSessionKey(id);
+    const session = await this.cache.get<SignupSession>(key);
+    this.debugLog('signup.session.read', { key, found: Boolean(session), correlationId });
+    if (!session) {
+      throw new NotFoundException({ success: false, error: 'SESSION_NOT_FOUND', message: 'Signup session not found' });
+    }
+    if (session.expiresAt < Date.now()) {
+      throw new UnauthorizedException({ success: false, error: 'SESSION_EXPIRED', message: 'Signup session expired' });
+    }
+    return session;
   }
 
-  private async getLinkedSignupSession(nonce: string): Promise<SignupLinkRecord | null> {
-    const link = await this.getSignupLink(nonce);
-    if (!link || !link.telegramChatId) return null;
-    return link;
+  private signupLinkTokenKey(token: string) {
+    return `linkToken:${token}`;
   }
 
   private maskChatId(chatId: bigint) {
@@ -740,23 +729,10 @@ export class AuthService {
     this.logger.debug({ event, ...payload });
   }
 
-  async debugSignupSession(token: string) {
+  async debugSignupSession(ref: { signupSessionId?: string; signupSessionToken?: string }) {
     try {
-      const payload = await this.verifySignupSessionTokenOrThrow(token);
-      const link = await this.getSignupLink(payload.nonce);
-      return {
-        valid: true,
-        sessionKey: this.signupSessionKey(payload.nonce),
-        payload,
-        link: link
-          ? {
-              telegramChatId: link.telegramChatId?.toString?.() ?? link.telegramChatId,
-              expiresAt: link.expiresAt,
-              otpSet: Boolean(link.otpHash),
-              otpExpiresAt: link.otpExpiresAt ?? undefined,
-            }
-          : null,
-      };
+      const { sessionId, session } = await this.resolveSignupSession(ref);
+      return { valid: true, sessionId, session };
     } catch (err) {
       return { valid: false, error: (err as Error)?.message };
     }

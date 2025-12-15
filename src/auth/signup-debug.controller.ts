@@ -11,6 +11,6 @@ export class SignupDebugController {
 
   @Get("signup-session/:id")
   async getDebug(@Param("id") id: string): Promise<any> {
-    return this.service.debugSignupSession(id);
+    return this.service.debugSignupSession({ signupSessionId: id });
   }
 }

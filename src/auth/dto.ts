@@ -149,13 +149,14 @@ export class SignupSessionStartDto {
 }
 
 export class SignupSessionTokenDto {
-  @ApiProperty()
-  @Transform(({ value, obj }) => cleanString(value ?? obj.signupSessionId ?? obj.signupSessionToken))
+  @ApiProperty({ required: false })
+  @Transform(({ value, obj }) => cleanString(value ?? obj.signupSessionToken ?? obj.signupSessionId))
+  @IsOptional()
   @IsString()
-  signupSessionToken!: string;
+  signupSessionToken?: string;
 
   @ApiProperty({ required: false, description: 'Legacy compatibility' })
-  @Transform(({ value }) => cleanNullableString(value))
+  @Transform(({ value, obj }) => cleanString(value ?? obj.signupSessionId ?? obj.signupSessionToken))
   @IsOptional()
   @IsString()
   signupSessionId?: string;

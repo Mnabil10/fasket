@@ -55,21 +55,30 @@ export class AuthController {
 
   @Post('signup/telegram/link-token')
   signupTelegramLink(@Body() dto: SignupLinkTokenDto, @Req() req: Request) {
-    return this.service.signupCreateLinkToken(dto.signupSessionToken, req.headers['x-correlation-id'] as string | undefined);
+    return this.service.signupCreateLinkToken(
+      { signupSessionId: dto.signupSessionId, signupSessionToken: dto.signupSessionToken },
+      req.headers['x-correlation-id'] as string | undefined,
+    );
   }
 
   @Get('signup/telegram/link-status')
   signupLinkStatus(@Query() query: SignupSessionTokenDto, @Req() req: Request) {
-    return this.service.signupLinkStatus(query.signupSessionToken, req.headers['x-correlation-id'] as string | undefined);
+    return this.service.signupLinkStatus(
+      { signupSessionId: query.signupSessionId, signupSessionToken: query.signupSessionToken },
+      req.headers['x-correlation-id'] as string | undefined,
+    );
   }
 
   @Post('signup/request-otp')
   @Throttle({ otpSignup: {} })
   signupRequestOtp(@Body() dto: SignupSessionTokenDto, @Req() req: Request) {
-    return this.service.signupRequestOtp(dto.signupSessionToken, {
-      ip: req.ip,
-      correlationId: req.headers['x-correlation-id'] as string | undefined,
-    });
+    return this.service.signupRequestOtp(
+      { signupSessionId: dto.signupSessionId, signupSessionToken: dto.signupSessionToken },
+      {
+        ip: req.ip,
+        correlationId: req.headers['x-correlation-id'] as string | undefined,
+      },
+    );
   }
 
   @Post('signup/verify')
@@ -84,11 +93,14 @@ export class AuthController {
   @Post('signup/verify-session')
   @Throttle({ otpVerify: {} })
   signupVerifySession(@Body() dto: SignupVerifySessionDto, @Req() req: Request) {
-    return this.service.signupVerifySession(dto, {
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-      correlationId: req.headers['x-correlation-id'] as string | undefined,
-    });
+    return this.service.signupVerifySession(
+      { signupSessionId: dto.signupSessionId, signupSessionToken: dto.signupSessionToken, otp: dto.otp },
+      {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        correlationId: req.headers['x-correlation-id'] as string | undefined,
+      },
+    );
   }
 
   @Post('login')
