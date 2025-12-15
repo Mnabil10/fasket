@@ -10,7 +10,7 @@ export class SignupDebugController {
   constructor(private readonly service: AuthService) {}
 
   @Get("signup-session/:id")
-  async getDebug(@Param("id") id: string) {
+  async getDebug(@Param("id") id: string): Promise<any> {
     return this.service.debugSignupSession(id);
   }
 }
