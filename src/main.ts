@@ -224,6 +224,8 @@ async function bootstrap() {
     'https://admin.fasket.cloud',
     'https://automation.fasket.cloud',
     'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
     'http://localhost:8100',
     'http://localhost:4200',
     'capacitor://localhost',
