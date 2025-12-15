@@ -48,12 +48,18 @@ export class AuthService {
     private jwt: JwtService,
     private readonly rateLimiter: AuthRateLimitService,
     private readonly config: ConfigService,
-    @Inject(forwardRef(() => OtpService)) private readonly otp: OtpService,
-    @Inject(CACHE_MANAGER) private readonly cache: Cache,
-    private readonly telegram: TelegramService,
-  ) {}
+  @Inject(forwardRef(() => OtpService)) private readonly otp: OtpService,
+  @Inject(CACHE_MANAGER) private readonly cache: Cache,
+  private readonly telegram: TelegramService,
+) {}
   private readonly logger = new Logger(AuthService.name);
   private readonly otpDigits = 6;
+  private readonly signupSessionTtlSeconds =
+    Number(process.env.SIGNUP_SESSION_TTL_SECONDS) || Number(process.env.SIGNUP_SESSION_TTL) || 900;
+  private readonly linkTokenTtlSeconds =
+    Number(process.env.TELEGRAM_LINK_TOKEN_TTL_SECONDS) ||
+    Number(process.env.TELEGRAM_LINK_TOKEN_TTL_MIN) * 60 ||
+    600;
 
   private normalizeEmail(email?: string | null) {
     return email ? email.trim().toLowerCase() : undefined;
@@ -233,7 +239,7 @@ export class AuthService {
       return this.fail('PHONE_ALREADY_USED', 'Phone already registered');
     }
     const sessionId = `sess_${randomUUID().replace(/-/g, '')}`;
-    const ttlSeconds = Number(this.config.get('SIGNUP_SESSION_TTL_SECONDS') ?? 900);
+    const ttlSeconds = this.signupSessionTtlSeconds || 900;
     const expiresAt = Date.now() + ttlSeconds * 1000;
     const session: SignupSession = {
       id: sessionId,
@@ -257,7 +263,7 @@ export class AuthService {
     const session = await this.getSignupSession(signupSessionId);
     if (!session.ok) return session;
     const token = `lt_${randomUUID().replace(/-/g, '')}`;
-    const ttl = Number(this.config.get('TELEGRAM_LINK_TOKEN_TTL_MIN') ?? 10) * 60;
+    const ttl = this.linkTokenTtlSeconds || 600;
     const data = { signupSessionId: session.data.id, expiresAt: Date.now() + ttl * 1000, usedAt: undefined as number | undefined };
     await this.cache.set(this.signupLinkTokenKey(token), data, ttl);
     return this.ok({
@@ -549,11 +555,11 @@ export class AuthService {
 
   // --- signup session helpers ---
   private signupSessionKey(id: string) {
-    return `signup:session:${id}`;
+    return `signupSession:${id}`;
   }
 
   private signupLinkTokenKey(token: string) {
-    return `signup:linktoken:${token}`;
+    return `linkToken:${token}`;
   }
 
   private async getSignupSession(
