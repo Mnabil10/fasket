@@ -12,6 +12,7 @@ import { TwoFaGuard } from '../common/guards/twofa.guard';
 import { PasswordResetModule } from '../password-reset/password-reset.module';
 import { OtpModule } from '../otp/otp.module';
 import { TelegramModule } from '../telegram/telegram.module';
+import { AutomationModule } from '../automation/automation.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { TelegramModule } from '../telegram/telegram.module';
     forwardRef(() => PasswordResetModule),
     forwardRef(() => OtpModule),
     forwardRef(() => TelegramModule),
+    forwardRef(() => AutomationModule),
   ],
   controllers: [AuthController, AuthCompatController, SignupDebugController],
   providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy, AuthRateLimitService, TwoFaGuard],

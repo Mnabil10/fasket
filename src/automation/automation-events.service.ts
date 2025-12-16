@@ -8,6 +8,7 @@ import { AutomationProcessor } from './automation.processor';
 import { createHash } from 'crypto';
 
 export interface AutomationEmitOptions {
+  id?: string;
   tx?: Prisma.TransactionClient;
   dedupeKey?: string;
   nextAttemptAt?: Date;
@@ -52,6 +53,7 @@ export class AutomationEventsService {
     }
     const event = await client.automationEvent.create({
       data: {
+        id: options.id,
         type,
         payload: payload as any,
         status: AutomationEventStatus.PENDING,

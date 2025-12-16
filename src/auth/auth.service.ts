@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -21,6 +22,7 @@ import { normalizePhoneToE164 } from '../common/utils/phone.util';
 import { TelegramService } from '../telegram/telegram.service';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
+import { AutomationEventsService } from '../automation/automation-events.service';
 
 interface PendingSignup {
   name: string;
@@ -71,6 +73,7 @@ export class AuthService {
   @Inject(forwardRef(() => OtpService)) private readonly otp: OtpService,
   @Inject(CACHE_MANAGER) private readonly cache: Cache,
   private readonly telegram: TelegramService,
+  private readonly automation: AutomationEventsService,
 ) {}
   private readonly logger = new Logger(AuthService.name);
   private readonly otpDigits = 6;
@@ -325,22 +328,46 @@ export class AuthService {
   async signupConfirmLinkToken(
     _linkToken: string | undefined,
     payload: { chatId: bigint; telegramUserId?: bigint; telegramUsername?: string },
+    ref?: { signupSessionId?: string; signupSessionToken?: string },
   ) {
-    const session = await this.findLatestPendingSignupSession();
+    let session: SignupSession | null = null;
+    try {
+      if (ref?.signupSessionId || ref?.signupSessionToken) {
+        const resolved = await this.resolveSignupSession(
+          { signupSessionId: ref.signupSessionId, signupSessionToken: ref.signupSessionToken },
+          undefined,
+        );
+        session = resolved.session;
+      }
+    } catch {
+      session = null;
+    }
+    if (!session) {
+      session = await this.findLatestPendingSignupSession();
+    }
     if (!session) {
       return this.fail('SESSION_NOT_FOUND', 'No pending signup session found');
     }
+
+    if (session.telegramChatId && session.telegramChatId !== payload.chatId) {
+      return this.fail('CHAT_ALREADY_LINKED', 'Signup session already linked to another Telegram chat');
+    }
+
+    // Idempotent: if already linked to same chat, just return success
+    if (session.telegramChatId && session.telegramChatId === payload.chatId) {
+      return this.ok({ signupSessionId: session.id, linked: true });
+    }
+
     const updated = await this.prisma.signupSession.updateMany({
       where: {
         id: session.id,
-        status: 'PENDING_TELEGRAM',
-        telegramChatId: null,
+        status: { in: ['PENDING_TELEGRAM', 'TELEGRAM_LINKED', 'OTP_REQUESTED'] },
         expiresAt: { gt: new Date() },
       },
       data: {
         telegramChatId: payload.chatId,
-        telegramUserId: payload.telegramUserId,
-        telegramUsername: payload.telegramUsername,
+        telegramUserId: payload.telegramUserId ?? null,
+        telegramUsername: payload.telegramUsername ?? null,
         status: 'TELEGRAM_LINKED',
       },
     });
@@ -353,7 +380,11 @@ export class AuthService {
   async signupRequestOtp(ref: { signupSessionId?: string; signupSessionToken?: string }, metadata: { ip?: string; correlationId?: string }) {
     const { session, sessionId } = await this.resolveSignupSession(ref, metadata.correlationId);
     if (!session.linked || !session.telegramChatId) {
-      return this.fail('NOT_LINKED', 'Please link your Telegram account first.');
+      throw new ConflictException({
+        success: false,
+        error: 'TELEGRAM_NOT_LINKED',
+        message: 'TELEGRAM_NOT_LINKED',
+      });
     }
     const otp = this.generateOtpCode();
     const requestId = randomUUID();
@@ -370,20 +401,55 @@ export class AuthService {
         status: 'OTP_REQUESTED',
       },
     });
-    const send = await this.telegram.sendSignupOtp({
-      telegramChatId: session.telegramChatId!,
+    const delivery = await this.dispatchSignupOtpAutomation({
+      session,
       otp,
       expiresInSeconds,
       requestId,
     });
-    if (!send.ok) {
-      return this.fail('TELEGRAM_SEND_FAILED', 'Unable to send OTP via Telegram.');
+    if (!delivery) {
+      return this.fail('OTP_DELIVERY_FAILED', 'Unable to send OTP at this time.');
     }
     return this.ok({
       channel: 'telegram',
       expiresInSeconds,
       requestId,
     });
+  }
+
+  private async dispatchSignupOtpAutomation(params: {
+    session: SignupSession;
+    otp: string;
+    expiresInSeconds: number;
+    requestId: string;
+  }) {
+    try {
+      const chatId = params.session.telegramChatId ? this.toAutomationChatId(params.session.telegramChatId) : undefined;
+      if (!chatId) return false;
+      await this.automation.emit(
+        'auth.otp.requested',
+        {
+          phone: params.session.phone,
+          otpId: params.requestId,
+          purpose: 'SIGNUP',
+          otp: params.otp,
+          expiresInSeconds: params.expiresInSeconds,
+          channel: 'fallback',
+          telegramChatId: chatId,
+          requestId: params.requestId,
+        },
+        { id: params.requestId },
+      );
+      return true;
+    } catch (err) {
+      this.logger.warn({
+        msg: 'Signup OTP automation dispatch failed',
+        error: (err as Error)?.message,
+        sessionId: params.session.id,
+        requestId: params.requestId,
+      });
+      return false;
+    }
   }
 
   async signupVerifySession(
@@ -744,6 +810,11 @@ export class AuthService {
     const s = chatId.toString();
     if (s.length <= 4) return '****';
     return `${'*'.repeat(Math.max(0, s.length - 4))}${s.slice(-4)}`;
+  }
+
+  private toAutomationChatId(chatId: bigint) {
+    const asNumber = Number(chatId);
+    return Number.isSafeInteger(asNumber) ? asNumber : chatId.toString();
   }
 
   private generateOtpCode() {

@@ -12,6 +12,10 @@ import { ConfigService } from '@nestjs/config';
 class ConfirmLinkDto {
   @ApiProperty({ required: false }) @IsOptional() @IsString()
   linkToken?: string;
+  @ApiProperty({ required: false }) @IsOptional() @IsString()
+  signupSessionId?: string;
+  @ApiProperty({ required: false }) @IsOptional() @IsString()
+  signupSessionToken?: string;
   @ApiProperty() @Matches(/^\d+$/, { message: 'telegramChatId must be numeric' })
   telegramChatId!: string;
   @ApiProperty({ required: false }) @IsOptional() @Matches(/^\d+$/, { message: 'telegramUserId must be numeric' })
@@ -46,11 +50,15 @@ export class TelegramInternalController {
     const correlationId = (dto as any)?.correlationId || undefined;
     this.logger.debug({ msg: 'confirm-link called', correlationId, chatId: dto.telegramChatId });
     try {
-      const sessionResult = await this.auth.signupConfirmLinkToken(dto.linkToken?.trim(), {
-        chatId: this.toBigInt(dto.telegramChatId, 'telegramChatId'),
-        telegramUserId: dto.telegramUserId ? this.toBigInt(dto.telegramUserId, 'telegramUserId') : undefined,
-        telegramUsername: dto.telegramUsername?.trim(),
-      });
+      const sessionResult = await this.auth.signupConfirmLinkToken(
+        dto.linkToken?.trim(),
+        {
+          chatId: this.toBigInt(dto.telegramChatId, 'telegramChatId'),
+          telegramUserId: dto.telegramUserId ? this.toBigInt(dto.telegramUserId, 'telegramUserId') : undefined,
+          telegramUsername: dto.telegramUsername?.trim(),
+        },
+        { signupSessionId: dto.signupSessionId, signupSessionToken: dto.signupSessionToken },
+      );
       if (sessionResult && (sessionResult as any).success !== undefined) {
         this.logger.debug({ msg: 'confirm-link linked signup session', correlationId, chatId: dto.telegramChatId });
         return sessionResult;

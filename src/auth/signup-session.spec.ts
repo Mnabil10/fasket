@@ -1,92 +1,179 @@
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
+import { AutomationEventsService } from '../automation/automation-events.service';
 
-describe('Signup session flow (stateless)', () => {
-  const configValues: Record<string, any> = {
-    SIGNUP_SESSION_SECRET: 'test-signup-secret',
-    TELEGRAM_BOT_USERNAME: 'TestBot',
-    OTP_TTL_SECONDS: 120,
-    OTP_MAX_ATTEMPTS: 3,
+class MemoryCache {
+  private store = new Map<string, any>();
+  async get<T>(key: string): Promise<T | undefined> {
+    return this.store.get(key);
+  }
+  async set<T>(key: string, value: T, _ttl?: number): Promise<void> {
+    this.store.set(key, value);
+  }
+  async del(key: string) {
+    this.store.delete(key);
+  }
+}
+
+class FakePrisma {
+  private sessions = new Map<string, any>();
+
+  user = {
+    findFirst: jest.fn().mockResolvedValue(null),
+    findUnique: jest.fn().mockResolvedValue(null),
   };
 
+  sessionLog = { create: jest.fn() };
+
+  signupSession = {
+    create: jest.fn(this.createSession.bind(this)),
+    findUnique: jest.fn(this.findSession.bind(this)),
+    findFirst: jest.fn(this.findFirstSession.bind(this)),
+    updateMany: jest.fn(this.updateManySessions.bind(this)),
+    update: jest.fn(this.updateSession.bind(this)),
+  };
+
+  getSession(id: string) {
+    return this.sessions.get(id);
+  }
+
+  private async createSession({ data }: any) {
+    const record = { ...data };
+    this.sessions.set(record.id, record);
+    return { ...record };
+  }
+
+  private async findSession({ where: { id } }: any) {
+    const record = this.sessions.get(id);
+    return record ? { ...record } : null;
+  }
+
+  private async findFirstSession({ where, orderBy }: any) {
+    const matches = Array.from(this.sessions.values()).filter((session) => {
+      if (where.status && session.status !== where.status) return false;
+      if (where.telegramChatId === null && session.telegramChatId !== null && session.telegramChatId !== undefined) {
+        return false;
+      }
+      if (where.expiresAt?.gt && !(session.expiresAt > where.expiresAt.gt)) return false;
+      return true;
+    });
+    if (!matches.length) return null;
+    if (orderBy?.createdAt === 'desc') {
+      matches.sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1));
+    }
+    return { ...matches[0] };
+  }
+
+  private async updateManySessions({ where, data }: any) {
+    const record = this.sessions.get(where.id);
+    if (!record) return { count: 0 };
+    if (where.status?.in && !where.status.in.includes(record.status)) return { count: 0 };
+    if (where.expiresAt?.gt && !(record.expiresAt > where.expiresAt.gt)) return { count: 0 };
+    const next = { ...record, ...data };
+    this.sessions.set(where.id, next);
+    return { count: 1 };
+  }
+
+  private async updateSession({ where, data }: any) {
+    const record = this.sessions.get(where.id);
+    if (!record) {
+      throw new Error('Session not found');
+    }
+    const next = { ...record, ...data };
+    this.sessions.set(where.id, next);
+    return { ...next };
+  }
+}
+
+describe('Signup session flow (telegram)', () => {
+  const configValues: Record<string, any> = {
+    SIGNUP_SESSION_SECRET: 'test-signup-secret',
+    SIGNUP_SESSION_TTL_SECONDS: 900,
+    OTP_TTL_SECONDS: 300,
+    OTP_MAX_ATTEMPTS: 3,
+    OTP_SECRET: 'otp-secret',
+    JWT_ACCESS_SECRET: 'jwt-access',
+    JWT_REFRESH_SECRET: 'jwt-refresh',
+  };
   const config = { get: (key: string) => configValues[key] } as any;
   const rateLimiter = { ensureCanAttempt: jest.fn(), trackFailure: jest.fn(), reset: jest.fn() } as any;
-  const cache = {
-    set: jest.fn(),
-    get: jest.fn(),
-    del: jest.fn(),
-  } as any;
+  const cache = new MemoryCache() as any;
+  const otp = {} as any;
+  const telegram = {} as any;
 
-  const telegram = {
-    sendSignupOtp: jest.fn().mockResolvedValue({ ok: true, blocked: false }),
-  } as any;
-
-  let signupLinks: Map<string, any>;
-  let prisma: any;
+  let prisma: FakePrisma;
+  let automationEmit: jest.Mock;
+  let service: AuthService;
 
   beforeEach(() => {
-    signupLinks = new Map();
-    prisma = {
-      user: { findFirst: jest.fn().mockResolvedValue(null) },
-      signupLink: {
-        findUnique: jest.fn(async ({ where: { sessionKey } }: any) => signupLinks.get(sessionKey) ?? null),
-        upsert: jest.fn(async ({ where: { sessionKey }, create, update }: any) => {
-          const next = signupLinks.get(sessionKey) ? { ...signupLinks.get(sessionKey), ...update } : { ...create };
-          if (!next.createdAt) next.createdAt = new Date();
-          signupLinks.set(sessionKey, next);
-          return next;
-        }),
-        update: jest.fn(async ({ where: { sessionKey }, data }: any) => {
-          const current = signupLinks.get(sessionKey) ?? {};
-          const next = { ...current, ...data };
-          signupLinks.set(sessionKey, next);
-          return next;
-        }),
-        delete: jest.fn(async ({ where: { sessionKey } }: any) => signupLinks.delete(sessionKey)),
-      },
-      sessionLog: { create: jest.fn() },
-    };
-    telegram.sendSignupOtp.mockClear();
-  });
-
-  it('creates session token, links telegram, and requests OTP', async () => {
-    const service = new AuthService(
+    prisma = new FakePrisma();
+    automationEmit = jest.fn().mockResolvedValue({ id: 'event-1' });
+    const automation = { emit: automationEmit } as unknown as AutomationEventsService;
+    service = new AuthService(
       prisma as any,
       new JwtService(),
       rateLimiter,
       config,
-      {} as any,
+      otp as any,
       cache,
-      telegram,
+      telegram as any,
+      automation,
     );
+  });
 
+  it('stores telegram chat id on signup session and is idempotent', async () => {
     const start = await service.signupStartSession(
       { phone: '+201234567890', country: 'EG', fullName: 'Test User' },
       {},
     );
-    expect(start.success).toBe(true);
-    expect(start.signupSessionToken).toBeTruthy();
 
-    const linkToken = await service.signupCreateLinkToken(start.signupSessionToken, 'corr-1');
-    expect(linkToken.success).toBe(true);
-    expect(linkToken.telegramLinkToken.startsWith('lt_')).toBe(true);
-    expect(linkToken.deeplink).toContain('TestBot');
+    const first = await service.signupConfirmLinkToken(
+      undefined,
+      { chatId: BigInt(555), telegramUserId: BigInt(777), telegramUsername: 'tester' },
+      { signupSessionId: start.signupSessionId },
+    );
+    expect(first.success).toBe(true);
+    const stored = prisma.getSession(start.signupSessionId);
+    expect(stored.telegramChatId).toBe(BigInt(555));
+    expect(stored.telegramUserId).toBe(BigInt(777));
+    expect(stored.telegramUsername).toBe('tester');
+    expect(stored.status).toBe('TELEGRAM_LINKED');
 
-    const confirm = await service.signupConfirmLinkToken(linkToken.telegramLinkToken, { chatId: BigInt(12345) });
-    expect(confirm.success).toBe(true);
-    expect(prisma.signupLink.upsert).toHaveBeenCalled();
+    const second = await service.signupConfirmLinkToken(
+      undefined,
+      { chatId: BigInt(555) },
+      { signupSessionId: start.signupSessionId },
+    );
+    expect(second.success).toBe(true);
+    expect((prisma.signupSession.updateMany as jest.Mock).mock.calls.length).toBe(1);
+  });
 
-    const status = await service.signupLinkStatus(start.signupSessionToken);
-    expect(status.success).toBe(true);
-    expect(status.linked).toBe(true);
+  it('rejects OTP requests when telegram is not linked', async () => {
+    const start = await service.signupStartSession(
+      { phone: '+201000000000', country: 'EG', fullName: 'Test User' },
+      {},
+    );
 
-    const otpRequest = await service.signupRequestOtp(start.signupSessionToken, { ip: '1.1.1.1' });
+    await expect(service.signupRequestOtp({ signupSessionId: start.signupSessionId }, {})).rejects.toMatchObject({
+      response: expect.objectContaining({ error: 'TELEGRAM_NOT_LINKED', message: 'TELEGRAM_NOT_LINKED' }),
+    });
+  });
+
+  it('emits automation event with telegramChatId when requesting OTP', async () => {
+    const start = await service.signupStartSession(
+      { phone: '+201111111111', country: 'EG', fullName: 'Test User' },
+      {},
+    );
+    await service.signupConfirmLinkToken(undefined, { chatId: BigInt(123456789) }, { signupSessionId: start.signupSessionId });
+
+    const otpRequest = await service.signupRequestOtp({ signupSessionId: start.signupSessionId }, {});
+
     expect(otpRequest.success).toBe(true);
-    expect(telegram.sendSignupOtp).toHaveBeenCalled();
-
-    const stored = Array.from(signupLinks.values())[0];
-    expect(stored).toBeTruthy();
-    expect(stored.otpHash).toBeTruthy();
-    expect(stored.otpAttempts).toBe(0);
+    expect(automationEmit).toHaveBeenCalledTimes(1);
+    const [eventType, payload, options] = automationEmit.mock.calls[0];
+    expect(eventType).toBe('auth.otp.requested');
+    expect(payload.telegramChatId).toBe(123456789);
+    expect(payload.otpId).toBe(otpRequest.requestId);
+    expect(options?.id).toBe(otpRequest.requestId);
   });
 });
