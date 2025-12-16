@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiProperty, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { UserRole } from '@prisma/client';
@@ -106,5 +106,54 @@ export class AdminCustomersController {
       reason: dto.reason,
       actorId: actor.userId,
     });
+  }
+
+  @Delete(':id')
+  @ApiOkResponse({ description: 'Delete customer (only when no orders exist)' })
+  async deleteCustomer(@Param('id') id: string, @CurrentUser() actor: CurrentUserPayload) {
+    const user = await this.svc.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, phone: true, email: true, role: true },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    if (user.role === UserRole.ADMIN) {
+      throw new BadRequestException('Cannot delete admin users');
+    }
+
+    const ordersCount = await this.svc.prisma.order.count({ where: { userId: id } });
+    if (ordersCount > 0) {
+      throw new BadRequestException('Cannot delete user with existing orders');
+    }
+
+    await this.svc.prisma.$transaction([
+      this.svc.prisma.cartItem.deleteMany({ where: { cart: { userId: id } } }),
+      this.svc.prisma.cart.deleteMany({ where: { userId: id } }),
+      this.svc.prisma.address.deleteMany({ where: { userId: id } }),
+      this.svc.prisma.sessionLog.deleteMany({ where: { userId: id } }),
+      this.svc.prisma.loyaltyTransaction.deleteMany({ where: { userId: id } }),
+      this.svc.prisma.loyaltyCycle.deleteMany({ where: { userId: id } }),
+      this.svc.prisma.pushDevice.deleteMany({ where: { userId: id } }),
+      this.svc.prisma.telegramLink.deleteMany({ where: { userId: id } }),
+      this.svc.prisma.user.delete({ where: { id } }),
+    ]);
+
+    await this.svc.audit.log({
+      action: 'user.delete',
+      entity: 'user',
+      entityId: id,
+      before: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+      },
+      after: null,
+      actorId: actor?.userId,
+    });
+
+    return { ok: true };
   }
 }
