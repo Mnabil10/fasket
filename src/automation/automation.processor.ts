@@ -23,6 +23,7 @@ export class AutomationProcessor extends WorkerHost {
   private readonly logger = new Logger(AutomationProcessor.name);
   private readonly webhookUrl: string;
   private readonly hmacSecret: string;
+  private readonly webhookSecret: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -34,6 +35,7 @@ export class AutomationProcessor extends WorkerHost {
     super();
     this.webhookUrl = this.config.get<string>('AUTOMATION_WEBHOOK_URL') ?? '';
     this.hmacSecret = this.config.get<string>('AUTOMATION_HMAC_SECRET') ?? '';
+    this.webhookSecret = this.config.get<string>('AUTOMATION_WEBHOOK_SECRET') ?? '';
   }
 
   async process(job: Job<AutomationJob>): Promise<void> {
@@ -118,6 +120,7 @@ export class AutomationProcessor extends WorkerHost {
       const response = await axios.post(this.webhookUrl, body, {
         headers: {
           'content-type': 'application/json',
+          ...(this.webhookSecret ? { 'x-fasket-secret': this.webhookSecret } : {}),
           'x-fasket-event': event.type,
           'x-fasket-id': event.id,
           'x-fasket-timestamp': String(timestamp),

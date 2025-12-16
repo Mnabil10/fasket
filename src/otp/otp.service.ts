@@ -51,6 +51,7 @@ export class OtpService {
   private readonly otpPerIpLimit: number;
   private readonly automationWebhookUrl?: string;
   private readonly automationHmacSecret?: string;
+  private readonly automationWebhookSecret?: string;
   private readonly secret: string;
   private readonly requestIdTtlSeconds: number;
 
@@ -73,6 +74,7 @@ export class OtpService {
     this.otpPerIpLimit = Number(this.config.get('OTP_PER_IP_LIMIT') ?? 20);
     this.automationWebhookUrl = this.config.get('AUTOMATION_WEBHOOK_URL') ?? undefined;
     this.automationHmacSecret = this.config.get('AUTOMATION_HMAC_SECRET') ?? undefined;
+    this.automationWebhookSecret = this.config.get('AUTOMATION_WEBHOOK_SECRET') ?? undefined;
     this.requestIdTtlSeconds = Math.max(this.otpTtlSec, this.otpRateLimitSeconds);
     this.secret = this.config.get('OTP_SECRET') ?? this.config.get('JWT_ACCESS_SECRET') ?? 'otp-secret';
     this.ensureSecretStrength();
@@ -348,6 +350,7 @@ export class OtpService {
       const response = await axios.post(this.automationWebhookUrl, body, {
         headers: {
           'content-type': 'application/json',
+          ...(this.automationWebhookSecret ? { 'x-fasket-secret': this.automationWebhookSecret } : {}),
           'x-fasket-event': payload.event_type,
           'x-fasket-id': payload.event_id,
           'x-fasket-timestamp': String(timestamp),

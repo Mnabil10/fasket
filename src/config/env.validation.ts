@@ -72,6 +72,7 @@ const baseSchema = z.object({
 
   AUTOMATION_WEBHOOK_URL: z.string().url().optional(),
   AUTOMATION_HMAC_SECRET: z.string().optional(),
+  AUTOMATION_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_OTP_WEBHOOK_URL: z.string().url().optional(),
   TELEGRAM_OTP_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_BOT_USERNAME: z.string().optional(),
@@ -112,6 +113,12 @@ export function validateEnv(config: Record<string, unknown>) {
       ctx.addIssue({
         code: 'custom',
         message: 'LOCAL_UPLOADS_BASE_URL is required when using local uploads',
+      });
+    }
+    if (env.NODE_ENV === 'production' && !env.AUTOMATION_WEBHOOK_SECRET) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'AUTOMATION_WEBHOOK_SECRET is required in production',
       });
     }
     // Internal secret is optional; guard will fall back to INTERNAL_TELEGRAM_SECRET or JWT_ACCESS_SECRET
