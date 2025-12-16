@@ -8,8 +8,8 @@ import { InternalSecretGuard } from '../common/guards/internal-secret.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 class ConfirmLinkDto {
-  @ApiProperty() @IsString()
-  linkToken!: string;
+  @ApiProperty({ required: false }) @IsOptional() @IsString()
+  linkToken?: string;
   @ApiProperty() @Matches(/^\d+$/, { message: 'telegramChatId must be numeric' })
   telegramChatId!: string;
   @ApiProperty({ required: false }) @IsOptional() @Matches(/^\d+$/, { message: 'telegramUserId must be numeric' })
@@ -40,8 +40,7 @@ export class TelegramInternalController {
   @Post('confirm-link')
   async confirmLink(@Body() dto: ConfirmLinkDto) {
     try {
-      // First, try to handle signup-session link tokens (no user yet)
-      const sessionResult = await this.auth.signupConfirmLinkToken(dto.linkToken.trim(), {
+      const sessionResult = await this.auth.signupConfirmLinkToken(dto.linkToken?.trim(), {
         chatId: this.toBigInt(dto.telegramChatId, 'telegramChatId'),
         telegramUserId: dto.telegramUserId ? this.toBigInt(dto.telegramUserId, 'telegramUserId') : undefined,
         telegramUsername: dto.telegramUsername?.trim(),
@@ -50,6 +49,9 @@ export class TelegramInternalController {
         return sessionResult;
       }
 
+      if (!dto.linkToken) {
+        return { success: false, error: 'TOKEN_INVALID' };
+      }
       const token = await this.telegram.consumeLinkToken(dto.linkToken.trim());
       const telegramChatId = this.toBigInt(dto.telegramChatId, 'telegramChatId');
       const telegramUserId = dto.telegramUserId ? this.toBigInt(dto.telegramUserId, 'telegramUserId') : undefined;

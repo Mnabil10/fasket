@@ -48,6 +48,7 @@ interface SignupSession {
   createdAt: number;
   expiresAt: number;
   linked: boolean;
+  status?: 'PENDING_TELEGRAM' | 'TELEGRAM_LINKED' | 'OTP_REQUESTED' | 'COMPLETED';
   telegramChatId?: bigint;
   telegramUserId?: bigint;
   telegramUsername?: string;
@@ -272,9 +273,11 @@ export class AuthService {
       createdAt: Date.now(),
       expiresAt,
       linked: false,
+      status: 'PENDING_TELEGRAM',
       otpAttempts: 0,
     };
     await this.cache.set(this.signupSessionKey(sessionId), session, this.signupSessionTtlSeconds);
+    await this.enqueuePendingSignup(sessionId);
     const { token, payload } = await this.signSignupSessionToken({
       sessionId,
       phone: session.phone,
@@ -299,52 +302,40 @@ export class AuthService {
     correlationId?: string,
   ) {
     const { session, sessionId } = await this.resolveSignupSession(ref, correlationId);
-    const remainingSeconds = Math.max(0, Math.ceil((session.expiresAt - Date.now()) / 1000));
-    if (remainingSeconds <= 0) {
-      throw new UnauthorizedException({ success: false, error: 'SESSION_EXPIRED', message: 'Signup session expired' });
-    }
-    const ttl = Math.min(this.linkTokenTtlSeconds, remainingSeconds);
-    const linkToken = `lt_${randomUUID().replace(/-/g, '')}`;
-    const data = { sessionId, expiresAt: Date.now() + ttl * 1000, usedAt: undefined as number | undefined };
-    await this.cache.set(this.signupLinkTokenKey(linkToken), data, ttl);
-    this.debugLog('signup.link-token.write', {
-      ttl,
-      correlationId,
-      sessionKey: this.signupSessionKey(sessionId),
-    });
     return this.ok({
-      linkToken: linkToken,
-      telegramLinkToken: linkToken,
-      deeplink: `https://t.me/${this.config.get<string>('TELEGRAM_BOT_USERNAME') || 'FasketSuberBot'}?start=${linkToken}`,
-      expiresInSeconds: ttl,
+      linkToken: '',
+      telegramLinkToken: '',
+      deeplink: `https://t.me/${this.config.get<string>('TELEGRAM_BOT_USERNAME') || 'FasketSuberBot'}`,
+      expiresInSeconds: this.signupSessionTtlSeconds,
     });
   }
 
   async signupLinkStatus(ref: { signupSessionId?: string; signupSessionToken?: string }, correlationId?: string) {
     const { session } = await this.resolveSignupSession(ref, correlationId);
     return this.ok({
-      linked: session.linked,
+      linked: Boolean(session.telegramChatId),
       telegramChatIdMasked: session.telegramChatId ? this.maskChatId(session.telegramChatId) : undefined,
     });
   }
 
-  async signupConfirmLinkToken(linkToken: string, payload: { chatId: bigint; telegramUserId?: bigint; telegramUsername?: string }) {
-    const stored = await this.cache.get<any>(this.signupLinkTokenKey(linkToken));
-    if (!stored) return this.fail('TOKEN_INVALID', 'Invalid link token');
-    if (stored.usedAt) return this.fail('TOKEN_USED', 'Token already used');
-    if (stored.expiresAt < Date.now()) return this.fail('TOKEN_EXPIRED', 'Token expired');
-    const session = await this.getSignupSessionOrThrow(stored.sessionId, undefined);
+  async signupConfirmLinkToken(
+    _linkToken: string | undefined,
+    payload: { chatId: bigint; telegramUserId?: bigint; telegramUsername?: string },
+  ) {
+    const session = await this.findLatestPendingSignupSession();
+    if (!session) {
+      return this.fail('SESSION_NOT_FOUND', 'No pending signup session found');
+    }
+    const ttlSession = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
     const updated: SignupSession = {
       ...session,
       linked: true,
+      status: 'TELEGRAM_LINKED',
       telegramChatId: payload.chatId,
       telegramUserId: payload.telegramUserId,
       telegramUsername: payload.telegramUsername,
     };
-    const ttlSession = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
     await this.cache.set(this.signupSessionKey(session.id), updated, ttlSession);
-    stored.usedAt = Date.now();
-    await this.cache.set(this.signupLinkTokenKey(linkToken), stored, Math.max(60, Math.ceil((stored.expiresAt - Date.now()) / 1000)));
     return this.ok({ signupSessionId: session.id, linked: true });
   }
 
@@ -683,6 +674,40 @@ export class AuthService {
     throw new UnauthorizedException({ success: false, error: 'SESSION_EXPIRED', message: 'Signup session expired' });
   }
 
+  private async enqueuePendingSignup(sessionId: string) {
+    const key = this.pendingQueueKey();
+    const raw = (await this.cache.get<string>(key)) || '[]';
+    let queue: string[] = [];
+    try {
+      queue = JSON.parse(raw);
+    } catch {
+      queue = [];
+    }
+    queue.push(sessionId);
+    await this.cache.set(key, JSON.stringify(queue), this.signupSessionTtlSeconds);
+  }
+
+  private async findLatestPendingSignupSession(): Promise<SignupSession | null> {
+    const key = this.pendingQueueKey();
+    const raw = (await this.cache.get<string>(key)) || '[]';
+    let queue: string[] = [];
+    try {
+      queue = JSON.parse(raw);
+    } catch {
+      queue = [];
+    }
+    while (queue.length) {
+      const sessionId = queue.pop() as string;
+      const session = await this.cache.get<SignupSession>(this.signupSessionKey(sessionId));
+      if (session && !session.telegramChatId && session.expiresAt > Date.now()) {
+        await this.cache.set(key, JSON.stringify(queue), this.signupSessionTtlSeconds);
+        return session;
+      }
+    }
+    await this.cache.set(key, JSON.stringify([]), this.signupSessionTtlSeconds);
+    return null;
+  }
+
   private async getSignupSessionOrThrow(id: string, correlationId?: string): Promise<SignupSession> {
     const key = this.signupSessionKey(id);
     const session = await this.cache.get<SignupSession>(key);
@@ -698,6 +723,10 @@ export class AuthService {
 
   private signupLinkTokenKey(token: string) {
     return `linkToken:${token}`;
+  }
+
+  private pendingQueueKey() {
+    return 'signupSession:pendingQueue';
   }
 
   private maskChatId(chatId: bigint) {
