@@ -12,14 +12,15 @@ import { createHmac, randomBytes, randomUUID } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { SignupSession as PrismaSignupSession } from '@prisma/client';
 import { AuthRateLimitService } from './auth-rate-limit.service';
 import { buildDeviceInfo } from '../common/utils/device.util';
 import { DomainError, ErrorCode } from '../common/errors';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import type { Cache } from 'cache-manager';
 import { OtpService } from '../otp/otp.service';
 import { normalizePhoneToE164 } from '../common/utils/phone.util';
 import { TelegramService } from '../telegram/telegram.service';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 
 interface PendingSignup {
   name: string;
@@ -40,6 +41,8 @@ interface SignupSessionTokenPayload {
   exp: number;
 }
 
+type SignupSessionStatus = 'PENDING_TELEGRAM' | 'TELEGRAM_LINKED' | 'OTP_REQUESTED' | 'COMPLETED';
+
 interface SignupSession {
   id: string;
   phone: string;
@@ -48,7 +51,7 @@ interface SignupSession {
   createdAt: number;
   expiresAt: number;
   linked: boolean;
-  status?: 'PENDING_TELEGRAM' | 'TELEGRAM_LINKED' | 'OTP_REQUESTED' | 'COMPLETED';
+  status?: SignupSessionStatus;
   telegramChatId?: bigint;
   telegramUserId?: bigint;
   telegramUsername?: string;
@@ -76,14 +79,6 @@ export class AuthService {
   private get signupSessionTtlSeconds() {
     const ttl = Number(this.config.get('SIGNUP_SESSION_TTL_SECONDS') ?? this.config.get('SIGNUP_SESSION_TTL'));
     return Number.isFinite(ttl) && ttl > 0 ? ttl : 900;
-  }
-
-  private get linkTokenTtlSeconds() {
-    const ttlSeconds =
-      Number(this.config.get('TELEGRAM_LINK_TOKEN_TTL_SECONDS')) ||
-      Number(this.config.get('TELEGRAM_LINK_TOKEN_TTL_MIN')) * 60 ||
-      600;
-    return Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : 600;
   }
 
   private normalizeEmail(email?: string | null) {
@@ -265,6 +260,17 @@ export class AuthService {
     }
     const sessionId = `sess_${randomUUID().replace(/-/g, '')}`;
     const expiresAt = Date.now() + this.signupSessionTtlSeconds * 1000;
+    await this.prisma.signupSession.create({
+      data: {
+        id: sessionId,
+        phone: phoneE164,
+        country: input.country?.trim() || 'EG',
+        fullName: input.fullName?.trim() || 'User',
+        createdAt: new Date(),
+        expiresAt: new Date(expiresAt),
+        status: 'PENDING_TELEGRAM',
+      },
+    });
     const session: SignupSession = {
       id: sessionId,
       phone: phoneE164,
@@ -276,8 +282,6 @@ export class AuthService {
       status: 'PENDING_TELEGRAM',
       otpAttempts: 0,
     };
-    await this.cache.set(this.signupSessionKey(sessionId), session, this.signupSessionTtlSeconds);
-    await this.enqueuePendingSignup(sessionId);
     const { token, payload } = await this.signSignupSessionToken({
       sessionId,
       phone: session.phone,
@@ -326,16 +330,23 @@ export class AuthService {
     if (!session) {
       return this.fail('SESSION_NOT_FOUND', 'No pending signup session found');
     }
-    const ttlSession = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
-    const updated: SignupSession = {
-      ...session,
-      linked: true,
-      status: 'TELEGRAM_LINKED',
-      telegramChatId: payload.chatId,
-      telegramUserId: payload.telegramUserId,
-      telegramUsername: payload.telegramUsername,
-    };
-    await this.cache.set(this.signupSessionKey(session.id), updated, ttlSession);
+    const updated = await this.prisma.signupSession.updateMany({
+      where: {
+        id: session.id,
+        status: 'PENDING_TELEGRAM',
+        telegramChatId: null,
+        expiresAt: { gt: new Date() },
+      },
+      data: {
+        telegramChatId: payload.chatId,
+        telegramUserId: payload.telegramUserId,
+        telegramUsername: payload.telegramUsername,
+        status: 'TELEGRAM_LINKED',
+      },
+    });
+    if (!updated.count) {
+      return this.fail('SESSION_NOT_FOUND', 'No pending signup session found');
+    }
     return this.ok({ signupSessionId: session.id, linked: true });
   }
 
@@ -348,15 +359,17 @@ export class AuthService {
     const requestId = randomUUID();
     const expiresInSeconds = Number(this.config.get('OTP_TTL_SECONDS') ?? this.config.get('OTP_TTL_MIN') ?? 300);
     const hash = this.hashOtp(otp);
-    const updated: SignupSession = {
-      ...session,
-      otpHash: hash,
-      otpExpiresAt: Date.now() + expiresInSeconds * 1000,
-      otpAttempts: 0,
-      requestId,
-    };
-    const ttlUpdated = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
-    await this.cache.set(this.signupSessionKey(sessionId), updated, ttlUpdated);
+    const otpExpiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+    await this.prisma.signupSession.update({
+      where: { id: sessionId },
+      data: {
+        otpHash: hash,
+        otpExpiresAt,
+        otpAttempts: 0,
+        requestId,
+        status: 'OTP_REQUESTED',
+      },
+    });
     const send = await this.telegram.sendSignupOtp({
       telegramChatId: session.telegramChatId!,
       otp,
@@ -392,14 +405,16 @@ export class AuthService {
     const valid = this.hashOtp(input.otp?.trim()) === session.otpHash;
 
     if (!valid) {
-      const ttl = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
-      await this.cache.set(this.signupSessionKey(sessionId), { ...session, otpAttempts: attempts }, ttl);
+      await this.prisma.signupSession.update({
+        where: { id: sessionId },
+        data: {
+          otpAttempts: attempts,
+          ...(attempts >= maxAttempts
+            ? { otpExpiresAt: new Date(), otpHash: null, status: 'TELEGRAM_LINKED' }
+            : {}),
+        },
+      });
       if (attempts >= maxAttempts) {
-        await this.cache.set(
-          this.signupSessionKey(sessionId),
-          { ...session, otpExpiresAt: Date.now(), otpHash: undefined },
-          ttl,
-        );
         return this.fail('OTP_TOO_MANY_ATTEMPTS', 'Too many attempts');
       }
       return this.fail('OTP_INVALID', 'Invalid OTP');
@@ -423,7 +438,17 @@ export class AuthService {
       twoFaVerified: true,
     });
     await this.logSession(user.id, { ip: metadata.ip, userAgent: metadata.userAgent });
-    await this.cache.del(this.signupSessionKey(sessionId));
+    await this.prisma.signupSession
+      .update({
+        where: { id: sessionId },
+        data: {
+          status: 'COMPLETED',
+          otpHash: null,
+          otpExpiresAt: null,
+          otpAttempts: 0,
+        },
+      })
+      .catch(() => undefined);
     return this.ok({
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -606,10 +631,6 @@ export class AuthService {
   }
 
   // --- signup session helpers ---
-  private signupSessionKey(id: string) {
-    return `signupSession:${id}`;
-  }
-
   private signupSessionSecret() {
     const secret =
       this.config.get<string>('SIGNUP_SESSION_SECRET') ??
@@ -619,6 +640,26 @@ export class AuthService {
       throw new Error('SIGNUP_SESSION_SECRET is not configured');
     }
     return secret;
+  }
+
+  private mapDbSignupSession(db: PrismaSignupSession): SignupSession {
+    return {
+      id: db.id,
+      phone: db.phone,
+      country: db.country,
+      fullName: db.fullName ?? undefined,
+      createdAt: db.createdAt.getTime(),
+      expiresAt: db.expiresAt.getTime(),
+      linked: Boolean(db.telegramChatId),
+      status: db.status as SignupSessionStatus,
+      telegramChatId: db.telegramChatId ?? undefined,
+      telegramUserId: db.telegramUserId ?? undefined,
+      telegramUsername: db.telegramUsername ?? undefined,
+      requestId: db.requestId ?? undefined,
+      otpHash: db.otpHash ?? undefined,
+      otpExpiresAt: db.otpExpiresAt ? db.otpExpiresAt.getTime() : undefined,
+      otpAttempts: db.otpAttempts ?? undefined,
+    };
   }
 
   private async signSignupSessionToken(
@@ -674,59 +715,29 @@ export class AuthService {
     throw new UnauthorizedException({ success: false, error: 'SESSION_EXPIRED', message: 'Signup session expired' });
   }
 
-  private async enqueuePendingSignup(sessionId: string) {
-    const key = this.pendingQueueKey();
-    const raw = (await this.cache.get<string>(key)) || '[]';
-    let queue: string[] = [];
-    try {
-      queue = JSON.parse(raw);
-    } catch {
-      queue = [];
-    }
-    queue.push(sessionId);
-    await this.cache.set(key, JSON.stringify(queue), this.signupSessionTtlSeconds);
-  }
-
   private async findLatestPendingSignupSession(): Promise<SignupSession | null> {
-    const key = this.pendingQueueKey();
-    const raw = (await this.cache.get<string>(key)) || '[]';
-    let queue: string[] = [];
-    try {
-      queue = JSON.parse(raw);
-    } catch {
-      queue = [];
-    }
-    while (queue.length) {
-      const sessionId = queue.pop() as string;
-      const session = await this.cache.get<SignupSession>(this.signupSessionKey(sessionId));
-      if (session && !session.telegramChatId && session.expiresAt > Date.now()) {
-        await this.cache.set(key, JSON.stringify(queue), this.signupSessionTtlSeconds);
-        return session;
-      }
-    }
-    await this.cache.set(key, JSON.stringify([]), this.signupSessionTtlSeconds);
-    return null;
+    const record = await this.prisma.signupSession.findFirst({
+      where: {
+        status: 'PENDING_TELEGRAM',
+        telegramChatId: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return record ? this.mapDbSignupSession(record) : null;
   }
 
   private async getSignupSessionOrThrow(id: string, correlationId?: string): Promise<SignupSession> {
-    const key = this.signupSessionKey(id);
-    const session = await this.cache.get<SignupSession>(key);
-    this.debugLog('signup.session.read', { key, found: Boolean(session), correlationId });
-    if (!session) {
+    const record = await this.prisma.signupSession.findUnique({ where: { id } });
+    this.debugLog('signup.session.read', { sessionId: id, found: Boolean(record), correlationId });
+    if (!record) {
       throw new NotFoundException({ success: false, error: 'SESSION_NOT_FOUND', message: 'Signup session not found' });
     }
+    const session = this.mapDbSignupSession(record);
     if (session.expiresAt < Date.now()) {
       throw new UnauthorizedException({ success: false, error: 'SESSION_EXPIRED', message: 'Signup session expired' });
     }
     return session;
-  }
-
-  private signupLinkTokenKey(token: string) {
-    return `linkToken:${token}`;
-  }
-
-  private pendingQueueKey() {
-    return 'signupSession:pendingQueue';
   }
 
   private maskChatId(chatId: bigint) {
