@@ -65,8 +65,7 @@ export class OtpService {
     private readonly telegram: TelegramService,
     private readonly context: RequestContextService,
   ) {
-    const otpTtlMin = Number(this.config.get('OTP_TTL_MIN') ?? 5);
-    this.otpTtlSec = Number(this.config.get('OTP_TTL_SECONDS') ?? otpTtlMin * 60);
+    this.otpTtlSec = this.resolveOtpTtlSeconds();
     this.maxAttempts = Number(this.config.get('OTP_MAX_ATTEMPTS') ?? 5);
     this.lockMinutes = Number(this.config.get('OTP_LOCK_MINUTES') ?? 15);
     this.otpRateLimitSeconds = Number(this.config.get('OTP_RATE_LIMIT_SECONDS') ?? 60);
@@ -456,6 +455,30 @@ export class OtpService {
 
   private authDedupeKey(phone: string, purpose: string, otpId: string) {
     return `auth:${this.hashFragment(phone)}:${purpose}:${otpId}`;
+  }
+
+  private resolveOtpTtlSeconds() {
+    const env = (this.config.get<string>('NODE_ENV') || '').toLowerCase();
+    const testTtl = Number(this.config.get('OTP_TTL_SECONDS_TEST'));
+    if (env !== 'production' && Number.isFinite(testTtl) && testTtl > 0) {
+      return testTtl;
+    }
+    const configuredSeconds = Number(this.config.get('OTP_TTL_SECONDS'));
+    if (Number.isFinite(configuredSeconds) && configuredSeconds > 0) {
+      if (env === 'production' && configuredSeconds < 60) {
+        this.logger.warn({
+          msg: 'OTP TTL too low in production; using default fallback',
+          configuredSeconds,
+        });
+      } else {
+        return configuredSeconds;
+      }
+    }
+    const configuredMinutes = Number(this.config.get('OTP_TTL_MIN'));
+    if (Number.isFinite(configuredMinutes) && configuredMinutes > 0) {
+      return configuredMinutes * 60;
+    }
+    return env === 'production' ? 180 : 120;
   }
 
   private hashFragment(value: string) {

@@ -169,6 +169,7 @@ describe('Signup session flow (telegram)', () => {
     const otpRequest = await service.signupRequestOtp({ signupSessionId: start.signupSessionId }, {});
 
     expect(otpRequest.success).toBe(true);
+    expect(otpRequest.expiresInSeconds).toBe(configValues.OTP_TTL_SECONDS);
     expect(automationEmit).toHaveBeenCalledTimes(1);
     const [eventType, payload, options] = automationEmit.mock.calls[0];
     expect(eventType).toBe('auth.otp.requested');

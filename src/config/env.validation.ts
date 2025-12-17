@@ -21,6 +21,7 @@ const baseSchema = z.object({
   OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   OTP_LOCK_MINUTES: z.coerce.number().int().positive().default(15),
   OTP_RATE_LIMIT_SECONDS: z.coerce.number().int().positive().default(60),
+  OTP_TTL_SECONDS_TEST: z.coerce.number().int().positive().optional(),
   OTP_DAILY_LIMIT: z.coerce.number().int().positive().optional(),
   OTP_MAX_PER_DAY: z.coerce.number().int().positive().optional(),
   OTP_PER_IP_LIMIT: z.coerce.number().int().positive().default(20),

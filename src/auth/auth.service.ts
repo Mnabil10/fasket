@@ -388,7 +388,7 @@ export class AuthService {
     }
     const otp = this.generateOtpCode();
     const requestId = randomUUID();
-    const expiresInSeconds = Number(this.config.get('OTP_TTL_SECONDS') ?? this.config.get('OTP_TTL_MIN') ?? 300);
+    const expiresInSeconds = this.resolveOtpTtlSeconds();
     const hash = this.hashOtp(otp);
     const otpExpiresAt = new Date(Date.now() + expiresInSeconds * 1000);
     await this.prisma.signupSession.update({
@@ -815,6 +815,27 @@ export class AuthService {
   private toAutomationChatId(chatId: bigint) {
     const asNumber = Number(chatId);
     return Number.isSafeInteger(asNumber) ? asNumber : chatId.toString();
+  }
+
+  private resolveOtpTtlSeconds() {
+    const env = (this.config.get<string>('NODE_ENV') || '').toLowerCase();
+    const testTtl = Number(this.config.get('OTP_TTL_SECONDS_TEST'));
+    if (env !== 'production' && Number.isFinite(testTtl) && testTtl > 0) {
+      return testTtl;
+    }
+    const configuredSeconds = Number(this.config.get('OTP_TTL_SECONDS'));
+    if (Number.isFinite(configuredSeconds) && configuredSeconds > 0) {
+      if (env === 'production' && configuredSeconds < 60) {
+        this.logger.warn({ msg: 'OTP TTL too low in production; falling back to default', configuredSeconds });
+      } else {
+        return configuredSeconds;
+      }
+    }
+    const configuredMinutes = Number(this.config.get('OTP_TTL_MIN'));
+    if (Number.isFinite(configuredMinutes) && configuredMinutes > 0) {
+      return configuredMinutes * 60;
+    }
+    return env === 'production' ? 180 : 120;
   }
 
   private generateOtpCode() {
