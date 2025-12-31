@@ -1,0 +1,1 @@
+-- Deprecated migration (no-op). Replaced by 20251231024627_marketplace_multi_provider_v2.

@@ -10,6 +10,7 @@
     "postinstall": "prisma generate",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint \"{src,test}/**/*.ts\" --fix",
+    "bootstrap:marketplace": "node scripts/bootstrap-marketplace.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"

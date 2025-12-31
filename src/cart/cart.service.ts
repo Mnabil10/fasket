@@ -20,6 +20,16 @@ type CartItemWithProduct = Prisma.CartItemGetPayload<{
         stock: true;
         deletedAt: true;
         status: true;
+        providerId: true;
+      };
+    };
+    branch: {
+      select: {
+        id: true;
+        name: true;
+        nameAr: true;
+        status: true;
+        providerId: true;
       };
     };
   };
@@ -33,6 +43,7 @@ type CartItemResponse = {
   id: string;
   cartId: string;
   productId: string;
+  branchId?: string | null;
   qty: number;
   priceCents: number;
   product: {
@@ -48,6 +59,21 @@ type CartItemResponse = {
 type CartSnapshot = {
   items: CartItemResponse[];
   subtotalCents: number;
+};
+
+type CartGroupResponse = {
+  branchId: string;
+  providerId: string;
+  branchName?: string | null;
+  branchNameAr?: string | null;
+  items: CartItemResponse[];
+  subtotalCents: number;
+  shippingFeeCents: number;
+  distanceKm?: number | null;
+  ratePerKmCents?: number | null;
+  deliveryMode?: string;
+  deliveryRequiresLocation?: boolean;
+  deliveryUnavailable?: boolean;
 };
 
 type SerializedCoupon = {
@@ -74,6 +100,9 @@ type CouponValidationResult =
 
 @Injectable()
 export class CartService {
+  private readonly defaultProviderId = 'prov_default';
+  private readonly defaultBranchId = 'branch_default';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
@@ -94,33 +123,46 @@ export class CartService {
     return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
   }
 
-  async add(userId: string, dto: { productId: string; qty: number }, lang?: Lang, addressId?: string) {
+  async add(userId: string, dto: { productId: string; qty: number; branchId?: string }, lang?: Lang, addressId?: string) {
     if (dto.qty < 1) {
       throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Quantity must be at least 1');
     }
     const cart = await this.ensureCart(userId);
     const product = await this.prisma.product.findFirst({
       where: { id: dto.productId, status: ProductStatus.ACTIVE, deletedAt: null },
+      select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true, providerId: true },
     });
     if (!product) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
     }
-    if (product.stock < dto.qty) {
+    const branch = await this.resolveBranchForProduct(product, dto.branchId);
+    const branchProduct = await this.prisma.branchProduct.findUnique({
+      where: { branchId_productId: { branchId: branch.id, productId: product.id } },
+    });
+    if (!branchProduct || !branchProduct.isActive) {
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable in this branch');
+    }
+    const stock = branchProduct.stock ?? product.stock ?? 0;
+    if (stock < dto.qty) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
     const existing = await this.prisma.cartItem.findUnique({
-      where: { cartId_productId: { cartId: cart.id, productId: dto.productId } },
+      where: { cartId_productId_branchId: { cartId: cart.id, productId: dto.productId, branchId: branch.id } },
     });
     const desiredQty = (existing?.qty ?? 0) + dto.qty;
-    if (desiredQty > product.stock) {
+    if (desiredQty > stock) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
-    const price = product.salePriceCents ?? product.priceCents;
+    const price =
+      branchProduct.salePriceCents ??
+      branchProduct.priceCents ??
+      product.salePriceCents ??
+      product.priceCents;
     const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
     await this.prisma.cartItem.upsert({
-      where: { cartId_productId: { cartId: cart.id, productId: dto.productId } },
+      where: { cartId_productId_branchId: { cartId: cart.id, productId: dto.productId, branchId: branch.id } },
       update: { qty: { increment: dto.qty }, priceCents: price },
-      create: { cartId: cart.id, productId: dto.productId, qty: dto.qty, priceCents: price },
+      create: { cartId: cart.id, productId: dto.productId, branchId: branch.id, qty: dto.qty, priceCents: price },
     });
     return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
   }
@@ -130,7 +172,7 @@ export class CartService {
     const cart = await this.ensureCart(userId);
     const item = await this.prisma.cartItem.findFirst({
       where: { id, cartId: cart.id },
-      include: { product: true },
+      include: { product: true, branch: true },
     });
     if (!item) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Item not found in cart');
@@ -139,16 +181,32 @@ export class CartService {
       await this.prisma.cartItem.delete({ where: { id: item.id } });
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
     }
+    if (!item.branch || item.branch.status !== 'ACTIVE') {
+      await this.prisma.cartItem.delete({ where: { id: item.id } });
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Branch unavailable');
+    }
+    const branchProduct = await this.prisma.branchProduct.findUnique({
+      where: { branchId_productId: { branchId: item.branch.id, productId: item.product.id } },
+    });
+    if (!branchProduct || !branchProduct.isActive) {
+      await this.prisma.cartItem.delete({ where: { id: item.id } });
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable in this branch');
+    }
     const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
     if (qty === 0) {
       await this.prisma.cartItem.delete({ where: { id: item.id } });
       return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
     }
-    const availableStock = item.product.stock ?? 0;
+    const availableStock = branchProduct.stock ?? item.product.stock ?? 0;
     if (qty > availableStock) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
-    const price = item.product.salePriceCents ?? item.product.priceCents ?? item.priceCents;
+    const price =
+      branchProduct.salePriceCents ??
+      branchProduct.priceCents ??
+      item.product.salePriceCents ??
+      item.product.priceCents ??
+      item.priceCents;
     await this.prisma.cartItem.update({
       where: { id: item.id },
       data: { qty, priceCents: price },
@@ -207,6 +265,16 @@ export class CartService {
             stock: true,
             deletedAt: true,
             status: true,
+            providerId: true,
+          },
+        },
+        branch: {
+          select: {
+            id: true,
+            name: true,
+            nameAr: true,
+            status: true,
+            providerId: true,
           },
         },
       },
@@ -218,7 +286,9 @@ export class CartService {
         (item) =>
           !item.product ||
           item.product.deletedAt ||
-          item.product.status !== ProductStatus.ACTIVE,
+          item.product.status !== ProductStatus.ACTIVE ||
+          !item.branch ||
+          item.branch.status !== 'ACTIVE',
       )
       .map((item) => item.id);
     if (orphanIds.length) {
@@ -228,19 +298,46 @@ export class CartService {
       (item) =>
         item.product &&
         !item.product.deletedAt &&
-        item.product.status === ProductStatus.ACTIVE,
+        item.product.status === ProductStatus.ACTIVE &&
+        item.branch &&
+        item.branch.status === 'ACTIVE',
     );
 
-    const serializedItems: CartItemResponse[] = await Promise.all(
+    const branchPairs = validItems
+      .filter((item) => item.branchId)
+      .map((item) => ({ branchId: item.branchId!, productId: item.productId }));
+    const branchProducts = branchPairs.length
+      ? await this.prisma.branchProduct.findMany({
+          where: { OR: branchPairs },
+        })
+      : [];
+    const branchProductMap = new Map(
+      branchProducts.map((bp) => [`${bp.branchId}:${bp.productId}`, bp]),
+    );
+    const unavailableIds: string[] = [];
+
+    const serializedItems: Array<CartItemResponse | null> = await Promise.all(
       validItems.map(async (item) => {
         const product = item.product!;
-        const effectivePrice = product.salePriceCents ?? product.priceCents;
+        const branchProduct = item.branchId
+          ? branchProductMap.get(`${item.branchId}:${item.productId}`)
+          : undefined;
+        if (!branchProduct || !branchProduct.isActive) {
+          unavailableIds.push(item.id);
+          return null;
+        }
+        const effectivePrice =
+          branchProduct.salePriceCents ??
+          branchProduct.priceCents ??
+          product.salePriceCents ??
+          product.priceCents;
         const localizedName = localize(product.name, product.nameAr, lang);
         const imageUrl = (await toPublicImageUrl(product.imageUrl)) ?? null;
         return {
           id: item.id,
           cartId: item.cartId,
           productId: item.productId,
+          branchId: item.branchId,
           qty: item.qty,
           priceCents: effectivePrice,
           product: {
@@ -255,8 +352,12 @@ export class CartService {
       }),
     );
 
-    const subtotalCents = serializedItems.reduce((total, line) => total + line.priceCents * line.qty, 0);
-    return { items: serializedItems, subtotalCents };
+    if (unavailableIds.length) {
+      await this.prisma.cartItem.deleteMany({ where: { id: { in: unavailableIds } } });
+    }
+    const filteredItems = serializedItems.filter((item): item is CartItemResponse => Boolean(item));
+    const subtotalCents = filteredItems.reduce((total, line) => total + line.priceCents * line.qty, 0);
+    return { items: filteredItems, subtotalCents };
   }
 
   private async resolveDeliveryAddress(userId: string, addressId?: string): Promise<Address | null> {
@@ -288,60 +389,148 @@ export class CartService {
     }
 
     const effectiveAddress = deliveryAddress ?? (await this.resolveDeliveryAddress(cart.userId));
-    const zone = effectiveAddress?.zoneId
-      ? await this.settings.getZoneById(effectiveAddress.zoneId, { includeInactive: false })
-      : undefined;
-    const minOrderAmountCents = zone?.minOrderAmountCents ?? null;
-    const freeDeliveryThresholdCents = zone?.freeDeliveryThresholdCents ?? null;
-    const shortfall =
-      minOrderAmountCents && cartSnapshot.subtotalCents < minOrderAmountCents
-        ? minOrderAmountCents - cartSnapshot.subtotalCents
-        : 0;
+    const groupsByBranch = new Map<string, CartItemResponse[]>();
+    for (const item of cartSnapshot.items) {
+      const branchId = item.branchId ?? this.defaultBranchId;
+      const bucket = groupsByBranch.get(branchId) ?? [];
+      bucket.push(item);
+      groupsByBranch.set(branchId, bucket);
+    }
 
-    const quote = shortfall > 0
-      ? {
-          shippingFeeCents: zone?.feeCents ?? 0,
-          deliveryZoneId: zone?.id,
-          deliveryZoneName: zone?.nameEn,
-          etaMinutes: zone?.etaMinutes,
-          estimatedDeliveryTime: zone?.etaMinutes ? `${zone.etaMinutes} min` : null,
+    const branchIds = Array.from(groupsByBranch.keys());
+    const branches = branchIds.length
+      ? await this.prisma.branch.findMany({
+          where: { id: { in: branchIds } },
+          select: {
+            id: true,
+            name: true,
+            nameAr: true,
+            providerId: true,
+            deliveryMode: true,
+          },
+        })
+      : [];
+    const branchMap = new Map(branches.map((branch) => [branch.id, branch]));
+
+    const addressLat = effectiveAddress?.lat ?? null;
+    const addressLng = effectiveAddress?.lng ?? null;
+
+    const groupResponses: CartGroupResponse[] = await Promise.all(
+      branchIds.map(async (branchId) => {
+        const items = groupsByBranch.get(branchId) ?? [];
+        const subtotalCents = items.reduce((total, line) => total + line.priceCents * line.qty, 0);
+        const branch = branchMap.get(branchId);
+        let shippingFeeCents = 0;
+        let distanceKm: number | null = null;
+        let ratePerKmCents: number | null = null;
+        let deliveryRequiresLocation = false;
+        let deliveryUnavailable = false;
+        let deliveryMode = branch?.deliveryMode ?? undefined;
+
+        if (addressLat !== null && addressLng !== null) {
+          try {
+            const quote = await this.settings.computeBranchDeliveryQuote({
+              branchId,
+              addressLat,
+              addressLng,
+            });
+            shippingFeeCents = quote.shippingFeeCents;
+            distanceKm = quote.distanceKm;
+            ratePerKmCents = quote.ratePerKmCents;
+          } catch {
+            deliveryUnavailable = true;
+            shippingFeeCents = 0;
+          }
+        } else {
+          deliveryRequiresLocation = true;
         }
-      : await this.settings.computeDeliveryQuote({
-          subtotalCents: cartSnapshot.subtotalCents,
-          zoneId: effectiveAddress?.zoneId,
-        });
-    const etaText = this.settings.formatEtaLocalized(quote.etaMinutes ?? zone?.etaMinutes, lang ?? 'en');
-    const feeMessages = zone ? this.settings.buildZoneMessages(zone) : undefined;
+
+        return {
+          branchId,
+          providerId: branch?.providerId ?? this.defaultProviderId,
+          branchName: branch?.name ?? null,
+          branchNameAr: branch?.nameAr ?? null,
+          items,
+          subtotalCents,
+          shippingFeeCents,
+          distanceKm,
+          ratePerKmCents,
+          deliveryMode,
+          deliveryRequiresLocation,
+          deliveryUnavailable,
+        };
+      }),
+    );
+
+    const shippingFeeCents = groupResponses.reduce((sum, group) => sum + group.shippingFeeCents, 0);
     const { discountCents, coupon, couponNotice } = await this.resolveCouponDiscount(
       cart.id,
       couponCode,
       cartSnapshot.subtotalCents,
       couponOverride,
     );
-    const totalCents = Math.max(cartSnapshot.subtotalCents + quote.shippingFeeCents - discountCents, 0);
+    const totalCents = Math.max(cartSnapshot.subtotalCents + shippingFeeCents - discountCents, 0);
     return {
       cartId: cart.id,
       items: cartSnapshot.items,
+      groups: groupResponses,
       subtotalCents: cartSnapshot.subtotalCents,
-      shippingFeeCents: quote.shippingFeeCents,
+      shippingFeeCents,
       discountCents,
       totalCents,
       coupon,
       couponNotice,
       delivery: {
         addressId: effectiveAddress?.id ?? null,
-        zoneId: quote.deliveryZoneId ?? effectiveAddress?.zoneId ?? null,
-        zoneName: quote.deliveryZoneName ?? effectiveAddress?.zoneId ?? null,
-        estimatedDeliveryTime: quote.estimatedDeliveryTime ?? null,
-        etaMinutes: quote.etaMinutes ?? null,
-        minOrderAmountCents,
-        minOrderShortfallCents: shortfall > 0 ? shortfall : 0,
-        freeDeliveryThresholdCents,
-        etaText,
-        feeMessageEn: feeMessages?.feeMessageEn,
-        feeMessageAr: feeMessages?.feeMessageAr,
+        zoneId: effectiveAddress?.zoneId ?? null,
+        zoneName: effectiveAddress?.zoneId ?? null,
+        estimatedDeliveryTime: null,
+        etaMinutes: null,
+        minOrderAmountCents: null,
+        minOrderShortfallCents: 0,
+        freeDeliveryThresholdCents: null,
+        etaText: null,
+        feeMessageEn: null,
+        feeMessageAr: null,
+        requiresLocation: addressLat === null || addressLng === null,
       },
     };
+  }
+
+  private async resolveBranchForProduct(
+    product: { id: string; providerId?: string | null },
+    branchId?: string,
+  ) {
+    if (branchId) {
+      const branch = await this.prisma.branch.findUnique({
+        where: { id: branchId },
+        select: { id: true, providerId: true, status: true },
+      });
+      if (!branch || branch.status !== 'ACTIVE') {
+        throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Branch unavailable');
+      }
+      if (product.providerId && branch.providerId !== product.providerId) {
+        throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Branch does not match product provider');
+      }
+      return branch;
+    }
+
+    const providerId = product.providerId ?? this.defaultProviderId;
+    const branch =
+      (await this.prisma.branch.findFirst({
+        where: { providerId, status: 'ACTIVE' },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        select: { id: true, providerId: true, status: true },
+      })) ??
+      (await this.prisma.branch.findUnique({
+        where: { id: this.defaultBranchId },
+        select: { id: true, providerId: true, status: true },
+      }));
+
+    if (!branch || branch.status !== 'ACTIVE') {
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Branch unavailable');
+    }
+    return branch;
   }
 
   private async resolveCouponDiscount(

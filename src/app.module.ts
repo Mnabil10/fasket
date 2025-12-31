@@ -29,6 +29,7 @@ import { OtpModule } from './otp/otp.module';
 import { PasswordResetModule } from './password-reset/password-reset.module';
 import { AutomationSupportModule } from './automation-support/automation-support.module';
 import { TelegramModule } from './telegram/telegram.module';
+import { BillingModule } from './billing/billing.module';
 
 @Module({
   imports: [
@@ -128,6 +129,7 @@ import { TelegramModule } from './telegram/telegram.module';
     CommonModule,
     UploadsModule,
     TelegramModule,
+    BillingModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

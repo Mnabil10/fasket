@@ -1,10 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsString, Min, MinLength } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Min, MinLength } from 'class-validator';
 import { cleanString } from '../common/utils/sanitize.util';
 
 export class AddToCartDto {
   @ApiProperty() @IsString() productId!: string;
+  @ApiProperty({ required: false }) @IsString() @IsOptional() branchId?: string;
   @ApiProperty() @IsInt() @Min(1) qty!: number;
 }
 export class UpdateCartItemDto {

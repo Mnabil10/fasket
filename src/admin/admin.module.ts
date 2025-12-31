@@ -21,6 +21,11 @@ import { AdminAutomationController } from './automation.controller';
 import { AdminSupportController } from './support.controller';
 import { SupportBackfillController } from './support-backfill.controller';
 import { AdminOpsController } from './ops.controller';
+import { AdminProvidersController } from './providers.controller';
+import { AdminBranchesController } from './branches.controller';
+import { AdminPlansController } from './plans.controller';
+import { AdminSubscriptionsController } from './subscriptions.controller';
+import { AdminInvoicesController } from './invoices.controller';
 
 @Module({
   controllers: [
@@ -39,6 +44,11 @@ import { AdminOpsController } from './ops.controller';
     AdminSupportController,
     SupportBackfillController,
     AdminOpsController,
+    AdminProvidersController,
+    AdminBranchesController,
+    AdminPlansController,
+    AdminSubscriptionsController,
+    AdminInvoicesController,
   ],
   imports: [
     // Additional modules can be wired here when needed

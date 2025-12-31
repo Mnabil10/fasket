@@ -1,13 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, OrderStatus, PaymentMethod, ProductStatus } from '@prisma/client';
+import {
+  DeliveryMode,
+  OrderSplitFailurePolicy,
+  OrderStatus,
+  PaymentMethod,
+  Prisma,
+  ProductStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateOrderDto, PaymentMethodDto } from './dto';
+import { CreateOrderDto, OrderSplitFailurePolicyDto, PaymentMethodDto } from './dto';
 import { SettingsService } from '../settings/settings.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { DomainError, ErrorCode } from '../common/errors';
 import { AuditLogService } from '../common/audit/audit-log.service';
 import { CacheService } from '../common/cache/cache.service';
 import { AutomationEventsService, AutomationEventRef } from '../automation/automation-events.service';
+import { BillingService } from '../billing/billing.service';
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
@@ -38,6 +46,8 @@ export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
   private readonly listTtl = Number(process.env.ORDER_LIST_CACHE_TTL ?? 30);
   private readonly receiptTtl = Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60);
+  private readonly defaultProviderId = 'prov_default';
+  private readonly defaultBranchId = 'branch_default';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -46,6 +56,7 @@ export class OrdersService {
     private readonly audit: AuditLogService,
     private readonly cache: CacheService,
     private readonly automation: AutomationEventsService,
+    private readonly billing: BillingService,
   ) {}
 
   async list(userId: string) {
@@ -118,228 +129,512 @@ export class OrdersService {
 
   async create(userId: string, payload: CreateOrderDto) {
     const idempotencyKey = payload.idempotencyKey?.trim() || null;
+    const splitPolicy =
+      (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
     const automationEvents: AutomationEventRef[] = [];
 
     if (idempotencyKey) {
-      const existing = await this.prisma.order.findFirst({
+      const existingGroup = await this.prisma.orderGroup.findFirst({
         where: { userId, idempotencyKey },
         select: { id: true },
       });
-      if (existing) {
-        return this.detail(userId, existing.id);
+      if (existingGroup) {
+        return this.getOrderGroupSummary(userId, existingGroup.id);
       }
     }
 
     try {
-      const { orderId } = await this.prisma.$transaction(async (tx) => {
-      const cart = await tx.cart.findUnique({
-        where: { userId },
-        include: { items: true },
-      });
-      if (!cart || cart.items.length === 0) {
-        throw new DomainError(ErrorCode.CART_EMPTY, 'Cart is empty');
-      }
-      const couponCode = payload.couponCode ?? cart.couponCode ?? undefined;
-
-      const productIds = cart.items.map((item) => item.productId);
-      const products = await tx.product.findMany({
-        where: { id: { in: productIds }, status: ProductStatus.ACTIVE, deletedAt: null },
-        select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true, costPriceCents: true },
-      });
-      if (products.length !== productIds.length) {
-        throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'One or more products are unavailable');
-      }
-
-      const productMap = new Map(products.map((product) => [product.id, product]));
-      const sourceItems = cart.items.map((item) => {
-        const product = productMap.get(item.productId);
-        if (!product) throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
-        if (product.stock < item.qty) {
-          throw new DomainError(
-            ErrorCode.CART_PRODUCT_UNAVAILABLE,
-            `Insufficient stock for ${product.name}`,
-          );
-        }
-        if (!product.costPriceCents || product.costPriceCents <= 0) {
-          this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: product.id });
-        }
-        return {
-          productId: product.id,
-          productName: product.name,
-          qty: item.qty,
-          priceCents: product.salePriceCents ?? product.priceCents,
-          costCents: product.costPriceCents ?? 0,
-        };
-      });
-
-      for (const item of sourceItems) {
-        const product = productMap.get(item.productId);
-        if (!product) {
-          throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
-        }
-
-        const updated = await tx.product.updateMany({
-          where: {
-            id: item.productId,
-            status: ProductStatus.ACTIVE,
-            deletedAt: null,
-            stock: { gte: item.qty },
-          },
-          data: { stock: { decrement: item.qty } },
+      const result = await this.prisma.$transaction(async (tx) => {
+        const cart = await tx.cart.findUnique({
+          where: { userId },
+          include: { items: true },
         });
-        if (updated.count !== 1) {
-          throw new DomainError(
-            ErrorCode.CART_PRODUCT_UNAVAILABLE,
-            `Insufficient stock for ${product.name || item.productId}`,
-          );
+        if (!cart || cart.items.length === 0) {
+          throw new DomainError(ErrorCode.CART_EMPTY, 'Cart is empty');
         }
+        const couponCode = payload.couponCode ?? cart.couponCode ?? undefined;
 
-        const previousStock = product.stock;
-        const newStock = previousStock - item.qty;
-        product.stock = newStock;
-        await tx.productStockLog.create({
-          data: {
-            productId: product.id,
-            previousStock,
-            newStock,
-            delta: newStock - previousStock,
-            reason: 'order.checkout',
-            actorId: userId,
+        const productIds = cart.items.map((item) => item.productId);
+        const products = await tx.product.findMany({
+          where: { id: { in: productIds }, status: ProductStatus.ACTIVE, deletedAt: null },
+          select: {
+            id: true,
+            name: true,
+            stock: true,
+            priceCents: true,
+            salePriceCents: true,
+            costPriceCents: true,
+            providerId: true,
           },
         });
-      }
+        if (products.length !== productIds.length) {
+          throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'One or more products are unavailable');
+        }
 
-      const address = await tx.address.findFirst({ where: { id: payload.addressId, userId } });
-      if (!address) {
-        throw new DomainError(ErrorCode.ADDRESS_NOT_FOUND, 'Invalid address');
-      }
+        const productMap = new Map(products.map((product) => [product.id, product]));
+        const address = await tx.address.findFirst({ where: { id: payload.addressId, userId } });
+        if (!address) {
+          throw new DomainError(ErrorCode.ADDRESS_NOT_FOUND, 'Invalid address');
+        }
+        if (address.lat === null || address.lat === undefined || address.lng === null || address.lng === undefined) {
+          throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is required');
+        }
 
-      const subtotalCents = sourceItems.reduce((sum, item) => sum + item.priceCents * item.qty, 0);
-      const quote = await this.settings.computeDeliveryQuote({
-        subtotalCents,
-        zoneId: address.zoneId,
-      });
-      const deliveryZone = await this.settings.getZoneById(address.zoneId, { includeInactive: true });
-      const shippingFeeCents = quote.shippingFeeCents;
-      const deliveryZoneName = deliveryZone?.nameEn ?? deliveryZone?.nameAr ?? address.zoneId;
-      const deliveryEtaMinutes = quote.etaMinutes ?? undefined;
-      const estimatedDeliveryTime = quote.estimatedDeliveryTime ?? undefined;
+        const explicitBranchIds = Array.from(
+          new Set(cart.items.map((item) => item.branchId).filter(Boolean) as string[]),
+        );
+        const explicitBranches = explicitBranchIds.length
+          ? await tx.branch.findMany({
+              where: { id: { in: explicitBranchIds } },
+              include: { provider: { select: { id: true, deliveryMode: true } } },
+            })
+          : [];
+        const branchById = new Map(explicitBranches.map((branch) => [branch.id, branch]));
 
-      let discountCents = 0;
-      if (couponCode) {
-        const coupon = await tx.coupon.findFirst({ where: { code: couponCode, isActive: true } });
-        const now = new Date();
-        const active =
-          coupon &&
-          (!coupon.startsAt || coupon.startsAt <= now) &&
-          (!coupon.endsAt || coupon.endsAt >= now) &&
-          (!coupon.minOrderCents || subtotalCents >= coupon.minOrderCents);
-        if (active) {
+        const providerIdsNeeded = new Set<string>();
+        for (const item of cart.items) {
+          if (!item.branchId) {
+            const product = productMap.get(item.productId);
+            if (product) {
+              providerIdsNeeded.add(product.providerId ?? this.defaultProviderId);
+            }
+          }
+        }
+
+        const providerBranches = providerIdsNeeded.size
+          ? await tx.branch.findMany({
+              where: { providerId: { in: Array.from(providerIdsNeeded) }, status: 'ACTIVE' },
+              orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+              include: { provider: { select: { id: true, deliveryMode: true } } },
+            })
+          : [];
+        const defaultBranchByProvider = new Map<string, (typeof providerBranches)[number]>();
+        for (const branch of providerBranches) {
+          if (!defaultBranchByProvider.has(branch.providerId)) {
+            defaultBranchByProvider.set(branch.providerId, branch);
+          }
+        }
+        const fallbackBranch = await tx.branch.findUnique({
+          where: { id: this.defaultBranchId },
+          include: { provider: { select: { id: true, deliveryMode: true } } },
+        });
+
+        const branchErrors = new Map<string, string>();
+        const resolvedItems: Array<{
+          cartItemId: string;
+          product: {
+            id: string;
+            name: string;
+            stock: number;
+            priceCents: number;
+            salePriceCents: number | null;
+            costPriceCents: number | null;
+            providerId: string | null;
+          };
+          branch: {
+            id: string;
+            providerId: string;
+            status: string;
+            deliveryMode: DeliveryMode | null;
+            provider?: { id: string; deliveryMode: DeliveryMode } | null;
+          };
+          qty: number;
+        }> = [];
+
+        for (const item of cart.items) {
+          const product = productMap.get(item.productId);
+          if (!product) {
+            branchErrors.set(item.branchId ?? 'unknown', 'Product unavailable');
+            continue;
+          }
+          let branch =
+            (item.branchId ? branchById.get(item.branchId) : undefined) ??
+            defaultBranchByProvider.get(product.providerId ?? this.defaultProviderId) ??
+            (fallbackBranch ?? undefined);
+          if (!branch || branch.status !== 'ACTIVE') {
+            branchErrors.set(item.branchId ?? branch?.id ?? 'unknown', 'Branch unavailable');
+            continue;
+          }
+          if (product.providerId && branch.providerId !== product.providerId) {
+            branchErrors.set(branch.id, 'Branch does not match product provider');
+            continue;
+          }
+          if (!item.branchId) {
+            await tx.cartItem.update({ where: { id: item.id }, data: { branchId: branch.id } });
+          }
+          resolvedItems.push({
+            cartItemId: item.id,
+            product,
+            branch,
+            qty: item.qty,
+          });
+        }
+
+        const branchPairs = resolvedItems.map((item) => ({
+          branchId: item.branch.id,
+          productId: item.product.id,
+        }));
+        const branchProducts = branchPairs.length
+          ? await tx.branchProduct.findMany({
+              where: { OR: branchPairs },
+            })
+          : [];
+        const branchProductMap = new Map(
+          branchProducts.map((bp) => [`${bp.branchId}:${bp.productId}`, bp]),
+        );
+
+        const validItems: Array<{
+          cartItemId: string;
+          branchId: string;
+          providerId: string;
+          productId: string;
+          productName: string;
+          qty: number;
+          priceCents: number;
+          costCents: number;
+          branch: {
+            id: string;
+            providerId: string;
+            deliveryMode: DeliveryMode | null;
+            provider?: { id: string; deliveryMode: DeliveryMode } | null;
+          };
+        }> = [];
+
+        for (const item of resolvedItems) {
+          const branchProduct = branchProductMap.get(`${item.branch.id}:${item.product.id}`);
+          if (!branchProduct || !branchProduct.isActive) {
+            branchErrors.set(item.branch.id, 'Product unavailable in this branch');
+            continue;
+          }
+          const stock = branchProduct.stock ?? item.product.stock ?? 0;
+          if (stock < item.qty) {
+            branchErrors.set(item.branch.id, `Insufficient stock for ${item.product.name}`);
+            continue;
+          }
+          if (!item.product.costPriceCents || item.product.costPriceCents <= 0) {
+            this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: item.product.id });
+          }
+          const priceCents =
+            branchProduct.salePriceCents ??
+            branchProduct.priceCents ??
+            item.product.salePriceCents ??
+            item.product.priceCents;
+          validItems.push({
+            cartItemId: item.cartItemId,
+            branchId: item.branch.id,
+            providerId: item.branch.providerId,
+            productId: item.product.id,
+            productName: item.product.name,
+            qty: item.qty,
+            priceCents,
+            costCents: item.product.costPriceCents ?? 0,
+            branch: item.branch,
+          });
+        }
+
+        if (branchErrors.size > 0 && splitPolicy === OrderSplitFailurePolicy.CANCEL_GROUP) {
+          const message = Array.from(branchErrors.values())[0] ?? 'Some items are unavailable';
+          throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, message);
+        }
+
+        const filteredItems = validItems.filter((item) => !branchErrors.has(item.branchId));
+        if (!filteredItems.length) {
+          throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
+        }
+
+        const grouped = new Map<
+          string,
+          { branch: (typeof filteredItems)[number]['branch']; providerId: string; items: typeof filteredItems; subtotalCents: number }
+        >();
+        for (const item of filteredItems) {
+          const existing = grouped.get(item.branchId);
+          if (!existing) {
+            grouped.set(item.branchId, {
+              branch: item.branch,
+              providerId: item.providerId,
+              items: [item],
+              subtotalCents: item.priceCents * item.qty,
+            });
+          } else {
+            existing.items.push(item);
+            existing.subtotalCents += item.priceCents * item.qty;
+          }
+        }
+
+        if (payload.loyaltyPointsToRedeem && payload.loyaltyPointsToRedeem > 0 && grouped.size > 1) {
+          throw new DomainError(
+            ErrorCode.VALIDATION_FAILED,
+            'Loyalty redemption is not supported for multi-provider orders',
+          );
+        }
+
+        const subtotalCentsTotal = Array.from(grouped.values()).reduce((sum, group) => sum + group.subtotalCents, 0);
+        let discountCents = 0;
+        let couponScope: { scope?: string | null; providerId?: string | null; branchId?: string | null } | null = null;
+        if (couponCode) {
+          const coupon = await tx.coupon.findFirst({ where: { code: couponCode, isActive: true } });
+          const now = new Date();
+          const active =
+            coupon &&
+            (!coupon.startsAt || coupon.startsAt <= now) &&
+            (!coupon.endsAt || coupon.endsAt >= now) &&
+            (!coupon.minOrderCents || subtotalCentsTotal >= coupon.minOrderCents);
+          if (!active || !coupon) {
+            throw new DomainError(ErrorCode.COUPON_EXPIRED, 'Coupon is invalid or expired');
+          }
+
+          couponScope = {
+            scope: coupon.scope ?? null,
+            providerId: coupon.providerId ?? null,
+            branchId: coupon.branchId ?? null,
+          };
+          if (coupon.scope === 'PROVIDER' && coupon.providerId) {
+            const allProviderIds = Array.from(grouped.values()).map((group) => group.providerId);
+            if (allProviderIds.some((pid) => pid !== coupon.providerId)) {
+              throw new DomainError(ErrorCode.COUPON_INVALID, 'Coupon is not valid for this provider');
+            }
+          }
+          if (coupon.scope === 'BRANCH' && coupon.branchId) {
+            const allBranchIds = Array.from(grouped.keys());
+            if (allBranchIds.some((bid) => bid !== coupon.branchId)) {
+              throw new DomainError(ErrorCode.COUPON_INVALID, 'Coupon is not valid for this branch');
+            }
+          }
+
           if (coupon.type === 'PERCENT') {
-            discountCents = Math.floor((subtotalCents * (coupon.valueCents ?? 0)) / 100);
+            discountCents = Math.floor((subtotalCentsTotal * (coupon.valueCents ?? 0)) / 100);
           } else {
             discountCents = coupon.valueCents ?? 0;
           }
           if (coupon.maxDiscountCents && discountCents > coupon.maxDiscountCents) {
             discountCents = coupon.maxDiscountCents;
           }
-          if (discountCents > subtotalCents) {
-            discountCents = subtotalCents;
+          if (discountCents > subtotalCentsTotal) {
+            discountCents = subtotalCentsTotal;
           }
           discountCents = Math.max(0, Math.round(discountCents));
-        } else {
-          throw new DomainError(ErrorCode.COUPON_EXPIRED, 'Coupon is invalid or expired');
         }
-      }
 
-      let totalCents = subtotalCents + shippingFeeCents - discountCents;
-      const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
-      const code = await this.generateOrderCode(tx);
-      const order = await tx.order.create({
-        data: {
-          userId,
-          code,
-          idempotencyKey,
-          status: OrderStatus.PENDING,
-          paymentMethod: paymentMethod as PaymentMethod,
-          subtotalCents,
-          shippingFeeCents,
-          discountCents,
-          totalCents,
-          loyaltyDiscountCents: 0,
-          loyaltyPointsUsed: 0,
-          addressId: address.id,
-          cartId: cart.id,
-          notes: payload.note,
-          couponCode,
-          deliveryZoneId: address.zoneId,
-          deliveryZoneName,
-          deliveryEtaMinutes,
-          estimatedDeliveryTime,
-          items: {
-            create: sourceItems.map((item) => ({
-              productId: item.productId,
-              productNameSnapshot: item.productName,
-              priceSnapshotCents: item.priceCents,
-              unitPriceCents: item.priceCents,
-              unitCostCents: item.costCents ?? 0,
-              lineTotalCents: item.priceCents * item.qty,
-              lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
-              qty: item.qty,
-            })),
-          },
-        },
-      });
+        const groupEntries = Array.from(grouped.entries());
+        const discountByBranch = this.allocateDiscounts(discountCents, groupEntries);
 
-      if (payload.loyaltyPointsToRedeem && payload.loyaltyPointsToRedeem > 0) {
-        const redemption = await this.loyalty.redeemPoints({
-          userId,
-          pointsToRedeem: payload.loyaltyPointsToRedeem,
-          subtotalCents: Math.max(subtotalCents - discountCents, 0),
-          tx,
-          orderId: order.id,
-        });
-        if (redemption.discountCents > 0) {
-          totalCents = Math.max(totalCents - redemption.discountCents, 0);
-          await tx.order.update({
-            where: { id: order.id },
-            data: {
-              loyaltyDiscountCents: redemption.discountCents,
-              loyaltyPointsUsed: redemption.pointsUsed,
-              totalCents,
-            },
+        let shippingFeeCentsTotal = 0;
+        const shippingByBranch = new Map<string, { fee: number; distanceKm: number; ratePerKmCents: number }>();
+        for (const [branchId] of groupEntries) {
+          const quote = await this.settings.computeBranchDeliveryQuote({
+            branchId,
+            addressLat: address.lat!,
+            addressLng: address.lng!,
+          });
+          shippingFeeCentsTotal += quote.shippingFeeCents;
+          shippingByBranch.set(branchId, {
+            fee: quote.shippingFeeCents,
+            distanceKm: quote.distanceKm,
+            ratePerKmCents: quote.ratePerKmCents,
           });
         }
-      }
 
-      await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
-      if (cart.couponCode) {
-        await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
-      }
-      const eventPayload = await this.buildOrderEventPayload(order.id, tx);
-      const createdEvent = await this.automation.emit('order.created', eventPayload, {
-        tx,
-        dedupeKey: `order:${order.id}:${order.status}:created`,
-      });
-      automationEvents.push(createdEvent);
-      return { orderId: order.id };
+        const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
+        const orderGroup = await tx.orderGroup.create({
+          data: {
+            userId,
+            idempotencyKey,
+            addressId: address.id,
+            status: 'PENDING',
+            splitFailurePolicy: splitPolicy,
+            paymentMethod: paymentMethod as PaymentMethod,
+            couponCode,
+            subtotalCents: subtotalCentsTotal,
+            shippingFeeCents: shippingFeeCentsTotal,
+            discountCents,
+            totalCents: subtotalCentsTotal + shippingFeeCentsTotal - discountCents,
+          },
+        });
+
+        const createdOrders: { id: string }[] = [];
+        for (const [branchId, group] of groupEntries) {
+          const discountForBranch = discountByBranch.get(branchId) ?? 0;
+          const shippingQuote = shippingByBranch.get(branchId);
+          const deliveryMode =
+            group.branch.deliveryMode ??
+            group.branch.provider?.deliveryMode ??
+            DeliveryMode.PLATFORM;
+          const deliveryDistanceKm = shippingQuote?.distanceKm ?? null;
+          const deliveryRatePerKmCents = shippingQuote?.ratePerKmCents ?? null;
+          const shippingFeeCents = shippingQuote?.fee ?? 0;
+          const totalCents = group.subtotalCents + shippingFeeCents - discountForBranch;
+
+          const code = await this.generateOrderCode(tx);
+          const order = await tx.order.create({
+            data: {
+              userId,
+              code,
+              status: OrderStatus.PENDING,
+              paymentMethod: paymentMethod as PaymentMethod,
+              subtotalCents: group.subtotalCents,
+              shippingFeeCents,
+              discountCents: discountForBranch,
+              totalCents,
+              loyaltyDiscountCents: 0,
+              loyaltyPointsUsed: 0,
+              addressId: address.id,
+              cartId: cart.id,
+              notes: payload.note,
+              couponCode,
+              orderGroupId: orderGroup.id,
+              providerId: group.providerId,
+              branchId,
+              deliveryMode,
+              deliveryDistanceKm,
+              deliveryRatePerKmCents,
+              items: {
+                create: group.items.map((item) => ({
+                  productId: item.productId,
+                  productNameSnapshot: item.productName,
+                  priceSnapshotCents: item.priceCents,
+                  unitPriceCents: item.priceCents,
+                  unitCostCents: item.costCents ?? 0,
+                  lineTotalCents: item.priceCents * item.qty,
+                  lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
+                  qty: item.qty,
+                })),
+              },
+            },
+            select: { id: true },
+          });
+          createdOrders.push(order);
+
+          for (const item of group.items) {
+            const branchProduct = branchProductMap.get(`${branchId}:${item.productId}`);
+            let updatedProductStock = false;
+            if (branchProduct?.stock !== null && branchProduct?.stock !== undefined) {
+              const updated = await tx.branchProduct.updateMany({
+                where: {
+                  branchId,
+                  productId: item.productId,
+                  isActive: true,
+                  stock: { gte: item.qty },
+                },
+                data: { stock: { decrement: item.qty } },
+              });
+              if (updated.count !== 1) {
+                throw new DomainError(
+                  ErrorCode.CART_PRODUCT_UNAVAILABLE,
+                  `Insufficient stock for ${item.productName}`,
+                );
+              }
+            } else {
+              const updated = await tx.product.updateMany({
+                where: {
+                  id: item.productId,
+                  status: ProductStatus.ACTIVE,
+                  deletedAt: null,
+                  stock: { gte: item.qty },
+                },
+                data: { stock: { decrement: item.qty } },
+              });
+              if (updated.count !== 1) {
+                throw new DomainError(
+                  ErrorCode.CART_PRODUCT_UNAVAILABLE,
+                  `Insufficient stock for ${item.productName}`,
+                );
+              }
+              updatedProductStock = true;
+            }
+
+            const product = productMap.get(item.productId);
+            if (product && updatedProductStock) {
+              const previousStock = product.stock ?? 0;
+              const newStock = previousStock - item.qty;
+              await tx.productStockLog.create({
+                data: {
+                  productId: item.productId,
+                  previousStock,
+                  newStock,
+                  delta: newStock - previousStock,
+                  reason: 'order.checkout',
+                  actorId: userId,
+                },
+              });
+              product.stock = newStock;
+            }
+          }
+
+          await this.billing.recordCommissionForOrder(order.id, tx);
+
+          const eventPayload = await this.buildOrderEventPayload(order.id, tx);
+          const createdEvent = await this.automation.emit('order.created', eventPayload, {
+            tx,
+            dedupeKey: `order:${order.id}:${OrderStatus.PENDING}:created`,
+          });
+          automationEvents.push(createdEvent);
+        }
+
+        if (payload.loyaltyPointsToRedeem && payload.loyaltyPointsToRedeem > 0 && createdOrders.length === 1) {
+          const redemption = await this.loyalty.redeemPoints({
+            userId,
+            pointsToRedeem: payload.loyaltyPointsToRedeem,
+            subtotalCents: Math.max(subtotalCentsTotal - discountCents, 0),
+            tx,
+            orderId: createdOrders[0].id,
+          });
+          if (redemption.discountCents > 0) {
+            await tx.order.update({
+              where: { id: createdOrders[0].id },
+              data: {
+                loyaltyDiscountCents: redemption.discountCents,
+                loyaltyPointsUsed: redemption.pointsUsed,
+                totalCents: Math.max(subtotalCentsTotal + shippingFeeCentsTotal - discountCents - redemption.discountCents, 0),
+              },
+            });
+            await tx.orderGroup.update({
+              where: { id: orderGroup.id },
+              data: {
+                totalCents: Math.max(subtotalCentsTotal + shippingFeeCentsTotal - discountCents - redemption.discountCents, 0),
+              },
+            });
+          }
+        }
+
+        const orderedCartItemIds = filteredItems.map((item) => item.cartItemId);
+        if (orderedCartItemIds.length) {
+          await tx.cartItem.deleteMany({ where: { id: { in: orderedCartItemIds } } });
+        }
+        if (cart.couponCode) {
+          await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
+        }
+
+        return {
+          orderGroupId: orderGroup.id,
+          orderIds: createdOrders.map((order) => order.id),
+          skippedBranchIds: Array.from(branchErrors.keys()),
+          couponScope,
+        };
       });
 
       await this.automation.enqueueMany(automationEvents);
-      this.logger.log({ msg: 'Order created', orderId, userId });
-      await this.clearCachesForOrder(orderId, userId);
-      return this.detail(userId, orderId);
+      for (const orderId of result.orderIds) {
+        await this.clearCachesForOrder(orderId, userId);
+      }
+      this.logger.log({ msg: 'Order created', orderGroupId: result.orderGroupId, userId });
+      if (result.orderIds.length === 1) {
+        return this.detail(userId, result.orderIds[0]);
+      }
+      const summary = await this.getOrderGroupSummary(userId, result.orderGroupId);
+      return {
+        ...summary,
+        skippedBranchIds: result.skippedBranchIds,
+      };
     } catch (error) {
       if (idempotencyKey && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        const existing = await this.prisma.order.findFirst({
+        const existingGroup = await this.prisma.orderGroup.findFirst({
           where: { userId, idempotencyKey },
           select: { id: true },
         });
-        if (existing) {
-          return this.detail(userId, existing.id);
+        if (existingGroup) {
+          return this.getOrderGroupSummary(userId, existingGroup.id);
         }
       }
-      // Roll back any stock decrements if the transaction failed before commit
       await this.rollbackStockFromCart(userId).catch(() => undefined);
       throw error;
     }
@@ -533,6 +828,54 @@ export class OrdersService {
     await Promise.all(keys.map((key) => this.cache.del(key)));
   }
 
+  private async getOrderGroupSummary(userId: string, orderGroupId: string) {
+    const group = await this.prisma.orderGroup.findFirst({
+      where: { id: orderGroupId, userId },
+      include: {
+        orders: {
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            totalCents: true,
+            subtotalCents: true,
+            shippingFeeCents: true,
+            discountCents: true,
+            providerId: true,
+            branchId: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    if (!group) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order group not found', 404);
+    }
+    return {
+      orderGroupId: group.id,
+      code: group.code,
+      status: group.status,
+      subtotalCents: group.subtotalCents,
+      shippingFeeCents: group.shippingFeeCents,
+      discountCents: group.discountCents,
+      totalCents: group.totalCents,
+      createdAt: group.createdAt,
+      orders: group.orders.map((order) => ({
+        id: order.id,
+        code: order.code,
+        status: this.toPublicStatus(order.status),
+        subtotalCents: order.subtotalCents,
+        shippingFeeCents: order.shippingFeeCents,
+        discountCents: order.discountCents,
+        totalCents: order.totalCents,
+        providerId: order.providerId,
+        branchId: order.branchId,
+        createdAt: order.createdAt,
+      })),
+    };
+  }
+
   private async generateOrderCode(tx: Prisma.TransactionClient): Promise<string> {
     let attempts = 0;
     while (attempts < 5) {
@@ -544,6 +887,29 @@ export class OrdersService {
       attempts += 1;
     }
     return `ORD-${Date.now().toString(36).toUpperCase()}`;
+  }
+
+  private allocateDiscounts(
+    totalDiscountCents: number,
+    groups: Array<[string, { subtotalCents: number }]>,
+  ) {
+    const allocations = new Map<string, number>();
+    if (totalDiscountCents <= 0 || groups.length === 0) {
+      for (const [branchId] of groups) allocations.set(branchId, 0);
+      return allocations;
+    }
+    const totalSubtotal = groups.reduce((sum, [, group]) => sum + group.subtotalCents, 0) || 1;
+    let remaining = totalDiscountCents;
+    groups.forEach(([branchId, group], index) => {
+      if (index === groups.length - 1) {
+        allocations.set(branchId, remaining);
+        return;
+      }
+      const share = Math.floor((totalDiscountCents * group.subtotalCents) / totalSubtotal);
+      allocations.set(branchId, share);
+      remaining -= share;
+    });
+    return allocations;
   }
 
   async reorder(userId: string, fromOrderId: string) {
@@ -569,6 +935,15 @@ export class OrdersService {
         select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true, costPriceCents: true },
       });
       const productMap = new Map(products.map((p) => [p.id, p]));
+      const branchId = source.branchId ?? undefined;
+      const branchProducts = branchId
+        ? await tx.branchProduct.findMany({
+            where: { branchId, productId: { in: productIds } },
+          })
+        : [];
+      const branchProductMap = new Map(
+        branchProducts.map((bp) => [`${bp.branchId}:${bp.productId}`, bp]),
+      );
 
       const orderItems = source.items.map((item) => {
         const product = productMap.get(item.productId);
@@ -578,13 +953,25 @@ export class OrdersService {
             `Product unavailable: ${item.productNameSnapshot || item.productId}`,
           );
         }
-        if ((product.stock ?? 0) < item.qty) {
+        const branchProduct = branchId ? branchProductMap.get(`${branchId}:${item.productId}`) : undefined;
+        if (branchId && (!branchProduct || !branchProduct.isActive)) {
+          throw new DomainError(
+            ErrorCode.CART_PRODUCT_UNAVAILABLE,
+            `Product unavailable: ${item.productNameSnapshot || item.productId}`,
+          );
+        }
+        const availableStock = branchProduct?.stock ?? product.stock ?? 0;
+        if (availableStock < item.qty) {
           throw new DomainError(
             ErrorCode.CART_PRODUCT_UNAVAILABLE,
             `Insufficient stock for ${product.name}`,
           );
         }
-        const priceCents = product.salePriceCents ?? product.priceCents;
+        const priceCents =
+          branchProduct?.salePriceCents ??
+          branchProduct?.priceCents ??
+          product.salePriceCents ??
+          product.priceCents;
         const costCents = product.costPriceCents ?? 0;
         if (!costCents || costCents <= 0) {
           this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: product.id });
@@ -599,29 +986,46 @@ export class OrdersService {
       });
 
       for (const item of orderItems) {
-        await tx.product.updateMany({
-          where: {
-            id: item.productId,
-            status: ProductStatus.ACTIVE,
-            deletedAt: null,
-            stock: { gte: item.qty },
-          },
-          data: { stock: { decrement: item.qty } },
-        });
-        const product = productMap.get(item.productId)!;
-        const previousStock = product.stock ?? 0;
-        const newStock = previousStock - item.qty;
-        productMap.set(item.productId, newStock as any);
-        await tx.productStockLog.create({
-          data: {
-            productId: item.productId,
-            previousStock,
-            newStock,
-            delta: newStock - previousStock,
-            reason: 'order.reorder',
-            actorId: userId,
-          },
-        });
+        const branchProduct = branchId ? branchProductMap.get(`${branchId}:${item.productId}`) : undefined;
+        let updatedProductStock = false;
+        if (branchId && branchProduct?.stock !== null && branchProduct?.stock !== undefined) {
+          await tx.branchProduct.updateMany({
+            where: {
+              branchId,
+              productId: item.productId,
+              isActive: true,
+              stock: { gte: item.qty },
+            },
+            data: { stock: { decrement: item.qty } },
+          });
+        } else {
+          await tx.product.updateMany({
+            where: {
+              id: item.productId,
+              status: ProductStatus.ACTIVE,
+              deletedAt: null,
+              stock: { gte: item.qty },
+            },
+            data: { stock: { decrement: item.qty } },
+          });
+          updatedProductStock = true;
+        }
+        if (updatedProductStock) {
+          const product = productMap.get(item.productId)!;
+          const previousStock = product.stock ?? 0;
+          const newStock = previousStock - item.qty;
+          productMap.set(item.productId, newStock as any);
+          await tx.productStockLog.create({
+            data: {
+              productId: item.productId,
+              previousStock,
+              newStock,
+              delta: newStock - previousStock,
+              reason: 'order.reorder',
+              actorId: userId,
+            },
+          });
+        }
       }
 
       const subtotalCents = orderItems.reduce((sum, item) => sum + item.priceCents * item.qty, 0);
@@ -636,13 +1040,26 @@ export class OrdersService {
         throw new DomainError(ErrorCode.ADDRESS_NOT_FOUND, 'No address available for reorder');
       }
 
-      const quote = await this.settings.computeDeliveryQuote({
-        subtotalCents,
-        zoneId: address.zoneId,
-      });
-      const deliveryZone = await this.settings.getZoneById(address.zoneId, { includeInactive: true });
-      const shippingFeeCents = quote.shippingFeeCents;
-      const deliveryZoneName = deliveryZone?.nameEn ?? deliveryZone?.nameAr ?? address.zoneId;
+      let shippingFeeCents = 0;
+      let deliveryDistanceKm: number | null = null;
+      let deliveryRatePerKmCents: number | null = null;
+      let deliveryMode = source.deliveryMode ?? DeliveryMode.PLATFORM;
+      if (branchId && address.lat !== null && address.lat !== undefined && address.lng !== null && address.lng !== undefined) {
+        const quote = await this.settings.computeBranchDeliveryQuote({
+          branchId,
+          addressLat: address.lat,
+          addressLng: address.lng,
+        });
+        shippingFeeCents = quote.shippingFeeCents;
+        deliveryDistanceKm = quote.distanceKm;
+        deliveryRatePerKmCents = quote.ratePerKmCents;
+      } else {
+        const quote = await this.settings.computeDeliveryQuote({
+          subtotalCents,
+          zoneId: address.zoneId,
+        });
+        shippingFeeCents = quote.shippingFeeCents;
+      }
 
       const totalCents = subtotalCents + shippingFeeCents;
       const code = await this.generateOrderCode(tx);
@@ -662,10 +1079,11 @@ export class OrdersService {
           cartId: null,
           notes: 'Reorder',
           couponCode: null,
-          deliveryZoneId: address.zoneId,
-          deliveryZoneName,
-          deliveryEtaMinutes: quote.etaMinutes ?? undefined,
-          estimatedDeliveryTime: quote.estimatedDeliveryTime ?? undefined,
+          providerId: source.providerId ?? undefined,
+          branchId: branchId ?? undefined,
+          deliveryMode,
+          deliveryDistanceKm,
+          deliveryRatePerKmCents,
           items: {
             create: orderItems.map((item) => ({
               productId: item.productId,
@@ -681,6 +1099,8 @@ export class OrdersService {
         },
       });
 
+      await this.billing.recordCommissionForOrder(order.id, tx);
+
       const eventPayload = await this.buildOrderEventPayload(order.id, tx);
       const createdEvent = await this.automation.emit('order.created', eventPayload, {
         tx,
@@ -690,7 +1110,13 @@ export class OrdersService {
 
       return { orderId: order.id };
     }).catch(async (error) => {
-      await this.rollbackStockForOrderItems(source.items).catch(() => undefined);
+      await this.rollbackStockForOrderItems(
+        source.items.map((item) => ({
+          productId: item.productId,
+          qty: item.qty,
+          branchId: source.branchId ?? undefined,
+        })),
+      ).catch(() => undefined);
       throw error;
     });
     await this.automation.enqueueMany(automationEvents);
@@ -735,7 +1161,8 @@ export class OrdersService {
             actorId: userId,
           },
         });
-        await this.restockInventory(orderId, order.items, tx, userId);
+        await this.restockInventory(orderId, order.items, tx, userId, order.branchId ?? undefined);
+        await this.billing.voidCommissionForOrder(orderId, tx);
         await this.refundRedeemedPoints(orderId, tx);
         await this.revokeLoyaltyForOrder(orderId, tx);
         const payload = await this.buildOrderEventPayload(orderId, tx);
@@ -829,7 +1256,8 @@ export class OrdersService {
             actorId,
           },
         });
-        await this.restockInventory(orderId, order.items, tx, actorId);
+        await this.restockInventory(orderId, order.items, tx, actorId, order.branchId ?? undefined);
+        await this.billing.voidCommissionForOrder(orderId, tx);
         await this.refundRedeemedPoints(orderId, tx);
         await this.revokeLoyaltyForOrder(orderId, tx);
         const payload = await this.buildOrderEventPayload(orderId, tx);
@@ -861,6 +1289,7 @@ export class OrdersService {
     items: { productId: string; qty: number; productNameSnapshot?: string | null }[],
     tx: Prisma.TransactionClient,
     actorId?: string,
+    branchId?: string,
   ) {
     if (!items?.length) return;
     const productIds = Array.from(new Set(items.map((i) => i.productId)));
@@ -869,24 +1298,43 @@ export class OrdersService {
       select: { id: true, stock: true },
     });
     const stockMap = new Map(products.map((p) => [p.id, p.stock ?? 0]));
+    const branchProducts = branchId
+      ? await tx.branchProduct.findMany({
+          where: { branchId, productId: { in: productIds } },
+        })
+      : [];
+    const branchProductMap = new Map(
+      branchProducts.map((bp) => [`${bp.branchId}:${bp.productId}`, bp]),
+    );
     for (const item of items) {
       const previous = stockMap.get(item.productId) ?? 0;
       const next = previous + item.qty;
-      await tx.product.updateMany({
-        where: { id: item.productId },
-        data: { stock: { increment: item.qty } },
-      });
-      await tx.productStockLog.create({
-        data: {
-          productId: item.productId,
-          previousStock: previous,
-          newStock: next,
-          delta: item.qty,
-          reason: 'order.cancel',
-          actorId,
-        },
-      });
-      stockMap.set(item.productId, next);
+      const branchProduct = branchId ? branchProductMap.get(`${branchId}:${item.productId}`) : undefined;
+      let updatedProductStock = true;
+      if (branchId && branchProduct?.stock !== null && branchProduct?.stock !== undefined) {
+        await tx.branchProduct.updateMany({
+          where: { branchId, productId: item.productId },
+          data: { stock: { increment: item.qty } },
+        });
+        updatedProductStock = false;
+      }
+      if (updatedProductStock) {
+        await tx.product.updateMany({
+          where: { id: item.productId },
+          data: { stock: { increment: item.qty } },
+        });
+        await tx.productStockLog.create({
+          data: {
+            productId: item.productId,
+            previousStock: previous,
+            newStock: next,
+            delta: item.qty,
+            reason: 'order.cancel',
+            actorId,
+          },
+        });
+        stockMap.set(item.productId, next);
+      }
     }
   }
 
@@ -930,18 +1378,35 @@ export class OrdersService {
       include: { items: true },
     });
     if (!cart?.items?.length) return;
-    await this.rollbackStockForOrderItems(cart.items.map((i) => ({ productId: i.productId, qty: i.qty })));
+    await this.rollbackStockForOrderItems(
+      cart.items.map((i) => ({ productId: i.productId, qty: i.qty, branchId: i.branchId ?? undefined })),
+    );
   }
 
   private async rollbackStockForOrderItems(
-    items: { productId: string; qty: number }[],
+    items: { productId: string; qty: number; branchId?: string }[],
   ) {
     if (!items?.length) return;
     for (const item of items) {
-      await this.prisma.product.updateMany({
-        where: { id: item.productId },
-        data: { stock: { increment: item.qty } },
-      });
+      let updatedProductStock = true;
+      if (item.branchId) {
+        const branchProduct = await this.prisma.branchProduct.findUnique({
+          where: { branchId_productId: { branchId: item.branchId, productId: item.productId } },
+        });
+        if (branchProduct?.stock !== null && branchProduct?.stock !== undefined) {
+          await this.prisma.branchProduct.updateMany({
+            where: { branchId: item.branchId, productId: item.productId },
+            data: { stock: { increment: item.qty } },
+          });
+          updatedProductStock = false;
+        }
+      }
+      if (updatedProductStock) {
+        await this.prisma.product.updateMany({
+          where: { id: item.productId },
+          data: { stock: { increment: item.qty } },
+        });
+      }
     }
   }
 
@@ -1092,6 +1557,11 @@ export class OrdersService {
       deliveryEtaMinutes: order.deliveryEtaMinutes ?? undefined,
       deliveryZoneId: order.deliveryZoneId ?? undefined,
       deliveryZoneName: order.deliveryZoneName ?? undefined,
+      providerId: order.providerId ?? undefined,
+      branchId: order.branchId ?? undefined,
+      deliveryMode: order.deliveryMode ?? undefined,
+      deliveryDistanceKm: order.deliveryDistanceKm ?? undefined,
+      deliveryRatePerKmCents: order.deliveryRatePerKmCents ?? undefined,
       deliveryZone: zone
         ? {
             id: zone.id,

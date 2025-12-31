@@ -368,6 +368,66 @@ export class DeliverySettingsDto {
   })
   freeDeliveryMinimumCents?: number;
 
+  @ApiPropertyOptional({ description: 'Delivery rate per km in store currency' })
+  @IsOptional()
+  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
+  deliveryRatePerKm?: number;
+
+  @ApiPropertyOptional({ description: 'Delivery rate per km in cents (alternative input)' })
+  @IsOptional()
+  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
+  deliveryRatePerKmCents?: number;
+
+  @ApiPropertyOptional({ description: 'Min delivery fee in store currency' })
+  @IsOptional()
+  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
+  minDeliveryFee?: number;
+
+  @ApiPropertyOptional({ description: 'Min delivery fee in cents (alternative input)' })
+  @IsOptional()
+  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
+  minDeliveryFeeCents?: number;
+
+  @ApiPropertyOptional({ description: 'Max delivery fee in store currency' })
+  @IsOptional()
+  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
+  maxDeliveryFee?: number;
+
+  @ApiPropertyOptional({ description: 'Max delivery fee in cents (alternative input)' })
+  @IsOptional()
+  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  })
+  maxDeliveryFeeCents?: number;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

@@ -40,3 +40,10 @@ export interface DeliveryQuote {
   etaMinutes?: number;
   estimatedDeliveryTime?: string | null;
 }
+
+export interface DistanceDeliveryQuote extends DeliveryQuote {
+  distanceKm: number;
+  ratePerKmCents: number;
+  minDeliveryFeeCents?: number | null;
+  maxDeliveryFeeCents?: number | null;
+}

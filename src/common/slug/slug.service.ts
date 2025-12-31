@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { slugify } from '../utils/slug.util';
 
-type SupportedModels = 'product' | 'category';
+type SupportedModels = 'product' | 'category' | 'provider' | 'branch';
 
 @Injectable()
 export class SlugService {

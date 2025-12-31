@@ -6,6 +6,11 @@ export enum PaymentMethodDto {
   CARD = 'CARD',
 }
 
+export enum OrderSplitFailurePolicyDto {
+  CANCEL_GROUP = 'CANCEL_GROUP',
+  PARTIAL = 'PARTIAL',
+}
+
 export class CreateOrderDto {
   @ApiProperty() @IsString() addressId!: string;
   @ApiProperty({ enum: PaymentMethodDto, default: PaymentMethodDto.COD })
@@ -29,4 +34,9 @@ export class CreateOrderDto {
   @IsString()
   @Length(8, 128)
   idempotencyKey?: string;
+
+  @ApiProperty({ required: false, enum: OrderSplitFailurePolicyDto, default: OrderSplitFailurePolicyDto.PARTIAL })
+  @IsOptional()
+  @IsEnum(OrderSplitFailurePolicyDto)
+  splitFailurePolicy?: OrderSplitFailurePolicyDto = OrderSplitFailurePolicyDto.PARTIAL;
 }

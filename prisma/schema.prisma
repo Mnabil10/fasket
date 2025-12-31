@@ -33,6 +33,80 @@ enum PaymentMethod {
   CARD
 }
 
+enum ProviderType {
+  SUPERMARKET
+  PHARMACY
+  RESTAURANT
+  SERVICE
+  OTHER
+}
+
+enum ProviderStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum BranchStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum DeliveryMode {
+  PLATFORM
+  MERCHANT
+}
+
+enum ProviderUserRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+enum OrderGroupStatus {
+  PENDING
+  PAID
+  CANCELED
+}
+
+enum OrderSplitFailurePolicy {
+  CANCEL_GROUP
+  PARTIAL
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+}
+
+enum InvoiceItemType {
+  SUBSCRIPTION
+  COMMISSION
+  ADJUSTMENT
+}
+
+enum CouponScope {
+  PLATFORM
+  PROVIDER
+  BRANCH
+}
+
 enum LoyaltyTransactionType {
   EARN
   REDEEM
@@ -70,6 +144,8 @@ model User {
   sessions   SessionLog[]
   pushDevices PushDevice[]
   telegramLink TelegramLink?
+  providerMemberships ProviderUser[]
+  orderGroups OrderGroup[]
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 }
@@ -91,12 +167,93 @@ model Address {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   orders     Order[]
+  orderGroups OrderGroup[]
 
   @@index([zoneId])
 }
 
+model Provider {
+  id              String        @id @default(cuid())
+  name            String
+  nameAr          String?
+  slug            String        @unique
+  type            ProviderType  @default(SUPERMARKET)
+  status          ProviderStatus @default(PENDING)
+  deliveryMode    DeliveryMode  @default(PLATFORM)
+  deliveryRatePerKmCents Int?
+  minDeliveryFeeCents Int?
+  maxDeliveryFeeCents Int?
+  contactEmail    String?
+  contactPhone    String?
+  logoUrl         String?
+  description     String?
+  descriptionAr   String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  branches        Branch[]
+  products        Product[]
+  categories      Category[]
+  coupons         Coupon[]
+  orders          Order[]
+  memberships     ProviderUser[]
+  subscriptions   ProviderSubscription[]
+  invoices        Invoice[]
+  ledgerEntries   ProviderLedger[]
+  deliveryZones   DeliveryZone[]
+}
+
+model Branch {
+  id              String       @id @default(cuid())
+  providerId      String
+  provider        Provider     @relation(fields: [providerId], references: [id])
+  name            String
+  nameAr          String?
+  slug            String       @unique
+  status          BranchStatus @default(ACTIVE)
+  address         String?
+  city            String?
+  region          String?
+  lat             Float?
+  lng             Float?
+  deliveryMode    DeliveryMode?
+  deliveryRadiusKm Float?
+  deliveryRatePerKmCents Int?
+  minDeliveryFeeCents Int?
+  maxDeliveryFeeCents Int?
+  serviceArea     Json?        // GeoJSON or polygon payload
+  isDefault       Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  branchProducts  BranchProduct[]
+  orders          Order[]
+  coupons         Coupon[]
+  deliveryZones   DeliveryZone[]
+  cartItems       CartItem[]
+
+  @@index([providerId])
+  @@index([status])
+}
+
+model ProviderUser {
+  id         String          @id @default(cuid())
+  providerId String
+  userId     String
+  role       ProviderUserRole @default(STAFF)
+  createdAt  DateTime        @default(now())
+
+  provider   Provider        @relation(fields: [providerId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+
+  @@unique([providerId, userId])
+  @@index([userId])
+}
+
 model Category {
   id        String     @id @default(cuid())
+  providerId String?
+  provider  Provider?  @relation(fields: [providerId], references: [id])
   name      String
   nameAr    String?
   slug      String     @unique
@@ -113,10 +270,13 @@ model Category {
 
   @@index([parentId])
   @@index([isActive, sortOrder])
+  @@index([providerId])
 }
 
 model Product {
   id             String        @id @default(cuid())
+  providerId     String?
+  provider       Provider?     @relation(fields: [providerId], references: [id])
   categoryId     String?
   category       Category?     @relation(fields: [categoryId], references: [id])
   sku            String?       @unique
@@ -136,6 +296,7 @@ model Product {
   cartItems      CartItem[]
   orderItems     OrderItem[]
   stockLogs      ProductStockLog[]
+  branchProducts BranchProduct[]
   deletedAt      DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -145,6 +306,26 @@ model Product {
   @@index([categoryId, status])
   @@index([isHotOffer, status, createdAt])
   @@index([status, createdAt])
+  @@index([providerId])
+}
+
+model BranchProduct {
+  id             String   @id @default(cuid())
+  branchId       String
+  productId      String
+  priceCents     Int?
+  salePriceCents Int?
+  stock          Int?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  branch         Branch  @relation(fields: [branchId], references: [id])
+  product        Product @relation(fields: [productId], references: [id])
+
+  @@unique([branchId, productId])
+  @@index([branchId])
+  @@index([productId])
 }
 
 model Cart {
@@ -162,13 +343,43 @@ model CartItem {
   id         String @id @default(cuid())
   cartId     String
   productId  String
+  branchId   String?
   qty        Int    @default(1)
   priceCents Int
 
   cart    Cart    @relation(fields: [cartId], references: [id])
   product Product @relation(fields: [productId], references: [id])
+  branch  Branch? @relation(fields: [branchId], references: [id])
 
-  @@unique([cartId, productId])
+  @@unique([cartId, productId, branchId])
+  @@index([branchId])
+}
+
+model OrderGroup {
+  id                 String                 @id @default(cuid())
+  code               String                 @default(cuid()) @unique
+  userId             String
+  user               User                   @relation(fields: [userId], references: [id])
+  idempotencyKey     String?
+  addressId          String?
+  address            Address?               @relation(fields: [addressId], references: [id])
+  status             OrderGroupStatus       @default(PENDING)
+  splitFailurePolicy OrderSplitFailurePolicy @default(PARTIAL)
+  paymentMethod      PaymentMethod          @default(COD)
+  couponCode         String?
+  subtotalCents      Int
+  shippingFeeCents   Int                    @default(0)
+  discountCents      Int                    @default(0)
+  totalCents         Int
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  orders             Order[]
+  ledgerEntries      ProviderLedger[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@unique([userId, idempotencyKey])
 }
 
 model Order {
@@ -179,12 +390,21 @@ model Order {
   idempotencyKey   String?
   cartId           String?
   cart             Cart?                @relation(fields: [cartId], references: [id])
+  orderGroupId     String?
+  orderGroup       OrderGroup?          @relation(fields: [orderGroupId], references: [id])
+  providerId       String?
+  provider         Provider?            @relation(fields: [providerId], references: [id])
+  branchId         String?
+  branch           Branch?              @relation(fields: [branchId], references: [id])
   addressId        String?
   address          Address?             @relation(fields: [addressId], references: [id])
   deliveryZoneId   String?
   deliveryZoneName String?
   deliveryEtaMinutes Int?
   estimatedDeliveryTime String?
+  deliveryMode     DeliveryMode         @default(PLATFORM)
+  deliveryDistanceKm Float?
+  deliveryRatePerKmCents Int?
   notes            String?
   couponCode       String?
   subtotalCents    Int
@@ -202,6 +422,7 @@ model Order {
   items            OrderItem[]
   statusHistory    OrderStatusHistory[]
   loyaltyTransactions LoyaltyTransaction[]
+  ledgerEntries    ProviderLedger[]
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
 
@@ -209,6 +430,9 @@ model Order {
   @@index([userId, createdAt])
   @@index([driverId])
   @@index([driverId, createdAt])
+  @@index([orderGroupId])
+  @@index([providerId])
+  @@index([branchId])
   @@unique([userId, idempotencyKey])
   @@index([code])
   @@index([createdAt])
@@ -296,6 +520,8 @@ model DeliveryVehicle {
 
 model DeliveryZone {
   id                         String   @id @default(cuid())
+  providerId                 String?
+  branchId                   String?
   nameEn                     String
   nameAr                     String?
   city                       String?
@@ -308,10 +534,15 @@ model DeliveryZone {
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
+  provider                   Provider? @relation(fields: [providerId], references: [id])
+  branch                     Branch?   @relation(fields: [branchId], references: [id])
+
   @@index([isActive, nameEn])
   @@index([city])
   @@index([region])
   @@index([isActive, city, region])
+  @@index([providerId])
+  @@index([branchId])
 }
 
 model LoyaltyCycle {
@@ -446,6 +677,9 @@ model Setting {
   freeDeliveryMinimumCents Int     @default(0)
   estimatedDeliveryTime    String? // "25-30 minutes"
   maxDeliveryRadiusKm      Int?    // 10
+  deliveryRatePerKmCents   Int?    // distance-based fee per km (cents)
+  minDeliveryFeeCents      Int?
+  maxDeliveryFeeCents      Int?
   deliveryZones            Json?   // [{name, fee, enabled}, ...]
 
   // Payment (JSON for flexibility)
@@ -548,6 +782,9 @@ enum CouponType {
 model Coupon {
   id              String     @id @default(cuid())
   code            String     @unique
+  scope           CouponScope @default(PLATFORM)
+  providerId      String?
+  branchId        String?
   type            CouponType
   valueCents      Int        // For FIXED: amount in cents; For PERCENT: percentage value (0-100)
   isPercent       Boolean    @default(false) // legacy helper, not required
@@ -558,6 +795,12 @@ model Coupon {
   maxDiscountCents Int?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+
+  provider        Provider?  @relation(fields: [providerId], references: [id])
+  branch          Branch?    @relation(fields: [branchId], references: [id])
+
+  @@index([providerId])
+  @@index([branchId])
 }
 
 model PushDevice {
@@ -575,4 +818,105 @@ model PushDevice {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model Plan {
+  id                 String          @id @default(cuid())
+  code               String          @unique
+  name               String
+  description        String?
+  billingInterval    BillingInterval
+  amountCents        Int             @default(0)
+  currency           String          @default("EGP")
+  commissionRateBps  Int             @default(0) // 100 = 1%
+  trialDays          Int             @default(0)
+  isActive           Boolean         @default(true)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  subscriptions      ProviderSubscription[]
+}
+
+model ProviderSubscription {
+  id                 String             @id @default(cuid())
+  providerId         String
+  planId             String
+  status             SubscriptionStatus @default(TRIALING)
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  trialEndsAt        DateTime?
+  cancelAt           DateTime?
+  canceledAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  provider           Provider           @relation(fields: [providerId], references: [id])
+  plan               Plan               @relation(fields: [planId], references: [id])
+  invoices           Invoice[]
+
+  @@index([providerId, status])
+  @@index([planId])
+}
+
+model Invoice {
+  id                 String        @id @default(cuid())
+  providerId         String
+  subscriptionId     String?
+  number             String        @unique
+  status             InvoiceStatus @default(DRAFT)
+  currency           String        @default("EGP")
+  amountDueCents     Int           @default(0)
+  amountPaidCents    Int           @default(0)
+  dueAt              DateTime?
+  paidAt             DateTime?
+  periodStart        DateTime?
+  periodEnd          DateTime?
+  metadata           Json?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  provider           Provider      @relation(fields: [providerId], references: [id])
+  subscription       ProviderSubscription? @relation(fields: [subscriptionId], references: [id])
+  items              InvoiceItem[]
+  ledgerEntries      ProviderLedger[]
+
+  @@index([providerId, createdAt])
+  @@index([subscriptionId])
+}
+
+model InvoiceItem {
+  id             String         @id @default(cuid())
+  invoiceId      String
+  type           InvoiceItemType
+  description    String?
+  amountCents    Int
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+
+  invoice        Invoice        @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
+}
+
+model ProviderLedger {
+  id             String         @id @default(cuid())
+  providerId     String
+  orderId        String?
+  orderGroupId   String?
+  invoiceId      String?
+  type           InvoiceItemType
+  amountCents    Int
+  currency       String         @default("EGP")
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+
+  provider       Provider       @relation(fields: [providerId], references: [id])
+  order          Order?         @relation(fields: [orderId], references: [id])
+  orderGroup     OrderGroup?    @relation(fields: [orderGroupId], references: [id])
+  invoice        Invoice?       @relation(fields: [invoiceId], references: [id])
+
+  @@index([providerId, createdAt])
+  @@index([orderId])
+  @@index([orderGroupId])
+  @@index([invoiceId])
 }

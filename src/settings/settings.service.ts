@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, Setting } from '@prisma/client';
+import { DeliveryMode, Prisma, Setting } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../common/cache/cache.service';
-import { DeliveryConfig, DeliveryQuote, DeliveryZone, LoyaltyConfig } from './settings.types';
+import { DeliveryConfig, DeliveryQuote, DeliveryZone, DistanceDeliveryQuote, LoyaltyConfig } from './settings.types';
 import { DomainError, ErrorCode } from '../common/errors';
 
 @Injectable()
@@ -320,6 +320,80 @@ export class SettingsService {
     };
   }
 
+  async computeBranchDeliveryQuote(params: {
+    branchId: string;
+    addressLat: number;
+    addressLng: number;
+  }): Promise<DistanceDeliveryQuote> {
+    const branch = await this.prisma.branch.findUnique({
+      where: { id: params.branchId },
+      include: {
+        provider: {
+          select: {
+            deliveryRatePerKmCents: true,
+            minDeliveryFeeCents: true,
+            maxDeliveryFeeCents: true,
+            deliveryMode: true,
+          },
+        },
+      },
+    });
+    if (!branch) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Branch not found');
+    }
+    if (branch.status !== 'ACTIVE') {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Branch is inactive');
+    }
+    if (!Number.isFinite(params.addressLat) || !Number.isFinite(params.addressLng)) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is missing');
+    }
+    if (branch.lat === null || branch.lat === undefined || branch.lng === null || branch.lng === undefined) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Branch location is missing');
+    }
+
+    const distanceKm = this.haversineKm(branch.lat, branch.lng, params.addressLat, params.addressLng);
+    if (branch.deliveryRadiusKm && distanceKm > branch.deliveryRadiusKm) {
+      throw new DomainError(ErrorCode.ADDRESS_INVALID_ZONE, 'Address is outside delivery radius');
+    }
+
+    const settings = await this.getSettings();
+    const ratePerKmCents =
+      branch.deliveryRatePerKmCents ??
+      branch.provider?.deliveryRatePerKmCents ??
+      settings.deliveryRatePerKmCents ??
+      0;
+    const minFee =
+      branch.minDeliveryFeeCents ??
+      branch.provider?.minDeliveryFeeCents ??
+      settings.minDeliveryFeeCents ??
+      null;
+    const maxFee =
+      branch.maxDeliveryFeeCents ??
+      branch.provider?.maxDeliveryFeeCents ??
+      settings.maxDeliveryFeeCents ??
+      null;
+    const deliveryMode = branch.deliveryMode ?? branch.provider?.deliveryMode ?? DeliveryMode.PLATFORM;
+
+    let shippingFeeCents = Math.ceil(distanceKm * ratePerKmCents);
+    if (minFee !== null && minFee !== undefined) {
+      shippingFeeCents = Math.max(shippingFeeCents, minFee);
+    }
+    if (maxFee !== null && maxFee !== undefined) {
+      shippingFeeCents = Math.min(shippingFeeCents, maxFee);
+    }
+    if (deliveryMode === DeliveryMode.MERCHANT) {
+      shippingFeeCents = 0;
+    }
+
+    return {
+      shippingFeeCents,
+      distanceKm,
+      ratePerKmCents,
+      minDeliveryFeeCents: minFee,
+      maxDeliveryFeeCents: maxFee,
+    };
+  }
+
   async getLoyaltyConfig(): Promise<LoyaltyConfig> {
     const settings = await this.getSettings();
     const earnRate =
@@ -429,6 +503,24 @@ export class SettingsService {
   private formatEta(etaMinutes?: number): string | null {
     if (!etaMinutes || etaMinutes <= 0) return null;
     return `${etaMinutes} min`;
+  }
+
+  private haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const earthRadiusKm = 6371;
+    const dLat = this.toRadians(lat2 - lat1);
+    const dLng = this.toRadians(lng2 - lng1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(this.toRadians(lat1)) *
+        Math.cos(this.toRadians(lat2)) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return earthRadiusKm * c;
+  }
+
+  private toRadians(value: number): number {
+    return (value * Math.PI) / 180;
   }
 
   formatEtaLocalized(etaMinutes?: number, lang: 'en' | 'ar' = 'en'): string | null {

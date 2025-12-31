@@ -51,6 +51,18 @@ export class AdminSettingsController {
       delivery: {
         deliveryFee: (setting.deliveryFeeCents ?? 0) / 100,
         freeDeliveryMinimum: (setting.freeDeliveryMinimumCents ?? 0) / 100,
+        deliveryRatePerKm: setting.deliveryRatePerKmCents === null || setting.deliveryRatePerKmCents === undefined
+          ? null
+          : (setting.deliveryRatePerKmCents ?? 0) / 100,
+        deliveryRatePerKmCents: setting.deliveryRatePerKmCents ?? null,
+        minDeliveryFee: setting.minDeliveryFeeCents === null || setting.minDeliveryFeeCents === undefined
+          ? null
+          : (setting.minDeliveryFeeCents ?? 0) / 100,
+        minDeliveryFeeCents: setting.minDeliveryFeeCents ?? null,
+        maxDeliveryFee: setting.maxDeliveryFeeCents === null || setting.maxDeliveryFeeCents === undefined
+          ? null
+          : (setting.maxDeliveryFeeCents ?? 0) / 100,
+        maxDeliveryFeeCents: setting.maxDeliveryFeeCents ?? null,
         estimatedDeliveryTime: setting.estimatedDeliveryTime ?? null,
         maxDeliveryRadius: setting.maxDeliveryRadiusKm ?? null,
         deliveryZones: deliveryZones.map((zone) => ({
@@ -133,6 +145,21 @@ export class AdminSettingsController {
         upd.freeDeliveryMinimumCents = toNonNegativeInt(d.freeDeliveryMinimumCents);
       } else if (d.freeDeliveryMinimum !== undefined) {
         upd.freeDeliveryMinimumCents = toNonNegativeInt((d.freeDeliveryMinimum ?? 0) * 100);
+      }
+      if (d.deliveryRatePerKmCents !== undefined) {
+        upd.deliveryRatePerKmCents = toNonNegativeInt(d.deliveryRatePerKmCents);
+      } else if (d.deliveryRatePerKm !== undefined) {
+        upd.deliveryRatePerKmCents = toNonNegativeInt((d.deliveryRatePerKm ?? 0) * 100);
+      }
+      if (d.minDeliveryFeeCents !== undefined) {
+        upd.minDeliveryFeeCents = toNonNegativeInt(d.minDeliveryFeeCents);
+      } else if (d.minDeliveryFee !== undefined) {
+        upd.minDeliveryFeeCents = toNonNegativeInt((d.minDeliveryFee ?? 0) * 100);
+      }
+      if (d.maxDeliveryFeeCents !== undefined) {
+        upd.maxDeliveryFeeCents = toNonNegativeInt(d.maxDeliveryFeeCents);
+      } else if (d.maxDeliveryFee !== undefined) {
+        upd.maxDeliveryFeeCents = toNonNegativeInt((d.maxDeliveryFee ?? 0) * 100);
       }
 
       if (d.estimatedDeliveryTime !== undefined)   upd.estimatedDeliveryTime = d.estimatedDeliveryTime;
