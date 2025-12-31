@@ -9,6 +9,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto, OrderSplitFailurePolicyDto, PaymentMethodDto } from './dto';
+import { CreateGuestOrderDto, GuestOrderQuoteDto } from './dto/guest-order.dto';
 import { SettingsService } from '../settings/settings.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { DomainError, ErrorCode } from '../common/errors';
@@ -40,6 +41,24 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
 }>;
 
 type PublicStatus = 'PENDING' | 'CONFIRMED' | 'DELIVERING' | 'COMPLETED' | 'CANCELED';
+
+type GuestOrderItemInput = {
+  productId: string;
+  qty: number;
+  branchId?: string | null;
+};
+
+type GuestAddressInput = {
+  fullAddress: string;
+  city?: string;
+  region?: string;
+  street?: string;
+  building?: string;
+  apartment?: string;
+  notes?: string;
+  lat: number;
+  lng: number;
+};
 
 @Injectable()
 export class OrdersService {
@@ -640,6 +659,691 @@ export class OrdersService {
     }
   }
 
+  async quoteGuestOrder(payload: GuestOrderQuoteDto) {
+    const splitPolicy =
+      (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
+    const address = payload.address as GuestAddressInput;
+    if (!Number.isFinite(address.lat) || !Number.isFinite(address.lng)) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is required');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const { grouped, branchErrors } = await this.resolveGuestItems(tx, payload.items, splitPolicy);
+
+      let groupEntries = Array.from(grouped.entries());
+      if (!groupEntries.length) {
+        throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
+      }
+
+      const shippingByBranch = new Map<string, { fee: number; distanceKm: number; ratePerKmCents: number }>();
+      const shippingErrors = new Map<string, string>();
+      for (const [branchId] of groupEntries) {
+        try {
+          const quote = await this.settings.computeBranchDeliveryQuote({
+            branchId,
+            addressLat: address.lat,
+            addressLng: address.lng,
+          });
+          shippingByBranch.set(branchId, {
+            fee: quote.shippingFeeCents,
+            distanceKm: quote.distanceKm,
+            ratePerKmCents: quote.ratePerKmCents,
+          });
+        } catch (error: any) {
+          shippingErrors.set(branchId, error?.message ?? 'Delivery unavailable');
+        }
+      }
+
+      if (shippingErrors.size > 0) {
+        if (splitPolicy === OrderSplitFailurePolicy.CANCEL_GROUP) {
+          const message = Array.from(shippingErrors.values())[0] ?? 'Delivery unavailable';
+          throw new DomainError(ErrorCode.VALIDATION_FAILED, message);
+        }
+        for (const [branchId, message] of shippingErrors.entries()) {
+          branchErrors.set(branchId, message);
+        }
+        groupEntries = groupEntries.filter(([branchId]) => !shippingErrors.has(branchId));
+      }
+
+      if (!groupEntries.length) {
+        throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
+      }
+
+      const groups = groupEntries.map(([branchId, group]) => {
+        const shipping = shippingByBranch.get(branchId);
+        const deliveryMode =
+          group.branch.deliveryMode ??
+          group.branch.provider?.deliveryMode ??
+          DeliveryMode.PLATFORM;
+        return {
+          branchId,
+          providerId: group.providerId,
+          branchName: (group.branch as any).name ?? null,
+          branchNameAr: (group.branch as any).nameAr ?? null,
+          subtotalCents: group.subtotalCents,
+          shippingFeeCents: shipping?.fee ?? 0,
+          distanceKm: shipping?.distanceKm ?? null,
+          ratePerKmCents: shipping?.ratePerKmCents ?? null,
+          deliveryMode,
+          deliveryRequiresLocation: false,
+          deliveryUnavailable: false,
+        };
+      });
+
+      const subtotalCents = groups.reduce((sum, group) => sum + group.subtotalCents, 0);
+      const shippingFeeCents = groups.reduce((sum, group) => sum + group.shippingFeeCents, 0);
+      const totalCents = Math.max(subtotalCents + shippingFeeCents, 0);
+
+      return {
+        subtotalCents,
+        shippingFeeCents,
+        totalCents,
+        groups,
+        skippedBranchIds: Array.from(branchErrors.keys()),
+      };
+    });
+  }
+
+  async createGuestOrder(payload: CreateGuestOrderDto) {
+    const splitPolicy =
+      (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
+    const idempotencyKey = payload.idempotencyKey?.trim() || null;
+    const guestPhone = payload.phone?.trim();
+    const guestName = payload.name?.trim();
+    const address = payload.address as GuestAddressInput;
+    if (!guestName || !guestPhone) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Guest name and phone are required');
+    }
+    if (!Number.isFinite(address.lat) || !Number.isFinite(address.lng)) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is required');
+    }
+
+    if (idempotencyKey) {
+      const existingGroup = await this.prisma.orderGroup.findFirst({
+        where: { idempotencyKey, userId: null, guestPhone },
+        select: { id: true },
+      });
+      if (existingGroup) {
+        return this.getGuestOrderGroupSummary(existingGroup.id);
+      }
+    }
+
+    const automationEvents: AutomationEventRef[] = [];
+
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        const { grouped, branchErrors, branchProductMap, productMap } = await this.resolveGuestItems(
+          tx,
+          payload.items,
+          splitPolicy,
+        );
+
+        let groupEntries = Array.from(grouped.entries());
+        if (!groupEntries.length) {
+          throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
+        }
+
+        const shippingByBranch = new Map<string, { fee: number; distanceKm: number; ratePerKmCents: number }>();
+        const shippingErrors = new Map<string, string>();
+        for (const [branchId] of groupEntries) {
+          try {
+            const quote = await this.settings.computeBranchDeliveryQuote({
+              branchId,
+              addressLat: address.lat,
+              addressLng: address.lng,
+            });
+            shippingByBranch.set(branchId, {
+              fee: quote.shippingFeeCents,
+              distanceKm: quote.distanceKm,
+              ratePerKmCents: quote.ratePerKmCents,
+            });
+          } catch (error: any) {
+            shippingErrors.set(branchId, error?.message ?? 'Delivery unavailable');
+          }
+        }
+
+        if (shippingErrors.size > 0) {
+          if (splitPolicy === OrderSplitFailurePolicy.CANCEL_GROUP) {
+            const message = Array.from(shippingErrors.values())[0] ?? 'Delivery unavailable';
+            throw new DomainError(ErrorCode.VALIDATION_FAILED, message);
+          }
+          for (const [branchId, message] of shippingErrors.entries()) {
+            branchErrors.set(branchId, message);
+          }
+          groupEntries = groupEntries.filter(([branchId]) => !shippingErrors.has(branchId));
+        }
+
+        if (!groupEntries.length) {
+          throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
+        }
+
+        const subtotalCentsTotal = groupEntries.reduce(
+          (sum, [, group]) => sum + group.subtotalCents,
+          0,
+        );
+        const shippingFeeCentsTotal = groupEntries.reduce((sum, [branchId]) => {
+          return sum + (shippingByBranch.get(branchId)?.fee ?? 0);
+        }, 0);
+
+        const guestAddress = this.buildGuestAddress(address);
+        const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
+        const orderGroup = await tx.orderGroup.create({
+          data: {
+            userId: null,
+            idempotencyKey,
+            addressId: null,
+            guestName,
+            guestPhone,
+            guestAddress,
+            guestLat: address.lat,
+            guestLng: address.lng,
+            status: 'PENDING',
+            splitFailurePolicy: splitPolicy,
+            paymentMethod: paymentMethod as PaymentMethod,
+            subtotalCents: subtotalCentsTotal,
+            shippingFeeCents: shippingFeeCentsTotal,
+            discountCents: 0,
+            totalCents: subtotalCentsTotal + shippingFeeCentsTotal,
+          },
+        });
+
+        const createdOrders: { id: string }[] = [];
+        for (const [branchId, group] of groupEntries) {
+          const shippingQuote = shippingByBranch.get(branchId);
+          const deliveryMode =
+            group.branch.deliveryMode ??
+            group.branch.provider?.deliveryMode ??
+            DeliveryMode.PLATFORM;
+          const deliveryDistanceKm = shippingQuote?.distanceKm ?? null;
+          const deliveryRatePerKmCents = shippingQuote?.ratePerKmCents ?? null;
+          const shippingFeeCents = shippingQuote?.fee ?? 0;
+          const totalCents = group.subtotalCents + shippingFeeCents;
+
+          const code = await this.generateOrderCode(tx);
+          const order = await tx.order.create({
+            data: {
+              userId: null,
+              code,
+              status: OrderStatus.PENDING,
+              paymentMethod: paymentMethod as PaymentMethod,
+              subtotalCents: group.subtotalCents,
+              shippingFeeCents,
+              discountCents: 0,
+              totalCents,
+              loyaltyDiscountCents: 0,
+              loyaltyPointsUsed: 0,
+              addressId: null,
+              cartId: null,
+              notes: payload.note,
+              couponCode: null,
+              orderGroupId: orderGroup.id,
+              providerId: group.providerId,
+              branchId,
+              deliveryMode,
+              deliveryDistanceKm,
+              deliveryRatePerKmCents,
+              guestName,
+              guestPhone,
+              guestAddress,
+              guestLat: address.lat,
+              guestLng: address.lng,
+              items: {
+                create: group.items.map((item) => ({
+                  productId: item.productId,
+                  productNameSnapshot: item.productName,
+                  priceSnapshotCents: item.priceCents,
+                  unitPriceCents: item.priceCents,
+                  unitCostCents: item.costCents ?? 0,
+                  lineTotalCents: item.priceCents * item.qty,
+                  lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
+                  qty: item.qty,
+                })),
+              },
+            },
+            select: { id: true },
+          });
+          createdOrders.push(order);
+
+          for (const item of group.items) {
+            const branchProduct = branchProductMap.get(`${branchId}:${item.productId}`);
+            let updatedProductStock = false;
+            if (branchProduct?.stock !== null && branchProduct?.stock !== undefined) {
+              const updated = await tx.branchProduct.updateMany({
+                where: {
+                  branchId,
+                  productId: item.productId,
+                  isActive: true,
+                  stock: { gte: item.qty },
+                },
+                data: { stock: { decrement: item.qty } },
+              });
+              if (updated.count !== 1) {
+                throw new DomainError(
+                  ErrorCode.CART_PRODUCT_UNAVAILABLE,
+                  `Insufficient stock for ${item.productName}`,
+                );
+              }
+            } else {
+              const updated = await tx.product.updateMany({
+                where: {
+                  id: item.productId,
+                  status: ProductStatus.ACTIVE,
+                  deletedAt: null,
+                  stock: { gte: item.qty },
+                },
+                data: { stock: { decrement: item.qty } },
+              });
+              if (updated.count !== 1) {
+                throw new DomainError(
+                  ErrorCode.CART_PRODUCT_UNAVAILABLE,
+                  `Insufficient stock for ${item.productName}`,
+                );
+              }
+              updatedProductStock = true;
+            }
+
+            const product = productMap.get(item.productId);
+            if (product && updatedProductStock) {
+              const previousStock = product.stock ?? 0;
+              const newStock = previousStock - item.qty;
+              await tx.productStockLog.create({
+                data: {
+                  productId: item.productId,
+                  previousStock,
+                  newStock,
+                  delta: newStock - previousStock,
+                  reason: 'order.checkout',
+                  actorId: guestPhone ?? undefined,
+                },
+              });
+              product.stock = newStock;
+            }
+          }
+
+          await this.billing.recordCommissionForOrder(order.id, tx);
+
+          const eventPayload = await this.buildOrderEventPayload(order.id, tx);
+          const createdEvent = await this.automation.emit('order.created', eventPayload, {
+            tx,
+            dedupeKey: `order:${order.id}:${OrderStatus.PENDING}:created`,
+          });
+          automationEvents.push(createdEvent);
+        }
+
+        return {
+          orderGroupId: orderGroup.id,
+          orderIds: createdOrders.map((order) => order.id),
+          skippedBranchIds: Array.from(branchErrors.keys()),
+        };
+      });
+
+      await this.automation.enqueueMany(automationEvents);
+      for (const orderId of result.orderIds) {
+        await this.clearCachesForOrder(orderId, null);
+      }
+      if (result.orderIds.length === 1) {
+        return this.getGuestOrderDetail(result.orderIds[0]);
+      }
+      const summary = await this.getGuestOrderGroupSummary(result.orderGroupId);
+      return {
+        ...summary,
+        skippedBranchIds: result.skippedBranchIds,
+      };
+    } catch (error) {
+      if (idempotencyKey && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const existingGroup = await this.prisma.orderGroup.findFirst({
+          where: { idempotencyKey, userId: null, guestPhone },
+          select: { id: true },
+        });
+        if (existingGroup) {
+          return this.getGuestOrderGroupSummary(existingGroup.id);
+        }
+      }
+      throw error;
+    }
+  }
+
+  async trackGuestOrders(phone: string, code?: string) {
+    const cleanPhone = phone?.trim();
+    if (!cleanPhone) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Phone number is required');
+    }
+    const where: Prisma.OrderGroupWhereInput = {
+      guestPhone: cleanPhone,
+      userId: null,
+    };
+    if (code) {
+      where.OR = [
+        { code: { equals: code } },
+        { orders: { some: { code: { equals: code } } } },
+      ];
+    }
+    const group = await this.prisma.orderGroup.findFirst({
+      where,
+      include: {
+        orders: {
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            totalCents: true,
+            subtotalCents: true,
+            shippingFeeCents: true,
+            discountCents: true,
+            providerId: true,
+            branchId: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!group) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    return {
+      orderGroupId: group.id,
+      code: group.code,
+      status: group.status,
+      subtotalCents: group.subtotalCents,
+      shippingFeeCents: group.shippingFeeCents,
+      discountCents: group.discountCents,
+      totalCents: group.totalCents,
+      createdAt: group.createdAt,
+      orders: group.orders.map((order) => ({
+        id: order.id,
+        code: order.code,
+        status: this.toPublicStatus(order.status),
+        subtotalCents: order.subtotalCents,
+        shippingFeeCents: order.shippingFeeCents,
+        discountCents: order.discountCents,
+        totalCents: order.totalCents,
+        providerId: order.providerId,
+        branchId: order.branchId,
+        createdAt: order.createdAt,
+      })),
+    };
+  }
+
+  private buildGuestAddress(address: GuestAddressInput) {
+    return {
+      fullAddress: address.fullAddress,
+      city: address.city ?? null,
+      region: address.region ?? null,
+      street: address.street ?? null,
+      building: address.building ?? null,
+      apartment: address.apartment ?? null,
+      notes: address.notes ?? null,
+    };
+  }
+
+  private async resolveGuestItems(
+    tx: Prisma.TransactionClient,
+    items: GuestOrderItemInput[],
+    splitPolicy: OrderSplitFailurePolicy,
+  ) {
+    if (!items || items.length === 0) {
+      throw new DomainError(ErrorCode.CART_EMPTY, 'Cart is empty');
+    }
+
+    const uniqueProductIds = Array.from(new Set(items.map((item) => item.productId)));
+    const products = await tx.product.findMany({
+      where: { id: { in: uniqueProductIds }, status: ProductStatus.ACTIVE, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        stock: true,
+        priceCents: true,
+        salePriceCents: true,
+        costPriceCents: true,
+        providerId: true,
+      },
+    });
+    if (products.length !== uniqueProductIds.length) {
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'One or more products are unavailable');
+    }
+
+    const productMap = new Map(products.map((product) => [product.id, product]));
+    const explicitBranchIds = Array.from(
+      new Set(items.map((item) => item.branchId).filter(Boolean) as string[]),
+    );
+    const explicitBranches = explicitBranchIds.length
+      ? await tx.branch.findMany({
+          where: { id: { in: explicitBranchIds } },
+          include: { provider: { select: { id: true, deliveryMode: true } } },
+        })
+      : [];
+    const branchById = new Map(explicitBranches.map((branch) => [branch.id, branch]));
+
+    const providerIdsNeeded = new Set<string>();
+    for (const item of items) {
+      if (!item.branchId) {
+        const product = productMap.get(item.productId);
+        if (product) {
+          providerIdsNeeded.add(product.providerId ?? this.defaultProviderId);
+        }
+      }
+    }
+
+    const providerBranches = providerIdsNeeded.size
+      ? await tx.branch.findMany({
+          where: { providerId: { in: Array.from(providerIdsNeeded) }, status: 'ACTIVE' },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+          include: { provider: { select: { id: true, deliveryMode: true } } },
+        })
+      : [];
+    const defaultBranchByProvider = new Map<string, (typeof providerBranches)[number]>();
+    for (const branch of providerBranches) {
+      if (!defaultBranchByProvider.has(branch.providerId)) {
+        defaultBranchByProvider.set(branch.providerId, branch);
+      }
+    }
+
+    const fallbackBranch = await tx.branch.findUnique({
+      where: { id: this.defaultBranchId },
+      include: { provider: { select: { id: true, deliveryMode: true } } },
+    });
+
+    const branchErrors = new Map<string, string>();
+    const resolvedItems: Array<{
+      product: (typeof products)[number];
+      branch: (typeof explicitBranches)[number] | (typeof providerBranches)[number];
+      qty: number;
+    }> = [];
+
+    for (const item of items) {
+      const product = productMap.get(item.productId);
+      if (!product) {
+        branchErrors.set(item.branchId ?? 'unknown', 'Product unavailable');
+        continue;
+      }
+      let branch =
+        (item.branchId ? branchById.get(item.branchId) : undefined) ??
+        defaultBranchByProvider.get(product.providerId ?? this.defaultProviderId) ??
+        (fallbackBranch ?? undefined);
+      if (!branch || branch.status !== 'ACTIVE') {
+        branchErrors.set(item.branchId ?? branch?.id ?? 'unknown', 'Branch unavailable');
+        continue;
+      }
+      if (product.providerId && branch.providerId !== product.providerId) {
+        branchErrors.set(branch.id, 'Branch does not match product provider');
+        continue;
+      }
+      resolvedItems.push({
+        product,
+        branch,
+        qty: item.qty,
+      });
+    }
+
+    const branchPairs = resolvedItems.map((item) => ({
+      branchId: item.branch.id,
+      productId: item.product.id,
+    }));
+    const branchProducts = branchPairs.length
+      ? await tx.branchProduct.findMany({
+          where: { OR: branchPairs },
+        })
+      : [];
+    const branchProductMap = new Map(
+      branchProducts.map((bp) => [`${bp.branchId}:${bp.productId}`, bp]),
+    );
+
+    const validItems: Array<{
+      branchId: string;
+      providerId: string;
+      productId: string;
+      productName: string;
+      qty: number;
+      priceCents: number;
+      costCents: number;
+      branch: (typeof resolvedItems)[number]['branch'];
+    }> = [];
+
+    for (const item of resolvedItems) {
+      const branchProduct = branchProductMap.get(`${item.branch.id}:${item.product.id}`);
+      if (!branchProduct || !branchProduct.isActive) {
+        branchErrors.set(item.branch.id, 'Product unavailable in this branch');
+        continue;
+      }
+      const stock = branchProduct.stock ?? item.product.stock ?? 0;
+      if (stock < item.qty) {
+        branchErrors.set(item.branch.id, `Insufficient stock for ${item.product.name}`);
+        continue;
+      }
+      if (!item.product.costPriceCents || item.product.costPriceCents <= 0) {
+        this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: item.product.id });
+      }
+      const priceCents =
+        branchProduct.salePriceCents ??
+        branchProduct.priceCents ??
+        item.product.salePriceCents ??
+        item.product.priceCents;
+      validItems.push({
+        branchId: item.branch.id,
+        providerId: item.branch.providerId,
+        productId: item.product.id,
+        productName: item.product.name,
+        qty: item.qty,
+        priceCents,
+        costCents: item.product.costPriceCents ?? 0,
+        branch: item.branch,
+      });
+    }
+
+    if (branchErrors.size > 0 && splitPolicy === OrderSplitFailurePolicy.CANCEL_GROUP) {
+      const message = Array.from(branchErrors.values())[0] ?? 'Some items are unavailable';
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, message);
+    }
+
+    const filteredItems = validItems.filter((item) => !branchErrors.has(item.branchId));
+    if (!filteredItems.length) {
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
+    }
+
+    const grouped = new Map<
+      string,
+      {
+        branch: (typeof filteredItems)[number]['branch'];
+        providerId: string;
+        items: typeof filteredItems;
+        subtotalCents: number;
+      }
+    >();
+    for (const item of filteredItems) {
+      const existing = grouped.get(item.branchId);
+      if (!existing) {
+        grouped.set(item.branchId, {
+          branch: item.branch,
+          providerId: item.providerId,
+          items: [item],
+          subtotalCents: item.priceCents * item.qty,
+        });
+      } else {
+        existing.items.push(item);
+        existing.subtotalCents += item.priceCents * item.qty;
+      }
+    }
+
+    return { grouped, branchErrors, branchProductMap, productMap };
+  }
+
+  private async getGuestOrderDetail(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        address: true,
+        driver: { select: { id: true, fullName: true, phone: true } },
+        items: {
+          select: {
+            id: true,
+            productId: true,
+            productNameSnapshot: true,
+            priceSnapshotCents: true,
+            qty: true,
+          },
+          orderBy: { id: 'asc' },
+        },
+      },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    const zone = order.deliveryZoneId
+      ? await this.settings.getZoneById(order.deliveryZoneId, { includeInactive: true })
+      : undefined;
+    return this.toOrderDetail(order, zone);
+  }
+
+  private async getGuestOrderGroupSummary(orderGroupId: string) {
+    const group = await this.prisma.orderGroup.findFirst({
+      where: { id: orderGroupId, userId: null },
+      include: {
+        orders: {
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            totalCents: true,
+            subtotalCents: true,
+            shippingFeeCents: true,
+            discountCents: true,
+            providerId: true,
+            branchId: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    if (!group) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order group not found', 404);
+    }
+    return {
+      orderGroupId: group.id,
+      code: group.code,
+      status: group.status,
+      subtotalCents: group.subtotalCents,
+      shippingFeeCents: group.shippingFeeCents,
+      discountCents: group.discountCents,
+      totalCents: group.totalCents,
+      createdAt: group.createdAt,
+      orders: group.orders.map((order) => ({
+        id: order.id,
+        code: order.code,
+        status: this.toPublicStatus(order.status),
+        subtotalCents: order.subtotalCents,
+        shippingFeeCents: order.shippingFeeCents,
+        discountCents: order.discountCents,
+        totalCents: order.totalCents,
+        providerId: order.providerId,
+        branchId: order.branchId,
+        createdAt: order.createdAt,
+      })),
+    };
+  }
+
   async awardLoyaltyForOrder(orderId: string, tx?: Prisma.TransactionClient): Promise<number> {
     const config = await this.settings.getLoyaltyConfig();
     if (!config.enabled || config.earnRate <= 0) {
@@ -652,6 +1356,7 @@ export class OrdersService {
         select: { id: true, userId: true, status: true, subtotalCents: true, loyaltyPointsEarned: true },
       });
       if (!order) return 0;
+      if (!order.userId) return 0;
       if (order.status !== OrderStatus.DELIVERED) return 0;
 
       const existingTxn = await client.loyaltyTransaction.findFirst({
@@ -699,6 +1404,9 @@ export class OrdersService {
         select: { id: true, userId: true, loyaltyPointsEarned: true },
       });
       if (!order || !order.loyaltyPointsEarned || order.loyaltyPointsEarned <= 0) {
+        return 0;
+      }
+      if (!order.userId) {
         return 0;
       }
 
@@ -820,7 +1528,7 @@ export class OrdersService {
     };
   }
 
-  async clearCachesForOrder(orderId: string, userId?: string) {
+  async clearCachesForOrder(orderId: string, userId?: string | null) {
     const keys = [this.cache.buildKey('orders:detail', orderId, userId), this.cache.buildKey('orders:receipt', orderId)];
     if (userId) {
       keys.push(this.cache.buildKey('orders:list', userId));
@@ -1346,6 +2054,9 @@ export class OrdersService {
     if (!order || !order.loyaltyPointsUsed || order.loyaltyPointsUsed <= 0) {
       return 0;
     }
+    if (!order.userId) {
+      return 0;
+    }
     const existing = await tx.loyaltyTransaction.findFirst({
       where: {
         orderId,
@@ -1485,12 +2196,14 @@ export class OrdersService {
       name: item.productNameSnapshot,
       qty: item.qty,
     }));
+    const guestAddress = (order as any).guestAddress as Record<string, any> | null | undefined;
     return {
       order_id: order.id,
       order_code: order.code ?? order.id,
       status: this.toPublicStatus(order.status),
       status_internal: order.status,
-      customer_phone: order.user?.phone ?? null,
+      customer_phone: order.user?.phone ?? (order as any).guestPhone ?? null,
+      customer_name: order.user?.name ?? (order as any).guestName ?? null,
       total_cents: order.totalCents,
       total_formatted: (order.totalCents / 100).toFixed(2),
       payment_method: order.paymentMethod,
@@ -1518,7 +2231,16 @@ export class OrdersService {
             apartment: order.address.apartment,
             zone_id: order.address.zoneId,
           }
-        : null,
+        : guestAddress
+          ? {
+              label: guestAddress.fullAddress ?? guestAddress.street ?? null,
+              city: guestAddress.city ?? null,
+              street: guestAddress.street ?? guestAddress.fullAddress ?? null,
+              building: guestAddress.building ?? null,
+              apartment: guestAddress.apartment ?? null,
+              zone_id: null,
+            }
+          : null,
     };
   }
 
@@ -1538,6 +2260,7 @@ export class OrdersService {
   }
 
   private toOrderDetail(order: OrderWithRelations, zone?: any) {
+    const guestAddress = (order as any).guestAddress as Record<string, any> | null | undefined;
     return {
       id: order.id,
       code: order.code ?? order.id,
@@ -1562,6 +2285,9 @@ export class OrdersService {
       deliveryMode: order.deliveryMode ?? undefined,
       deliveryDistanceKm: order.deliveryDistanceKm ?? undefined,
       deliveryRatePerKmCents: order.deliveryRatePerKmCents ?? undefined,
+      guestName: (order as any).guestName ?? undefined,
+      guestPhone: (order as any).guestPhone ?? undefined,
+      contactPhone: order.userId ? undefined : ((order as any).guestPhone ?? undefined),
       deliveryZone: zone
         ? {
             id: zone.id,
@@ -1586,7 +2312,19 @@ export class OrdersService {
             building: order.address.building,
             apartment: order.address.apartment,
           }
-        : null,
+        : guestAddress
+          ? {
+              id: order.addressId ?? `guest-${order.id}`,
+              label: guestAddress.fullAddress ?? guestAddress.street ?? 'Guest address',
+              city: guestAddress.city ?? guestAddress.region ?? '',
+              zoneId: null,
+              street: guestAddress.street ?? guestAddress.fullAddress ?? '',
+              building: guestAddress.building ?? null,
+              apartment: guestAddress.apartment ?? null,
+              notes: guestAddress.notes ?? null,
+              region: guestAddress.region ?? null,
+            }
+          : null,
       driver: order.driver
         ? {
             id: order.driver.id,

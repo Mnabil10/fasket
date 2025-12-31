@@ -89,6 +89,7 @@ export class ReceiptService {
 
   private async buildReceipt(order: any): Promise<OrderReceiptDto> {
     const settings = await this.settings.getSettings();
+    const guestAddress = order.guestAddress ?? null;
     const zone =
       order.deliveryZoneId &&
       (await this.settings.getZoneById(order.deliveryZoneId, { includeInactive: true }));
@@ -140,18 +141,18 @@ export class ReceiptService {
       createdAt: order.createdAt,
       status: order.status,
       customer: {
-        id: order.user?.id ?? order.userId,
-        name: order.user?.name ?? '',
-        phone: order.user?.phone ?? '',
+        id: order.user?.id ?? order.userId ?? order.id,
+        name: order.user?.name ?? order.guestName ?? '',
+        phone: order.user?.phone ?? order.guestPhone ?? '',
       },
       address: {
-        street: order.address?.street ?? undefined,
-        city: order.address?.city ?? undefined,
-        region: order.address?.region ?? order.address?.notes ?? undefined,
-        building: order.address?.building ?? undefined,
-        apartment: order.address?.apartment ?? undefined,
-        notes: order.address?.notes ?? undefined,
-        label: order.address?.label ?? undefined,
+        street: order.address?.street ?? guestAddress?.street ?? guestAddress?.fullAddress ?? undefined,
+        city: order.address?.city ?? guestAddress?.city ?? undefined,
+        region: order.address?.region ?? guestAddress?.region ?? order.address?.notes ?? undefined,
+        building: order.address?.building ?? guestAddress?.building ?? undefined,
+        apartment: order.address?.apartment ?? guestAddress?.apartment ?? undefined,
+        notes: order.address?.notes ?? guestAddress?.notes ?? undefined,
+        label: order.address?.label ?? guestAddress?.fullAddress ?? undefined,
       },
       deliveryZone,
       driver,

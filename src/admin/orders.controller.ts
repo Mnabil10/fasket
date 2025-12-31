@@ -48,13 +48,14 @@ export class AdminOrdersController {
     if (query.from) (where.createdAt as Prisma.DateTimeFilter).gte = query.from;
     if (query.to) (where.createdAt as Prisma.DateTimeFilter).lte = query.to;
     if (query.customer) {
-      where.user = {
-        OR: [
-          { name: { contains: query.customer, mode: 'insensitive' } },
-          { phone: { contains: query.customer, mode: 'insensitive' } },
-          { email: { contains: query.customer, mode: 'insensitive' } },
-        ],
-      };
+      const term = query.customer;
+      where.OR = [
+        { user: { name: { contains: term, mode: 'insensitive' } } },
+        { user: { phone: { contains: term, mode: 'insensitive' } } },
+        { user: { email: { contains: term, mode: 'insensitive' } } },
+        { guestName: { contains: term, mode: 'insensitive' } },
+        { guestPhone: { contains: term, mode: 'insensitive' } },
+      ];
     }
     if (query.minTotalCents !== undefined || query.maxTotalCents !== undefined) {
       where.totalCents = {};

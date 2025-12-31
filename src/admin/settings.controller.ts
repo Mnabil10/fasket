@@ -110,6 +110,7 @@ export class AdminSettingsController {
         language: setting.language,
         currency: setting.currency,
       },
+      mobileApp: setting.mobileAppConfig ?? undefined,
       updatedAt: setting.updatedAt,
     };
   }
@@ -195,6 +196,10 @@ export class AdminSettingsController {
       if (s.timezone !== undefined)                 upd.timezone = s.timezone!;
       if (s.language !== undefined)                 upd.language = s.language!;
       if (s.currency !== undefined)                 upd.currency = s.currency!;
+    }
+
+    if (data.mobileApp !== undefined) {
+      upd.mobileAppConfig = data.mobileApp as any;
     }
 
     return upd;
@@ -313,5 +318,10 @@ export class AdminSettingsController {
   @Patch('system')
   async updateSystem(@CurrentUser() user: CurrentUserPayload, @Body() dto: SystemSettingsDto) {
     return this.update(user, { system: dto });
+  }
+
+  @Patch('mobile-app')
+  async updateMobileApp(@CurrentUser() user: CurrentUserPayload, @Body() dto: Record<string, any>) {
+    return this.update(user, { mobileApp: dto });
   }
 }

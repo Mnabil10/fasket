@@ -1,0 +1,19 @@
+-- Guest orders support (idempotent)
+
+-- OrderGroup adjustments
+ALTER TABLE "OrderGroup"
+  ALTER COLUMN "userId" DROP NOT NULL,
+  ADD COLUMN IF NOT EXISTS "guestName" TEXT,
+  ADD COLUMN IF NOT EXISTS "guestPhone" TEXT,
+  ADD COLUMN IF NOT EXISTS "guestAddress" JSONB,
+  ADD COLUMN IF NOT EXISTS "guestLat" DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS "guestLng" DOUBLE PRECISION;
+
+-- Order adjustments
+ALTER TABLE "Order"
+  ALTER COLUMN "userId" DROP NOT NULL,
+  ADD COLUMN IF NOT EXISTS "guestName" TEXT,
+  ADD COLUMN IF NOT EXISTS "guestPhone" TEXT,
+  ADD COLUMN IF NOT EXISTS "guestAddress" JSONB,
+  ADD COLUMN IF NOT EXISTS "guestLat" DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS "guestLng" DOUBLE PRECISION;

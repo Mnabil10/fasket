@@ -44,6 +44,7 @@ export class SettingsController {
         language: settings.language,
         maintenanceMode: settings.maintenanceMode ?? false,
       },
+      mobileApp: settings.mobileAppConfig ?? undefined,
       delivery: deliveryWithMessages,
       loyalty,
       payment: settings.payment ?? undefined,

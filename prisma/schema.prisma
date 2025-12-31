@@ -358,11 +358,16 @@ model CartItem {
 model OrderGroup {
   id                 String                 @id @default(cuid())
   code               String                 @default(cuid()) @unique
-  userId             String
-  user               User                   @relation(fields: [userId], references: [id])
+  userId             String?
+  user               User?                  @relation(fields: [userId], references: [id])
   idempotencyKey     String?
   addressId          String?
   address            Address?               @relation(fields: [addressId], references: [id])
+  guestName          String?
+  guestPhone         String?
+  guestAddress       Json?
+  guestLat           Float?
+  guestLng           Float?
   status             OrderGroupStatus       @default(PENDING)
   splitFailurePolicy OrderSplitFailurePolicy @default(PARTIAL)
   paymentMethod      PaymentMethod          @default(COD)
@@ -385,8 +390,8 @@ model OrderGroup {
 model Order {
   id               String               @id @default(cuid())
   code             String               @default(cuid()) @unique
-  userId           String
-  user             User                 @relation(fields: [userId], references: [id])
+  userId           String?
+  user             User?                @relation(fields: [userId], references: [id])
   idempotencyKey   String?
   cartId           String?
   cart             Cart?                @relation(fields: [cartId], references: [id])
@@ -398,6 +403,11 @@ model Order {
   branch           Branch?              @relation(fields: [branchId], references: [id])
   addressId        String?
   address          Address?             @relation(fields: [addressId], references: [id])
+  guestName        String?
+  guestPhone       String?
+  guestAddress     Json?
+  guestLat         Float?
+  guestLng         Float?
   deliveryZoneId   String?
   deliveryZoneName String?
   deliveryEtaMinutes Int?
@@ -687,6 +697,9 @@ model Setting {
 
   // Notifications
   notifications            Json?   // { orderNotifications, marketingEmails, adminAlerts }
+
+  // Mobile app
+  mobileAppConfig          Json?   // dynamic mobile app configuration payload
 
   // Loyalty
   loyaltyEnabled           Boolean @default(false)

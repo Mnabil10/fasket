@@ -614,4 +614,9 @@ export class UpdateSettingsDto {
   @ValidateNested()
   @Type(() => SystemSettingsDto)
   system?: SystemSettingsDto;
+
+  @ApiPropertyOptional({ type: Object, description: 'Mobile app configuration payload' })
+  @IsOptional()
+  @IsObject()
+  mobileApp?: Record<string, any>;
 }
