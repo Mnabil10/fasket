@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Logger, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Logger, Param, Patch, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { Prisma } from '@prisma/client';
-import { AdminOnly, StaffOrAdmin } from './_admin-guards';
+import { Prisma, ProviderStatus, UserRole } from '@prisma/client';
+import { AdminOnly, ProviderOrStaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
 import { UpdateOrderStatusDto } from './dto/order-status.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -18,7 +18,7 @@ import { AutomationEventRef, AutomationEventsService } from '../automation/autom
 
 @ApiTags('Admin/Orders')
 @ApiBearerAuth()
-@StaffOrAdmin()
+@ProviderOrStaffOrAdmin()
 @Throttle({ default: { limit: 30, ttl: 60 } })
 @Controller({ path: 'admin/orders', version: ['1'] })
 export class AdminOrdersController {
@@ -41,7 +41,8 @@ export class AdminOrdersController {
   @ApiQuery({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'driverId', required: false })
   @ApiOkResponse({ description: 'Paginated orders with filters' })
-  async list(@Query() query: AdminOrderListDto) {
+  async list(@CurrentUser() user: CurrentUserPayload, @Query() query: AdminOrderListDto) {
+    const providerScope = await this.resolveProviderScope(user);
     const where: Prisma.OrderWhereInput = {};
     if (query.status) where.status = query.status;
     if (query.from || query.to) where.createdAt = {};
@@ -65,6 +66,11 @@ export class AdminOrdersController {
     if (query.driverId) {
       where.driverId = query.driverId;
     }
+    if (providerScope) {
+      where.providerId = providerScope;
+    } else if (query.providerId) {
+      where.providerId = query.providerId;
+    }
 
     const [items, total] = await this.svc.prisma.$transaction([
       this.svc.prisma.order.findMany({
@@ -84,9 +90,10 @@ export class AdminOrdersController {
   }
 
   @Get(':id')
-  one(@Param('id') id: string) {
-    return this.svc.prisma.order.findUnique({
-      where: { id },
+  async one(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
+    const providerScope = await this.resolveProviderScope(user);
+    const order = await this.svc.prisma.order.findFirst({
+      where: { id, ...(providerScope ? { providerId: providerScope } : {}) },
       include: {
         items: true,
         address: true,
@@ -102,15 +109,39 @@ export class AdminOrdersController {
         },
       },
     });
+    if (!order && providerScope) {
+      throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Order not found', 403);
+    }
+    return order;
+  }
+
+  @Get(':id/history')
+  async getHistory(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
+    await this.assertProviderOrderAccess(user, id);
+    return this.orders.getAdminOrderHistory(id);
+  }
+
+  @Get(':id/transitions')
+  async getTransitions(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
+    await this.assertProviderOrderAccess(user, id);
+    return this.orders.getOrderTransitions(id);
+  }
+
+  @Get(':id/driver-location')
+  async getDriverLocation(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
+    await this.assertProviderOrderAccess(user, id);
+    return this.orders.getAdminOrderDriverLocation(id);
   }
 
   @Get(':id/receipt')
-  getReceipt(@Param('id') id: string) {
+  async getReceipt(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
+    await this.assertProviderOrderAccess(user, id);
     return this.receipts.getForAdmin(id);
   }
 
   @Patch(':id/status')
   async updateStatus(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
+    await this.assertProviderOrderAccess(user, id);
     const nextStatus = dto.to as OrderStatus;
     const result = await this.orders.updateStatus(id, nextStatus, user.userId, dto.note);
     this.logger.log({ msg: 'Order status updated', orderId: id, to: dto.to, actorId: user.userId });
@@ -123,8 +154,39 @@ export class AdminOrdersController {
     @Body() dto: AssignDriverDto,
     @CurrentUser() admin: CurrentUserPayload,
   ) {
+    if (admin.role === UserRole.PROVIDER) {
+      throw new ForbiddenException('Provider accounts cannot assign drivers');
+    }
+    await this.assertProviderOrderAccess(admin, id);
     const result = await this.orders.assignDriverToOrder(id, dto.driverId, admin.userId);
     this.logger.log({ msg: 'Driver assigned', orderId: id, driverId: result.driver.id });
     return { success: true, data: result };
+  }
+
+  private async resolveProviderScope(user?: CurrentUserPayload) {
+    if (!user || user.role !== UserRole.PROVIDER) return null;
+    const membership = await this.svc.prisma.providerUser.findFirst({
+      where: { userId: user.userId },
+      include: { provider: { select: { status: true } } },
+    });
+    if (!membership) {
+      throw new ForbiddenException('Provider account is not linked');
+    }
+    if (membership.provider.status !== ProviderStatus.ACTIVE) {
+      throw new ForbiddenException('Provider account is not active');
+    }
+    return membership.providerId;
+  }
+
+  private async assertProviderOrderAccess(user: CurrentUserPayload, orderId: string) {
+    const providerScope = await this.resolveProviderScope(user);
+    if (!providerScope) return;
+    const order = await this.svc.prisma.order.findFirst({
+      where: { id: orderId, providerId: providerScope },
+      select: { id: true },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Order not found', 403);
+    }
   }
 }

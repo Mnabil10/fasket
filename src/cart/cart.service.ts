@@ -414,6 +414,7 @@ export class CartService {
 
     const addressLat = effectiveAddress?.lat ?? null;
     const addressLng = effectiveAddress?.lng ?? null;
+    const distancePricingEnabled = this.settings.isDistancePricingEnabled();
 
     const groupResponses: CartGroupResponse[] = await Promise.all(
       branchIds.map(async (branchId) => {
@@ -427,16 +428,17 @@ export class CartService {
         let deliveryUnavailable = false;
         let deliveryMode = branch?.deliveryMode ?? undefined;
 
-        if (addressLat !== null && addressLng !== null) {
+        const hasLocation = addressLat !== null && addressLng !== null;
+        if (!distancePricingEnabled || hasLocation) {
           try {
             const quote = await this.settings.computeBranchDeliveryQuote({
               branchId,
-              addressLat,
-              addressLng,
+              addressLat: hasLocation ? addressLat : null,
+              addressLng: hasLocation ? addressLng : null,
             });
             shippingFeeCents = quote.shippingFeeCents;
-            distanceKm = quote.distanceKm;
-            ratePerKmCents = quote.ratePerKmCents;
+            distanceKm = distancePricingEnabled ? quote.distanceKm : null;
+            ratePerKmCents = distancePricingEnabled ? quote.ratePerKmCents : null;
           } catch {
             deliveryUnavailable = true;
             shippingFeeCents = 0;
@@ -456,7 +458,7 @@ export class CartService {
           distanceKm,
           ratePerKmCents,
           deliveryMode,
-          deliveryRequiresLocation,
+          deliveryRequiresLocation: distancePricingEnabled ? deliveryRequiresLocation : false,
           deliveryUnavailable,
         };
       }),
@@ -492,7 +494,7 @@ export class CartService {
         etaText: null,
         feeMessageEn: null,
         feeMessageAr: null,
-        requiresLocation: addressLat === null || addressLng === null,
+        requiresLocation: distancePricingEnabled && (addressLat === null || addressLng === null),
       },
     };
   }

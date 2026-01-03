@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import axios from 'axios';
 import { DeliveryMode, Prisma, Setting } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../common/cache/cache.service';
@@ -12,6 +13,10 @@ export class SettingsService {
   private readonly cacheTtlSec = 300;
   private readonly zonesCacheKey = 'settings:zones';
   private readonly zonesCacheTtlSec = 120;
+  private readonly routingBaseUrl = String(process.env.ROUTING_BASE_URL ?? '').trim();
+  private readonly routingTimeoutMs = Number(process.env.ROUTING_TIMEOUT_MS ?? 2500);
+  private readonly routingFallbackSpeedKph = Number(process.env.ROUTING_FALLBACK_SPEED_KPH ?? 25);
+  private readonly distancePricingEnabled = String(process.env.DELIVERY_DISTANCE_ENABLED ?? 'true') === 'true';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -274,6 +279,7 @@ export class SettingsService {
       freeDeliveryMinimumCents: settings.freeDeliveryMinimumCents ?? 0,
       estimatedDeliveryTime: settings.estimatedDeliveryTime,
       maxDeliveryRadiusKm: settings.maxDeliveryRadiusKm,
+      distancePricingEnabled: this.distancePricingEnabled,
       deliveryZones,
     };
   }
@@ -320,10 +326,14 @@ export class SettingsService {
     };
   }
 
+  isDistancePricingEnabled() {
+    return this.distancePricingEnabled;
+  }
+
   async computeBranchDeliveryQuote(params: {
     branchId: string;
-    addressLat: number;
-    addressLng: number;
+    addressLat?: number | null;
+    addressLng?: number | null;
   }): Promise<DistanceDeliveryQuote> {
     const branch = await this.prisma.branch.findUnique({
       where: { id: params.branchId },
@@ -344,24 +354,8 @@ export class SettingsService {
     if (branch.status !== 'ACTIVE') {
       throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Branch is inactive');
     }
-    if (!Number.isFinite(params.addressLat) || !Number.isFinite(params.addressLng)) {
-      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is missing');
-    }
-    if (branch.lat === null || branch.lat === undefined || branch.lng === null || branch.lng === undefined) {
-      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Branch location is missing');
-    }
-
-    const distanceKm = this.haversineKm(branch.lat, branch.lng, params.addressLat, params.addressLng);
-    if (branch.deliveryRadiusKm && distanceKm > branch.deliveryRadiusKm) {
-      throw new DomainError(ErrorCode.ADDRESS_INVALID_ZONE, 'Address is outside delivery radius');
-    }
-
     const settings = await this.getSettings();
-    const ratePerKmCents =
-      branch.deliveryRatePerKmCents ??
-      branch.provider?.deliveryRatePerKmCents ??
-      settings.deliveryRatePerKmCents ??
-      0;
+    const deliveryMode = branch.deliveryMode ?? branch.provider?.deliveryMode ?? DeliveryMode.PLATFORM;
     const minFee =
       branch.minDeliveryFeeCents ??
       branch.provider?.minDeliveryFeeCents ??
@@ -372,7 +366,54 @@ export class SettingsService {
       branch.provider?.maxDeliveryFeeCents ??
       settings.maxDeliveryFeeCents ??
       null;
-    const deliveryMode = branch.deliveryMode ?? branch.provider?.deliveryMode ?? DeliveryMode.PLATFORM;
+
+    if (!this.distancePricingEnabled) {
+      let shippingFeeCents = settings.deliveryFeeCents ?? 0;
+      if (minFee !== null && minFee !== undefined) {
+        shippingFeeCents = Math.max(shippingFeeCents, minFee);
+      }
+      if (maxFee !== null && maxFee !== undefined) {
+        shippingFeeCents = Math.min(shippingFeeCents, maxFee);
+      }
+      if (deliveryMode === DeliveryMode.MERCHANT) {
+        shippingFeeCents = 0;
+      }
+      return {
+        shippingFeeCents,
+        distanceKm: null,
+        ratePerKmCents: null,
+        minDeliveryFeeCents: minFee,
+        maxDeliveryFeeCents: maxFee,
+        etaMinutes: undefined,
+        estimatedDeliveryTime: settings.estimatedDeliveryTime ?? null,
+      };
+    }
+
+    if (!Number.isFinite(params.addressLat) || !Number.isFinite(params.addressLng)) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is missing');
+    }
+    if (branch.lat === null || branch.lat === undefined || branch.lng === null || branch.lng === undefined) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Branch location is missing');
+    }
+
+    const route = await this.getRouteSummary({
+      originLat: branch.lat,
+      originLng: branch.lng,
+      destinationLat: params.addressLat!,
+      destinationLng: params.addressLng!,
+    });
+    const distanceKm =
+      route?.distanceKm ??
+      this.haversineKm(branch.lat, branch.lng, params.addressLat!, params.addressLng!);
+    if (branch.deliveryRadiusKm && distanceKm > branch.deliveryRadiusKm) {
+      throw new DomainError(ErrorCode.ADDRESS_INVALID_ZONE, 'Address is outside delivery radius');
+    }
+
+    const ratePerKmCents =
+      branch.deliveryRatePerKmCents ??
+      branch.provider?.deliveryRatePerKmCents ??
+      settings.deliveryRatePerKmCents ??
+      0;
 
     let shippingFeeCents = Math.ceil(distanceKm * ratePerKmCents);
     if (minFee !== null && minFee !== undefined) {
@@ -385,12 +426,17 @@ export class SettingsService {
       shippingFeeCents = 0;
     }
 
+    const etaMinutes = route?.durationMinutes ?? this.estimateEtaMinutes(distanceKm) ?? undefined;
+    const estimatedDeliveryTime = this.formatEta(etaMinutes) ?? settings.estimatedDeliveryTime ?? null;
+
     return {
       shippingFeeCents,
       distanceKm,
       ratePerKmCents,
       minDeliveryFeeCents: minFee,
       maxDeliveryFeeCents: maxFee,
+      etaMinutes: etaMinutes ?? undefined,
+      estimatedDeliveryTime,
     };
   }
 
@@ -503,6 +549,40 @@ export class SettingsService {
   private formatEta(etaMinutes?: number): string | null {
     if (!etaMinutes || etaMinutes <= 0) return null;
     return `${etaMinutes} min`;
+  }
+
+  private async getRouteSummary(params: {
+    originLat: number;
+    originLng: number;
+    destinationLat: number;
+    destinationLng: number;
+  }): Promise<{ distanceKm: number; durationMinutes: number } | null> {
+    if (!this.distancePricingEnabled) return null;
+    if (!this.routingBaseUrl) return null;
+    const base = this.routingBaseUrl.replace(/\/+$/, '');
+    const url = `${base}/route/v1/driving/${params.originLng},${params.originLat};${params.destinationLng},${params.destinationLat}`;
+    try {
+      const { data } = await axios.get(url, {
+        timeout: Number.isFinite(this.routingTimeoutMs) ? this.routingTimeoutMs : 2500,
+        params: { overview: 'false', alternatives: 'false', steps: 'false' },
+      });
+      const route = data?.routes?.[0];
+      if (!route || typeof route.distance !== 'number') return null;
+      const distanceKm = route.distance / 1000;
+      const durationMinutes = route.duration ? Math.max(1, Math.round(route.duration / 60)) : 0;
+      if (!Number.isFinite(distanceKm) || distanceKm <= 0) return null;
+      return { distanceKm, durationMinutes };
+    } catch (error) {
+      this.logger.warn({ msg: 'Routing lookup failed, falling back to haversine', error: (error as Error).message });
+      return null;
+    }
+  }
+
+  private estimateEtaMinutes(distanceKm: number | null): number | null {
+    if (!distanceKm || !Number.isFinite(distanceKm) || distanceKm <= 0) return null;
+    const speed = this.routingFallbackSpeedKph;
+    if (!Number.isFinite(speed) || speed <= 0) return null;
+    return Math.max(5, Math.round((distanceKm / speed) * 60));
   }
 
   private haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {

@@ -13,7 +13,7 @@ import { createHmac, randomBytes, randomUUID } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { SignupSession as PrismaSignupSession } from '@prisma/client';
+import { DeliveryMode, ProviderStatus, ProviderType, ProviderUserRole, SignupSession as PrismaSignupSession, UserRole } from '@prisma/client';
 import { AuthRateLimitService } from './auth-rate-limit.service';
 import { buildDeviceInfo } from '../common/utils/device.util';
 import { DomainError, ErrorCode } from '../common/errors';
@@ -23,6 +23,7 @@ import { TelegramService } from '../telegram/telegram.service';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import { AutomationEventsService } from '../automation/automation-events.service';
+import { SlugService } from '../common/slug/slug.service';
 
 interface PendingSignup {
   name: string;
@@ -74,6 +75,7 @@ export class AuthService {
   @Inject(CACHE_MANAGER) private readonly cache: Cache,
   private readonly telegram: TelegramService,
   private readonly automation: AutomationEventsService,
+  private readonly slugs: SlugService,
 ) {}
   private readonly logger = new Logger(AuthService.name);
   private readonly otpDigits = 6;
@@ -113,6 +115,87 @@ export class AuthService {
     });
     await this.logSession(user.id, { ip: undefined, userAgent: undefined });
     return { user, ...tokens };
+  }
+
+  async registerProvider(input: {
+    name: string;
+    phone: string;
+    email?: string;
+    password: string;
+    providerName: string;
+    providerNameAr?: string;
+    providerType?: ProviderType;
+    branchName?: string;
+    branchAddress?: string;
+    branchCity?: string;
+    branchRegion?: string;
+  }) {
+    const normalizedEmail = this.normalizeEmail(input.email);
+    const or: any[] = [{ phone: input.phone }];
+    if (normalizedEmail) or.push({ email: normalizedEmail });
+    const exists = await this.prisma.user.findFirst({ where: { OR: or } });
+    if (exists) throw new BadRequestException('User already exists');
+
+    const providerName = input.providerName.trim();
+    const providerSlug = await this.slugs.generateUniqueSlug('provider', providerName);
+    const branchName = (input.branchName?.trim() || `${providerName} - Main`).trim();
+    const branchSlug = await this.slugs.generateUniqueSlug('branch', branchName);
+    const passwordHash = await bcrypt.hash(input.password, this.bcryptRounds());
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          name: input.name.trim(),
+          phone: input.phone,
+          email: normalizedEmail,
+          password: passwordHash,
+          role: UserRole.PROVIDER,
+        },
+        select: { id: true, name: true, phone: true, email: true, role: true },
+      });
+
+      const provider = await tx.provider.create({
+        data: {
+          name: providerName,
+          nameAr: input.providerNameAr?.trim() || undefined,
+          slug: providerSlug,
+          type: input.providerType ?? ProviderType.SUPERMARKET,
+          status: ProviderStatus.PENDING,
+          deliveryMode: DeliveryMode.PLATFORM,
+          contactEmail: normalizedEmail ?? undefined,
+          contactPhone: input.phone,
+        },
+      });
+
+      await tx.branch.create({
+        data: {
+          providerId: provider.id,
+          name: branchName,
+          slug: branchSlug,
+          status: 'ACTIVE',
+          isDefault: true,
+          address: input.branchAddress?.trim() || undefined,
+          city: input.branchCity?.trim() || undefined,
+          region: input.branchRegion?.trim() || undefined,
+        },
+      });
+
+      await tx.providerUser.create({
+        data: {
+          providerId: provider.id,
+          userId: user.id,
+          role: ProviderUserRole.OWNER,
+        },
+      });
+
+      return { user, provider };
+    });
+
+    return {
+      ok: true,
+      providerId: result.provider.id,
+      providerStatus: result.provider.status,
+    };
   }
 
   async login(
@@ -163,6 +246,19 @@ export class AuthService {
           throw new DomainError(ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
         }
         twoFaVerified = true;
+      }
+    }
+
+    if (user.role === UserRole.PROVIDER) {
+      const membership = await this.prisma.providerUser.findFirst({
+        where: { userId: user.id },
+        include: { provider: { select: { id: true, status: true } } },
+      });
+      if (!membership) {
+        throw new DomainError(ErrorCode.AUTH_ACCOUNT_DISABLED, 'Provider account is not linked');
+      }
+      if (membership.provider.status !== ProviderStatus.ACTIVE) {
+        throw new DomainError(ErrorCode.AUTH_ACCOUNT_DISABLED, 'Provider account pending approval');
       }
     }
 
@@ -599,6 +695,15 @@ export class AuthService {
     if (!user) {
       this.logger.warn({ msg: 'Refresh token rejected - user missing', userId: sub });
       throw new UnauthorizedException('User not found');
+    }
+    if (user.role === UserRole.PROVIDER) {
+      const membership = await this.prisma.providerUser.findFirst({
+        where: { userId: sub },
+        include: { provider: { select: { status: true } } },
+      });
+      if (!membership || membership.provider.status !== ProviderStatus.ACTIVE) {
+        throw new UnauthorizedException('Provider account disabled');
+      }
     }
     if (previousJti) {
       const allowed = await this.cache.get<boolean>(this.refreshCacheKey(sub, previousJti));

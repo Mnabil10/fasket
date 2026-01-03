@@ -43,4 +43,9 @@ export class AdminOrderListDto extends PaginationDto {
   @IsOptional()
   @IsUUID()
   driverId?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by provider id' })
+  @IsOptional()
+  @IsString()
+  providerId?: string;
 }

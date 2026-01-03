@@ -61,6 +61,7 @@ interface PreparedOperation {
   values: ProductWriteValues;
   action: 'create' | 'update';
   existing?: Product;
+  providerId?: string;
 }
 
 export interface RowResult {
@@ -107,7 +108,10 @@ export class ProductsBulkService {
     return Buffer.from(binary, 'binary');
   }
 
-  async processUpload(file: Express.Multer.File, options: { dryRun?: boolean } = {}): Promise<BulkUploadResult> {
+  async processUpload(
+    file: Express.Multer.File,
+    options: { dryRun?: boolean; providerId?: string } = {},
+  ): Promise<BulkUploadResult> {
     if (!file) {
       throw new BadRequestException('File is required');
     }
@@ -120,7 +124,7 @@ export class ProductsBulkService {
       throw new BadRequestException('No product rows were found in the file');
     }
 
-    const categoryMap = await this.buildCategoryMap(rows);
+    const categoryMap = await this.buildCategoryMap(rows, options.providerId);
     const slugMap = new Map<string, Product>();
     const skuMap = new Map<string, Product>();
     const result: BulkUploadResult = {
@@ -157,7 +161,7 @@ export class ProductsBulkService {
       new Set(parsedRows.map((row) => row.values.sku).filter((sku): sku is string => !!sku)),
     );
     if (slugCandidates.length || skuCandidates.length) {
-      const existingProducts = await this.prisma.product.findMany({
+    const existingProducts = await this.prisma.product.findMany({
         where: {
           OR: [
             ...(slugCandidates.length ? [{ slug: { in: slugCandidates } }] : []),
@@ -180,7 +184,7 @@ export class ProductsBulkService {
           throw new RowError('DUPLICATE_ROW', 'Duplicate slug/SKU in file. Row skipped.');
         }
         rowKeys.add(dedupeKey);
-        const existing = await this.resolveExistingProduct(values, slugMap, skuMap);
+        const existing = await this.resolveExistingProduct(values, slugMap, skuMap, options.providerId);
         if (existing) {
           values.slug = existing.slug;
           values.sku = values.sku ?? existing.sku ?? (await this.generateSku(values.name));
@@ -193,6 +197,7 @@ export class ProductsBulkService {
           values,
           existing: existing || undefined,
           action: existing ? 'update' : 'create',
+          providerId: options.providerId,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
@@ -248,9 +253,13 @@ export class ProductsBulkService {
       images: op.values.images,
       isHotOffer: op.values.isHotOffer,
       sku: op.values.sku,
+      providerId: op.providerId,
     });
 
     if (op.action === 'update' && op.existing) {
+      if (op.providerId && op.existing.providerId !== op.providerId) {
+        throw new RowError('PROVIDER_CONFLICT', 'Product belongs to another provider');
+      }
       const hasChanges = Object.entries(data).some(([key, value]) => {
         const current = (op.existing as any)[key];
         if (Array.isArray(value)) {
@@ -305,7 +314,7 @@ export class ProductsBulkService {
     return Object.values(row).some((value) => value !== undefined && String(value).trim() !== '');
   }
 
-  private async buildCategoryMap(rows: ParsedRow[]) {
+  private async buildCategoryMap(rows: ParsedRow[], providerId?: string) {
     const slugs = Array.from(
       new Set(
         rows
@@ -315,7 +324,11 @@ export class ProductsBulkService {
     );
     if (!slugs.length) return new Map<string, string>();
     const categories = await this.prisma.category.findMany({
-      where: { slug: { in: slugs }, deletedAt: null },
+      where: {
+        slug: { in: slugs },
+        deletedAt: null,
+        ...(providerId ? { providerId } : {}),
+      },
       select: { id: true, slug: true },
     });
     return new Map(categories.map((category) => [category.slug.toLowerCase(), category.id]));
@@ -325,15 +338,31 @@ export class ProductsBulkService {
     values: ProductWriteValues,
     slugMap: Map<string, Product>,
     skuMap: Map<string, Product>,
+    providerId?: string,
   ): Promise<Product | null> {
-    if (values.slug && slugMap.has(values.slug)) return slugMap.get(values.slug)!;
-    if (values.sku && skuMap.has(values.sku)) return skuMap.get(values.sku)!;
+    if (values.slug && slugMap.has(values.slug)) {
+      const existing = slugMap.get(values.slug)!;
+      if (providerId && existing.providerId !== providerId) {
+        throw new RowError('PROVIDER_CONFLICT', `Slug "${values.slug}" is already used by another provider`);
+      }
+      return existing;
+    }
+    if (values.sku && skuMap.has(values.sku)) {
+      const existing = skuMap.get(values.sku)!;
+      if (providerId && existing.providerId !== providerId) {
+        throw new RowError('PROVIDER_CONFLICT', `SKU "${values.sku}" is already used by another provider`);
+      }
+      return existing;
+    }
     const where: any = { OR: [] as any[] };
     if (values.slug) where.OR.push({ slug: values.slug });
     if (values.sku) where.OR.push({ sku: values.sku });
     if (!where.OR.length) return null;
     const product = await this.prisma.product.findFirst({ where });
     if (product) {
+      if (providerId && product.providerId !== providerId) {
+        throw new RowError('PROVIDER_CONFLICT', 'Product belongs to another provider');
+      }
       slugMap.set(product.slug, product);
       if (product.sku) skuMap.set(product.sku, product);
     }

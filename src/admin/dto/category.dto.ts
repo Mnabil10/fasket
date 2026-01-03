@@ -44,6 +44,12 @@ export class CreateCategoryDto {
   @IsOptional()
   @IsString()
   parentId?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  providerId?: string;
 }
 
 export class UpdateCategoryDto extends PartialType(CreateCategoryDto) {}
@@ -54,6 +60,11 @@ export class CategoryQueryDto extends PartialType(UpdateCategoryDto) {
   @IsOptional()
   @IsString()
   q?: string;
+
+  @ApiPropertyOptional({ description: 'filter by provider id' })
+  @IsOptional()
+  @IsString()
+  providerId?: string;
 }
 
 export class CategoryListQueryDto extends IntersectionType(

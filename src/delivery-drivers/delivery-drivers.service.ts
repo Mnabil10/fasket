@@ -7,6 +7,7 @@ import {
   UpdateDriverStatusDto,
   UpsertVehicleDto,
 } from './dto/driver.dto';
+import { DriverLocationDto } from './dto/driver-location.dto';
 import { DomainError, ErrorCode } from '../common/errors';
 
 @Injectable()
@@ -181,6 +182,62 @@ export class DeliveryDriversService {
       select: { id: true, userId: true, status: true, driverAssignedAt: true, driverId: true },
     });
     return { order: updatedOrder, driver };
+  }
+
+  async recordLocation(driverId: string, dto: DriverLocationDto) {
+    await this.ensureDriver(driverId);
+    let orderId: string | null = dto.orderId ?? null;
+    if (orderId) {
+      const order = await this.prisma.order.findUnique({
+        where: { id: orderId },
+        select: { id: true, driverId: true },
+      });
+      if (!order) {
+        throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found');
+      }
+      if (order.driverId !== driverId) {
+        throw new DomainError(
+          ErrorCode.VALIDATION_FAILED,
+          'Order is not assigned to this driver',
+          HttpStatus.CONFLICT,
+        );
+      }
+    }
+    return this.prisma.deliveryDriverLocation.create({
+      data: {
+        driverId,
+        orderId,
+        lat: dto.lat,
+        lng: dto.lng,
+        accuracy: dto.accuracy ?? null,
+        heading: dto.heading ?? null,
+        speed: dto.speed ?? null,
+        recordedAt: dto.recordedAt ?? new Date(),
+      },
+    });
+  }
+
+  async getLatestLocation(driverId: string) {
+    await this.ensureDriver(driverId);
+    return this.prisma.deliveryDriverLocation.findFirst({
+      where: { driverId },
+      orderBy: { recordedAt: 'desc' },
+    });
+  }
+
+  async getLatestLocationForOrder(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, driverId: true },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found');
+    }
+    if (!order.driverId) return null;
+    return this.prisma.deliveryDriverLocation.findFirst({
+      where: { driverId: order.driverId },
+      orderBy: { recordedAt: 'desc' },
+    });
   }
 
   private async ensureDriver(id: string) {

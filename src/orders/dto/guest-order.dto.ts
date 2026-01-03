@@ -76,15 +76,17 @@ export class GuestAddressDto {
   @IsString()
   notes?: string;
 
-  @ApiProperty()
-  @Transform(({ value }) => Number(value))
+  @ApiPropertyOptional()
+  @Transform(({ value }) => (value === undefined || value === null ? value : Number(value)))
+  @IsOptional()
   @IsNumber()
-  lat!: number;
+  lat?: number;
 
-  @ApiProperty()
-  @Transform(({ value }) => Number(value))
+  @ApiPropertyOptional()
+  @Transform(({ value }) => (value === undefined || value === null ? value : Number(value)))
+  @IsOptional()
   @IsNumber()
-  lng!: number;
+  lng?: number;
 }
 
 export class GuestOrderQuoteDto {

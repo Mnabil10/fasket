@@ -56,8 +56,8 @@ type GuestAddressInput = {
   building?: string;
   apartment?: string;
   notes?: string;
-  lat: number;
-  lng: number;
+  lat?: number | null;
+  lng?: number | null;
 };
 
 @Injectable()
@@ -146,6 +146,96 @@ export class OrdersService {
     return this.toOrderDetail(order, zone);
   }
 
+  async getOrderTimeline(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId },
+      select: {
+        id: true,
+        createdAt: true,
+        statusHistory: {
+          orderBy: { createdAt: 'asc' },
+          select: { id: true, from: true, to: true, note: true, createdAt: true },
+        },
+      },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+
+    const timeline = [
+      {
+        id: `${order.id}-created`,
+        from: null,
+        to: this.toPublicStatus(OrderStatus.PENDING),
+        note: 'Order placed',
+        createdAt: order.createdAt,
+      },
+      ...order.statusHistory.map((entry) => ({
+        id: entry.id,
+        from: entry.from ? this.toPublicStatus(entry.from as OrderStatus) : null,
+        to: this.toPublicStatus(entry.to as OrderStatus),
+        note: entry.note ?? null,
+        createdAt: entry.createdAt,
+      })),
+    ];
+
+    return timeline.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  async getOrderDriverLocation(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId },
+      select: { id: true, driverId: true },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    return this.findLatestDriverLocation(order.driverId);
+  }
+
+  async getAdminOrderHistory(orderId: string) {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId }, select: { id: true } });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    const items = await this.prisma.orderStatusHistory.findMany({
+      where: { orderId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return items.map((entry) => ({
+      id: entry.id,
+      at: entry.createdAt,
+      from: entry.from ?? undefined,
+      to: entry.to,
+      actor: entry.actorId ?? undefined,
+      note: entry.note ?? undefined,
+    }));
+  }
+
+  async getOrderTransitions(orderId: string) {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId }, select: { id: true, status: true } });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    const transitions = this.allowedTransitions(order.status);
+    return transitions.map((to) => ({
+      from: order.status,
+      to,
+      label: this.formatStatusLabel(to),
+    }));
+  }
+
+  async getAdminOrderDriverLocation(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, driverId: true },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    return this.findLatestDriverLocation(order.driverId);
+  }
+
   async create(userId: string, payload: CreateOrderDto) {
     const idempotencyKey = payload.idempotencyKey?.trim() || null;
     const splitPolicy =
@@ -195,7 +285,14 @@ export class OrdersService {
         if (!address) {
           throw new DomainError(ErrorCode.ADDRESS_NOT_FOUND, 'Invalid address');
         }
-        if (address.lat === null || address.lat === undefined || address.lng === null || address.lng === undefined) {
+        const distancePricingEnabled = this.settings.isDistancePricingEnabled();
+        if (
+          distancePricingEnabled &&
+          (address.lat === null ||
+            address.lat === undefined ||
+            address.lng === null ||
+            address.lng === undefined)
+        ) {
           throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is required');
         }
 
@@ -438,18 +535,23 @@ export class OrdersService {
         const discountByBranch = this.allocateDiscounts(discountCents, groupEntries);
 
         let shippingFeeCentsTotal = 0;
-        const shippingByBranch = new Map<string, { fee: number; distanceKm: number; ratePerKmCents: number }>();
+        const shippingByBranch = new Map<
+          string,
+          { fee: number; distanceKm: number | null; ratePerKmCents: number | null; etaMinutes?: number | null; estimatedDeliveryTime?: string | null }
+        >();
         for (const [branchId] of groupEntries) {
           const quote = await this.settings.computeBranchDeliveryQuote({
             branchId,
-            addressLat: address.lat!,
-            addressLng: address.lng!,
+            addressLat: address.lat ?? null,
+            addressLng: address.lng ?? null,
           });
           shippingFeeCentsTotal += quote.shippingFeeCents;
           shippingByBranch.set(branchId, {
             fee: quote.shippingFeeCents,
-            distanceKm: quote.distanceKm,
-            ratePerKmCents: quote.ratePerKmCents,
+            distanceKm: distancePricingEnabled ? quote.distanceKm : null,
+            ratePerKmCents: distancePricingEnabled ? quote.ratePerKmCents : null,
+            etaMinutes: quote.etaMinutes ?? null,
+            estimatedDeliveryTime: quote.estimatedDeliveryTime ?? null,
           });
         }
 
@@ -478,9 +580,11 @@ export class OrdersService {
             group.branch.deliveryMode ??
             group.branch.provider?.deliveryMode ??
             DeliveryMode.PLATFORM;
-          const deliveryDistanceKm = shippingQuote?.distanceKm ?? null;
-          const deliveryRatePerKmCents = shippingQuote?.ratePerKmCents ?? null;
+          const deliveryDistanceKm = distancePricingEnabled ? shippingQuote?.distanceKm ?? null : null;
+          const deliveryRatePerKmCents = distancePricingEnabled ? shippingQuote?.ratePerKmCents ?? null : null;
           const shippingFeeCents = shippingQuote?.fee ?? 0;
+          const deliveryEtaMinutes = shippingQuote?.etaMinutes ?? null;
+          const estimatedDeliveryTime = shippingQuote?.estimatedDeliveryTime ?? null;
           const totalCents = group.subtotalCents + shippingFeeCents - discountForBranch;
 
           const code = await this.generateOrderCode(tx);
@@ -506,6 +610,8 @@ export class OrdersService {
               deliveryMode,
               deliveryDistanceKm,
               deliveryRatePerKmCents,
+              deliveryEtaMinutes,
+              estimatedDeliveryTime,
               items: {
                 create: group.items.map((item) => ({
                   productId: item.productId,
@@ -663,7 +769,11 @@ export class OrdersService {
     const splitPolicy =
       (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
     const address = payload.address as GuestAddressInput;
-    if (!Number.isFinite(address.lat) || !Number.isFinite(address.lng)) {
+    const distancePricingEnabled = this.settings.isDistancePricingEnabled();
+    if (
+      distancePricingEnabled &&
+      (!Number.isFinite(address.lat) || !Number.isFinite(address.lng))
+    ) {
       throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is required');
     }
 
@@ -675,19 +785,19 @@ export class OrdersService {
         throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
       }
 
-      const shippingByBranch = new Map<string, { fee: number; distanceKm: number; ratePerKmCents: number }>();
+      const shippingByBranch = new Map<string, { fee: number; distanceKm: number | null; ratePerKmCents: number | null }>();
       const shippingErrors = new Map<string, string>();
       for (const [branchId] of groupEntries) {
         try {
           const quote = await this.settings.computeBranchDeliveryQuote({
             branchId,
-            addressLat: address.lat,
-            addressLng: address.lng,
+            addressLat: address.lat ?? null,
+            addressLng: address.lng ?? null,
           });
           shippingByBranch.set(branchId, {
             fee: quote.shippingFeeCents,
-            distanceKm: quote.distanceKm,
-            ratePerKmCents: quote.ratePerKmCents,
+            distanceKm: distancePricingEnabled ? quote.distanceKm : null,
+            ratePerKmCents: distancePricingEnabled ? quote.ratePerKmCents : null,
           });
         } catch (error: any) {
           shippingErrors.set(branchId, error?.message ?? 'Delivery unavailable');
@@ -751,10 +861,14 @@ export class OrdersService {
     const guestPhone = payload.phone?.trim();
     const guestName = payload.name?.trim();
     const address = payload.address as GuestAddressInput;
+    const distancePricingEnabled = this.settings.isDistancePricingEnabled();
     if (!guestName || !guestPhone) {
       throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Guest name and phone are required');
     }
-    if (!Number.isFinite(address.lat) || !Number.isFinite(address.lng)) {
+    if (
+      distancePricingEnabled &&
+      (!Number.isFinite(address.lat) || !Number.isFinite(address.lng))
+    ) {
       throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is required');
     }
 
@@ -783,19 +897,24 @@ export class OrdersService {
           throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
         }
 
-        const shippingByBranch = new Map<string, { fee: number; distanceKm: number; ratePerKmCents: number }>();
+        const shippingByBranch = new Map<
+          string,
+          { fee: number; distanceKm: number | null; ratePerKmCents: number | null; etaMinutes?: number | null; estimatedDeliveryTime?: string | null }
+        >();
         const shippingErrors = new Map<string, string>();
         for (const [branchId] of groupEntries) {
           try {
             const quote = await this.settings.computeBranchDeliveryQuote({
               branchId,
-              addressLat: address.lat,
-              addressLng: address.lng,
+              addressLat: address.lat ?? null,
+              addressLng: address.lng ?? null,
             });
             shippingByBranch.set(branchId, {
               fee: quote.shippingFeeCents,
-              distanceKm: quote.distanceKm,
-              ratePerKmCents: quote.ratePerKmCents,
+              distanceKm: distancePricingEnabled ? quote.distanceKm : null,
+              ratePerKmCents: distancePricingEnabled ? quote.ratePerKmCents : null,
+              etaMinutes: quote.etaMinutes ?? null,
+              estimatedDeliveryTime: quote.estimatedDeliveryTime ?? null,
             });
           } catch (error: any) {
             shippingErrors.set(branchId, error?.message ?? 'Delivery unavailable');
@@ -835,8 +954,8 @@ export class OrdersService {
             guestName,
             guestPhone,
             guestAddress,
-            guestLat: address.lat,
-            guestLng: address.lng,
+            guestLat: address.lat ?? null,
+            guestLng: address.lng ?? null,
             status: 'PENDING',
             splitFailurePolicy: splitPolicy,
             paymentMethod: paymentMethod as PaymentMethod,
@@ -854,9 +973,11 @@ export class OrdersService {
             group.branch.deliveryMode ??
             group.branch.provider?.deliveryMode ??
             DeliveryMode.PLATFORM;
-          const deliveryDistanceKm = shippingQuote?.distanceKm ?? null;
-          const deliveryRatePerKmCents = shippingQuote?.ratePerKmCents ?? null;
+          const deliveryDistanceKm = distancePricingEnabled ? shippingQuote?.distanceKm ?? null : null;
+          const deliveryRatePerKmCents = distancePricingEnabled ? shippingQuote?.ratePerKmCents ?? null : null;
           const shippingFeeCents = shippingQuote?.fee ?? 0;
+          const deliveryEtaMinutes = shippingQuote?.etaMinutes ?? null;
+          const estimatedDeliveryTime = shippingQuote?.estimatedDeliveryTime ?? null;
           const totalCents = group.subtotalCents + shippingFeeCents;
 
           const code = await this.generateOrderCode(tx);
@@ -882,11 +1003,13 @@ export class OrdersService {
               deliveryMode,
               deliveryDistanceKm,
               deliveryRatePerKmCents,
+              deliveryEtaMinutes,
+              estimatedDeliveryTime,
               guestName,
               guestPhone,
               guestAddress,
-              guestLat: address.lat,
-              guestLng: address.lng,
+              guestLat: address.lat ?? null,
+              guestLng: address.lng ?? null,
               items: {
                 create: group.items.map((item) => ({
                   productId: item.productId,
@@ -1751,22 +1874,30 @@ export class OrdersService {
       let shippingFeeCents = 0;
       let deliveryDistanceKm: number | null = null;
       let deliveryRatePerKmCents: number | null = null;
+      let deliveryEtaMinutes: number | null = null;
+      let estimatedDeliveryTime: string | null = null;
       let deliveryMode = source.deliveryMode ?? DeliveryMode.PLATFORM;
-      if (branchId && address.lat !== null && address.lat !== undefined && address.lng !== null && address.lng !== undefined) {
+      const distancePricingEnabled = this.settings.isDistancePricingEnabled();
+      const hasLocation = address.lat !== null && address.lat !== undefined && address.lng !== null && address.lng !== undefined;
+      if (branchId && (!distancePricingEnabled || hasLocation)) {
         const quote = await this.settings.computeBranchDeliveryQuote({
           branchId,
-          addressLat: address.lat,
-          addressLng: address.lng,
+          addressLat: hasLocation ? address.lat : null,
+          addressLng: hasLocation ? address.lng : null,
         });
         shippingFeeCents = quote.shippingFeeCents;
-        deliveryDistanceKm = quote.distanceKm;
-        deliveryRatePerKmCents = quote.ratePerKmCents;
+        deliveryDistanceKm = distancePricingEnabled ? quote.distanceKm : null;
+        deliveryRatePerKmCents = distancePricingEnabled ? quote.ratePerKmCents : null;
+        deliveryEtaMinutes = quote.etaMinutes ?? null;
+        estimatedDeliveryTime = quote.estimatedDeliveryTime ?? null;
       } else {
         const quote = await this.settings.computeDeliveryQuote({
           subtotalCents,
           zoneId: address.zoneId,
         });
         shippingFeeCents = quote.shippingFeeCents;
+        deliveryEtaMinutes = quote.etaMinutes ?? null;
+        estimatedDeliveryTime = quote.estimatedDeliveryTime ?? null;
       }
 
       const totalCents = subtotalCents + shippingFeeCents;
@@ -1792,6 +1923,8 @@ export class OrdersService {
           deliveryMode,
           deliveryDistanceKm,
           deliveryRatePerKmCents,
+          deliveryEtaMinutes,
+          estimatedDeliveryTime,
           items: {
             create: orderItems.map((item) => ({
               productId: item.productId,
@@ -2092,6 +2225,40 @@ export class OrdersService {
     await this.rollbackStockForOrderItems(
       cart.items.map((i) => ({ productId: i.productId, qty: i.qty, branchId: i.branchId ?? undefined })),
     );
+  }
+
+  private allowedTransitions(status: OrderStatus): OrderStatus[] {
+    switch (status) {
+      case OrderStatus.PENDING:
+        return [OrderStatus.PROCESSING, OrderStatus.CANCELED];
+      case OrderStatus.PROCESSING:
+        return [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.CANCELED];
+      case OrderStatus.OUT_FOR_DELIVERY:
+        return [OrderStatus.DELIVERED, OrderStatus.CANCELED];
+      default:
+        return [];
+    }
+  }
+
+  private formatStatusLabel(status: OrderStatus): string {
+    return status.replace(/_/g, ' ');
+  }
+
+  private findLatestDriverLocation(driverId: string | null) {
+    if (!driverId) return null;
+    return this.prisma.deliveryDriverLocation.findFirst({
+      where: { driverId },
+      orderBy: { recordedAt: 'desc' },
+      select: {
+        driverId: true,
+        lat: true,
+        lng: true,
+        accuracy: true,
+        heading: true,
+        speed: true,
+        recordedAt: true,
+      },
+    });
   }
 
   private async rollbackStockForOrderItems(

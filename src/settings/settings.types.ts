@@ -16,6 +16,7 @@ export interface DeliveryConfig {
   freeDeliveryMinimumCents: number;
   estimatedDeliveryTime?: string | null;
   maxDeliveryRadiusKm?: number | null;
+  distancePricingEnabled?: boolean;
   deliveryZones: DeliveryZone[];
 }
 
@@ -42,8 +43,8 @@ export interface DeliveryQuote {
 }
 
 export interface DistanceDeliveryQuote extends DeliveryQuote {
-  distanceKm: number;
-  ratePerKmCents: number;
+  distanceKm: number | null;
+  ratePerKmCents: number | null;
   minDeliveryFeeCents?: number | null;
   maxDeliveryFeeCents?: number | null;
 }

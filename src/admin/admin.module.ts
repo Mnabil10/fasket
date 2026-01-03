@@ -26,6 +26,7 @@ import { AdminBranchesController } from './branches.controller';
 import { AdminPlansController } from './plans.controller';
 import { AdminSubscriptionsController } from './subscriptions.controller';
 import { AdminInvoicesController } from './invoices.controller';
+import { AdminCampaignsController } from './campaigns.controller';
 
 @Module({
   controllers: [
@@ -49,6 +50,7 @@ import { AdminInvoicesController } from './invoices.controller';
     AdminPlansController,
     AdminSubscriptionsController,
     AdminInvoicesController,
+    AdminCampaignsController,
   ],
   imports: [
     // Additional modules can be wired here when needed

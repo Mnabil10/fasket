@@ -30,6 +30,8 @@ import { PasswordResetModule } from './password-reset/password-reset.module';
 import { AutomationSupportModule } from './automation-support/automation-support.module';
 import { TelegramModule } from './telegram/telegram.module';
 import { BillingModule } from './billing/billing.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { ProvidersModule } from './providers/providers.module';
 
 @Module({
   imports: [
@@ -130,6 +132,8 @@ import { BillingModule } from './billing/billing.module';
     UploadsModule,
     TelegramModule,
     BillingModule,
+    AnalyticsModule,
+    ProvidersModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

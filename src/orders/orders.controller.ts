@@ -32,6 +32,16 @@ export class OrdersController {
     return res.json(result);
   }
 
+  @Get(':id/timeline')
+  timeline(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
+    return this.service.getOrderTimeline(user.userId, id);
+  }
+
+  @Get(':id/driver-location')
+  driverLocation(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
+    return this.service.getOrderDriverLocation(user.userId, id);
+  }
+
   @Post()
   create(@CurrentUser() user: CurrentUserPayload, @Body() dto: CreateOrderDto) {
     return this.service.create(user.userId, dto);

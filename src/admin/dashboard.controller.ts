@@ -27,7 +27,7 @@ export class AdminDashboardController {
       status: { in: ['DELIVERED', 'OUT_FOR_DELIVERY', 'PROCESSING', 'PENDING'] as any },
     };
 
-    const [ordersForKpi, byStatus, recent, customersCount, lowStock, topRaw] =
+    const [ordersForKpi, byStatus, recent, customersCount, lowStock, topRaw, activeOrdersCount, activeDriversCount, outForDeliveryCount] =
       await this.svc.prisma.$transaction([
         this.svc.prisma.order.findMany({ where: kpiWhere, select: { totalCents: true } }),
         // Add orderBy to satisfy Prisma's groupBy typing
@@ -57,6 +57,11 @@ export class AdminDashboardController {
           take: 10,
         }),
         this.svc.prisma.orderItem.groupBy({ by: ['productId'], _sum: { qty: true }, orderBy: { _sum: { qty: 'desc' } }, take: 10 }),
+        this.svc.prisma.order.count({
+          where: { status: { in: ['PENDING', 'PROCESSING', 'OUT_FOR_DELIVERY'] as any } },
+        }),
+        this.svc.prisma.deliveryDriver.count({ where: { isActive: true } }),
+        this.svc.prisma.order.count({ where: { status: 'OUT_FOR_DELIVERY' as any } }),
       ]);
 
     const totalRevenueCents = ordersForKpi.reduce((s, o) => s + o.totalCents, 0);
@@ -83,6 +88,9 @@ export class AdminDashboardController {
       topProducts,
       lowStock,
       customersCount,
+      activeOrders: activeOrdersCount,
+      activeDrivers: activeDriversCount,
+      outForDelivery: outForDeliveryCount,
     };
   }
 

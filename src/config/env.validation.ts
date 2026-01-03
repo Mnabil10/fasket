@@ -50,6 +50,17 @@ const baseSchema = z.object({
   CORS_ALLOW_LOCALHOST: z.enum(['true','false']).optional(),
   LOG_LEVEL: z.string().optional(),
 
+  DELIVERY_DISTANCE_ENABLED: z.enum(['true','false']).optional(),
+  ROUTING_BASE_URL: z.string().url().optional(),
+  ROUTING_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  ROUTING_FALLBACK_SPEED_KPH: z.coerce.number().positive().optional(),
+
+  CLICKHOUSE_URL: z.string().url().optional(),
+  CLICKHOUSE_DB: z.string().optional(),
+  CLICKHOUSE_USER: z.string().optional(),
+  CLICKHOUSE_PASSWORD: z.string().optional(),
+  CLICKHOUSE_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+
   SWAGGER_ENABLED: z.string().optional(),
   SWAGGER_BASIC_USER: z.string().optional(),
   SWAGGER_BASIC_PASS: z.string().optional(),

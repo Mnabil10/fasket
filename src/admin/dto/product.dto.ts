@@ -80,6 +80,12 @@ export class CreateProductDto {
   @IsString()
   categoryId?: string;
 
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  providerId?: string;
+
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
@@ -92,6 +98,7 @@ export class UpdateProductDto extends PartialType(CreateProductDto) {}
 export class ProductListQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsString() q?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() categoryId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() providerId?: string;
 
   @ApiPropertyOptional({ enum: ProductStatusDto })
   @IsOptional() @IsEnum(ProductStatusDto) status?: ProductStatusDto;

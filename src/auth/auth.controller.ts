@@ -8,6 +8,7 @@ import {
   LoginDto,
   RefreshDto,
   RegisterDto,
+  ProviderRegisterDto,
   SignupStartDto,
   SignupVerifyDto,
   VerifyTwoFaDto,
@@ -31,6 +32,12 @@ export class AuthController {
   @Throttle({ authRegister: {} })
   register(@Body() dto: RegisterDto) {
     return this.service.register(dto);
+  }
+
+  @Post('provider/register')
+  @Throttle({ authRegister: {} })
+  registerProvider(@Body() dto: ProviderRegisterDto) {
+    return this.service.registerProvider(dto);
   }
 
   @Post('signup/start')

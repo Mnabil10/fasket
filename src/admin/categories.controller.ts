@@ -10,6 +10,7 @@ import {
   UploadedFile,
   UseInterceptors,
   BadRequestException,
+  ForbiddenException,
   ParseFilePipe,
   MaxFileSizeValidator,
   FileTypeValidator,
@@ -19,16 +20,18 @@ import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags, ApiConsumes, ApiBody }
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Express } from 'express';
-import { Prisma } from '@prisma/client';
-import { AdminOnly, StaffOrAdmin } from './_admin-guards';
+import { Prisma, ProviderStatus, UserRole } from '@prisma/client';
+import { AdminOnly, ProviderOrStaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
 import { CategoryListQueryDto, CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 import { UploadsService } from 'src/uploads/uploads.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { CurrentUserPayload } from '../common/types/current-user.type';
 
 @ApiTags('Admin/Categories')
 @ApiBearerAuth()
-@StaffOrAdmin()
+@ProviderOrStaffOrAdmin()
 @Controller({ path: 'admin/categories', version: ['1'] })
 export class AdminCategoriesController {
   constructor(private svc: AdminService, private uploads: UploadsService) {}
@@ -38,11 +41,17 @@ export class AdminCategoriesController {
   @ApiQuery({ name: 'parentId', required: false })
   @ApiQuery({ name: 'isActive', required: false, schema: { type: 'boolean' } })
   @ApiOkResponse({ description: 'Paginated categories' })
-  async list(@Query() query: CategoryListQueryDto) {
+  async list(@CurrentUser() user: CurrentUserPayload, @Query() query: CategoryListQueryDto) {
+    const providerScope = await this.resolveProviderScope(user);
     const where: any = {};
     if (query.q) where.name = { contains: query.q, mode: 'insensitive' };
     if (query.parentId) where.parentId = query.parentId;
     if (query.isActive !== undefined) where.isActive = query.isActive;
+    if (providerScope) {
+      where.providerId = providerScope;
+    } else if (query.providerId) {
+      where.providerId = query.providerId;
+    }
     // deletedAt is soft-delete flag
     where.deletedAt = null;
 
@@ -63,8 +72,11 @@ export class AdminCategoriesController {
   }
 
   @Get(':id')
-  async one(@Param('id') id: string) {
-    const c = await this.svc.prisma.category.findUnique({ where: { id } });
+  async one(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
+    const providerScope = await this.resolveProviderScope(user);
+    const c = await this.svc.prisma.category.findFirst({
+      where: { id, ...(providerScope ? { providerId: providerScope } : {}) },
+    });
     if (!c) return c as any;
     return { ...c, imageUrl: await toPublicImageUrl((c as any).imageUrl) } as any;
   }
@@ -96,6 +108,7 @@ export class AdminCategoriesController {
     },
   }))
   async create(
+    @CurrentUser() user: CurrentUserPayload,
     @Body() dto: CreateCategoryDto,
     @UploadedFile(new ParseFilePipe({
       validators: [
@@ -105,7 +118,28 @@ export class AdminCategoriesController {
       fileIsRequired: false,
     })) file?: Express.Multer.File,
   ) {
+    const providerScope = await this.resolveProviderScope(user);
     const payload = await this.prepareCategoryPayload(dto);
+    if (providerScope) {
+      payload.providerId = providerScope;
+      if (payload.parentId) {
+        const parent = await this.svc.prisma.category.findFirst({
+          where: { id: payload.parentId, providerId: providerScope },
+          select: { id: true },
+        });
+        if (!parent) {
+          throw new BadRequestException('Parent category not found');
+        }
+      }
+    } else if (payload.providerId && payload.parentId) {
+      const parent = await this.svc.prisma.category.findFirst({
+        where: { id: payload.parentId, providerId: payload.providerId },
+        select: { id: true },
+      });
+      if (!parent) {
+        throw new BadRequestException('Parent category not found');
+      }
+    }
     if (file) {
       const uploaded = await this.uploads.processImageAsset(file, { folder: 'categories', generateVariants: false });
       payload.imageUrl = uploaded.url;
@@ -147,6 +181,7 @@ export class AdminCategoriesController {
     },
   }))
   async update(
+    @CurrentUser() user: CurrentUserPayload,
     @Param('id') id: string,
     @Body() dto: UpdateCategoryDto,
     @UploadedFile(new ParseFilePipe({
@@ -157,9 +192,32 @@ export class AdminCategoriesController {
       fileIsRequired: false,
     })) file?: Express.Multer.File,
   ) {
-    const existing = await this.svc.prisma.category.findUnique({ where: { id } });
+    const providerScope = await this.resolveProviderScope(user);
+    const existing = await this.svc.prisma.category.findFirst({
+      where: { id, ...(providerScope ? { providerId: providerScope } : {}) },
+    });
     if (!existing) throw new NotFoundException('Category not found');
     const payload = await this.prepareCategoryPayload(dto, id);
+    if (providerScope) {
+      payload.providerId = providerScope;
+      if (payload.parentId) {
+        const parent = await this.svc.prisma.category.findFirst({
+          where: { id: payload.parentId, providerId: providerScope },
+          select: { id: true },
+        });
+        if (!parent) {
+          throw new BadRequestException('Parent category not found');
+        }
+      }
+    } else if (payload.providerId && payload.parentId) {
+      const parent = await this.svc.prisma.category.findFirst({
+        where: { id: payload.parentId, providerId: payload.providerId },
+        select: { id: true },
+      });
+      if (!parent) {
+        throw new BadRequestException('Parent category not found');
+      }
+    }
     if (file) {
       const uploaded = await this.uploads.processImageAsset(file, {
         folder: 'categories',
@@ -208,5 +266,20 @@ export class AdminCategoriesController {
       data.slug = await this.svc.slugs.generateUniqueSlug('category', data.slug, id);
     }
     return data;
+  }
+
+  private async resolveProviderScope(user?: CurrentUserPayload) {
+    if (!user || user.role !== UserRole.PROVIDER) return null;
+    const membership = await this.svc.prisma.providerUser.findFirst({
+      where: { userId: user.userId },
+      include: { provider: { select: { status: true } } },
+    });
+    if (!membership) {
+      throw new ForbiddenException('Provider account is not linked');
+    }
+    if (membership.provider.status !== ProviderStatus.ACTIVE) {
+      throw new ForbiddenException('Provider account is not active');
+    }
+    return membership.providerId;
   }
 }

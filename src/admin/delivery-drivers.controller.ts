@@ -61,6 +61,11 @@ export class AdminDeliveryDriversController {
     return this.drivers.getById(id);
   }
 
+  @Get(':id/location')
+  getLatestLocation(@Param('id') id: string) {
+    return this.drivers.getLatestLocation(id);
+  }
+
   @Post()
   @ApiConsumes('multipart/form-data')
   @ApiBody({

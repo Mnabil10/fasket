@@ -1,6 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsOptional, IsPhoneNumber, IsString, Matches } from 'class-validator';
+import { IsEmail, IsEnum, IsOptional, IsPhoneNumber, IsString, Matches } from 'class-validator';
+import { ProviderType } from '@prisma/client';
 import { cleanNullableString, cleanString } from '../common/utils/sanitize.util';
 
 const passwordPolicy = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-={}\[\]:;"'`|<>,.?/]{8,}$/;
@@ -27,6 +28,48 @@ export class RegisterDto {
   @IsString()
   @Matches(passwordPolicy, { message: 'Password must be at least 8 chars and contain letters and numbers' })
   password!: string;
+}
+
+export class ProviderRegisterDto extends RegisterDto {
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  providerName!: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  providerNameAr?: string;
+
+  @ApiPropertyOptional({ enum: ProviderType, default: ProviderType.SUPERMARKET })
+  @IsOptional()
+  @IsEnum(ProviderType)
+  providerType?: ProviderType;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  branchName?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  branchAddress?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  branchCity?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  branchRegion?: string;
 }
 
 export class LoginDto {
