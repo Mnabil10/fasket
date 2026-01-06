@@ -77,7 +77,9 @@ export class AdminCategoriesController {
     const c = await this.svc.prisma.category.findFirst({
       where: { id, ...(providerScope ? { providerId: providerScope } : {}) },
     });
-    if (!c) return c as any;
+    if (!c) {
+      throw new NotFoundException('Category not found');
+    }
     return { ...c, imageUrl: await toPublicImageUrl((c as any).imageUrl) } as any;
   }
 

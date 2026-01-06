@@ -24,7 +24,7 @@ export class AdminDashboardController {
 
     const kpiWhere = {
       ...(whereDate.createdAt ? { createdAt: whereDate.createdAt } : {}),
-      status: { in: ['DELIVERED', 'OUT_FOR_DELIVERY', 'PROCESSING', 'PENDING'] as any },
+      status: { in: ['DELIVERED', 'OUT_FOR_DELIVERY', 'PREPARING', 'CONFIRMED', 'PENDING'] as any },
     };
 
     const [ordersForKpi, byStatus, recent, customersCount, lowStock, topRaw, activeOrdersCount, activeDriversCount, outForDeliveryCount] =
@@ -58,7 +58,7 @@ export class AdminDashboardController {
         }),
         this.svc.prisma.orderItem.groupBy({ by: ['productId'], _sum: { qty: true }, orderBy: { _sum: { qty: 'desc' } }, take: 10 }),
         this.svc.prisma.order.count({
-          where: { status: { in: ['PENDING', 'PROCESSING', 'OUT_FOR_DELIVERY'] as any } },
+          where: { status: { in: ['PENDING', 'CONFIRMED', 'PREPARING', 'OUT_FOR_DELIVERY'] as any } },
         }),
         this.svc.prisma.deliveryDriver.count({ where: { isActive: true } }),
         this.svc.prisma.order.count({ where: { status: 'OUT_FOR_DELIVERY' as any } }),
@@ -107,7 +107,7 @@ export class AdminDashboardController {
     const whereClauses: Prisma.Sql[] = [];
     if (from) whereClauses.push(Prisma.sql`"createdAt" >= ${from}`);
     if (to) whereClauses.push(Prisma.sql`"createdAt" <= ${to}`);
-    whereClauses.push(Prisma.sql`"status" IN ('PENDING','PROCESSING','OUT_FOR_DELIVERY','DELIVERED')`);
+    whereClauses.push(Prisma.sql`"status" IN ('PENDING','CONFIRMED','PREPARING','OUT_FOR_DELIVERY','DELIVERED')`);
 
     // Build WHERE using SQL helpers
     const whereSql =
@@ -151,7 +151,7 @@ export class AdminDashboardController {
     if (range.from || range.to) whereOrder.createdAt = {};
     if (range.from) whereOrder.createdAt.gte = new Date(range.from!);
     if (range.to) whereOrder.createdAt.lte = new Date(range.to!);
-    whereOrder.status = { in: ['PENDING', 'PROCESSING', 'OUT_FOR_DELIVERY', 'DELIVERED'] as any };
+    whereOrder.status = { in: ['PENDING', 'CONFIRMED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERED'] as any };
 
     const topRaw = await this.svc.prisma.orderItem.groupBy({
       by: ['productId'],

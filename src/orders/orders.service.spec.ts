@@ -1,10 +1,12 @@
-import { OrderStatus } from '@prisma/client';
+import { DeliveryMode, OrderStatus } from '@prisma/client';
+import { ErrorCode } from '../common/errors/error-codes';
 import { OrdersService } from './orders.service';
 
 describe('OrdersService.awardLoyaltyForOrder', () => {
   const mockAudit = { log: jest.fn() } as any;
   const mockCache = {} as any;
   const mockAutomation = { emit: jest.fn(), enqueueMany: jest.fn() } as any;
+  const mockBilling = { voidCommissionForOrder: jest.fn() } as any;
 
   const baseConfig = {
     enabled: true,
@@ -54,7 +56,7 @@ describe('OrdersService.awardLoyaltyForOrder', () => {
       awardPoints: jest.fn().mockResolvedValue(awardPointsReturn),
     } as any;
 
-    const service = new OrdersService(prisma, settings, loyalty, mockAudit, mockCache, mockAutomation);
+    const service = new OrdersService(prisma, settings, loyalty, mockAudit, mockCache, mockAutomation, mockBilling);
     return { service, prisma, tx, settings, loyalty };
   };
 
@@ -97,5 +99,93 @@ describe('OrdersService.awardLoyaltyForOrder', () => {
       where: { id: 'o1' },
       data: { loyaltyPointsEarned: 30 },
     });
+  });
+});
+
+describe('OrdersService status transitions', () => {
+  const buildTransitionService = (order: any) => {
+    const prisma = {
+      order: {
+        findUnique: jest.fn().mockResolvedValue(order),
+      },
+    } as any;
+    const service = new OrdersService(
+      prisma,
+      {} as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      {} as any,
+      { emit: jest.fn(), enqueueMany: jest.fn() } as any,
+      {} as any,
+    );
+    return { service, prisma };
+  };
+
+  it('includes delivery transitions for merchant preparing orders', async () => {
+    const { service } = buildTransitionService({
+      id: 'o1',
+      status: OrderStatus.PREPARING,
+      deliveryMode: DeliveryMode.MERCHANT,
+      driverId: null,
+    });
+    const transitions = await service.getOrderTransitions('o1');
+    const targets = transitions.map((t) => t.to);
+    expect(targets).toEqual(
+      expect.arrayContaining([OrderStatus.CANCELED, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED]),
+    );
+  });
+
+  it('blocks out-for-delivery without a driver for platform delivery', async () => {
+    const { service } = buildTransitionService({
+      id: 'o1',
+      status: OrderStatus.PREPARING,
+      deliveryMode: DeliveryMode.PLATFORM,
+      driverId: null,
+      userId: 'u1',
+    });
+    await expect(service.updateStatus('o1', OrderStatus.OUT_FOR_DELIVERY, 'admin')).rejects.toMatchObject({
+      code: ErrorCode.ORDER_INVALID_STATUS_TRANSITION,
+    });
+  });
+
+  it('routes cancel updates to adminCancelOrder', async () => {
+    const { service } = buildTransitionService({
+      id: 'o1',
+      status: OrderStatus.CONFIRMED,
+      deliveryMode: DeliveryMode.PLATFORM,
+      driverId: null,
+      userId: 'u1',
+    });
+    const cancelSpy = jest.spyOn(service, 'adminCancelOrder').mockResolvedValue({ success: true } as any);
+    const result = await service.updateStatus('o1', OrderStatus.CANCELED, 'admin', 'note');
+    expect(cancelSpy).toHaveBeenCalledWith('o1', 'admin', 'note');
+    expect(result).toEqual({ success: true });
+  });
+
+  it('emits preparing automation events with dedupe keys', async () => {
+    const { service } = buildTransitionService({
+      id: 'o1',
+      status: OrderStatus.CONFIRMED,
+      deliveryMode: DeliveryMode.PLATFORM,
+      driverId: null,
+      userId: 'u1',
+    });
+    const payload = { order_id: 'o1' };
+    const buildPayloadSpy = jest.spyOn(service as any, 'buildOrderEventPayload').mockResolvedValue(payload);
+    const automation = (service as any).automation;
+    automation.emit.mockResolvedValue({ id: 'evt1' });
+    const tx = {} as any;
+    const result = await service.emitOrderStatusAutomationEvent(
+      tx,
+      'o1',
+      OrderStatus.PREPARING,
+      'order:o1:PREPARING:hist1',
+    );
+    expect(buildPayloadSpy).toHaveBeenCalledWith('o1', tx);
+    expect(automation.emit).toHaveBeenCalledWith('order.preparing', payload, {
+      tx,
+      dedupeKey: 'order:o1:PREPARING:hist1',
+    });
+    expect(result).toEqual({ id: 'evt1' });
   });
 });

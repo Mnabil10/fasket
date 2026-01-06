@@ -40,7 +40,12 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
   };
 }>;
 
-type PublicStatus = 'PENDING' | 'CONFIRMED' | 'DELIVERING' | 'COMPLETED' | 'CANCELED';
+type PublicStatus = 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELED';
+
+type StatusTransitionContext = {
+  deliveryMode?: DeliveryMode | null;
+  driverId?: string | null;
+};
 
 type GuestOrderItemInput = {
   productId: string;
@@ -213,11 +218,17 @@ export class OrdersService {
   }
 
   async getOrderTransitions(orderId: string) {
-    const order = await this.prisma.order.findUnique({ where: { id: orderId }, select: { id: true, status: true } });
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, status: true, deliveryMode: true, driverId: true },
+    });
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
     }
-    const transitions = this.allowedTransitions(order.status);
+    const transitions = this.getAllowedTransitions(order.status, {
+      deliveryMode: order.deliveryMode,
+      driverId: order.driverId,
+    });
     return transitions.map((to) => ({
       from: order.status,
       to,
@@ -1985,6 +1996,10 @@ export class OrdersService {
       await this.clearCachesForOrder(orderId, userId);
       return this.detail(userId, orderId);
     }
+    this.assertStatusTransition(order.status, OrderStatus.CANCELED, {
+      deliveryMode: order.deliveryMode,
+      driverId: order.driverId,
+    });
 
     const automationEvents: AutomationEventRef[] = [];
     await this.prisma.allowStatusUpdates(async () =>
@@ -2023,10 +2038,20 @@ export class OrdersService {
   }
 
   async updateStatus(orderId: string, nextStatus: OrderStatus, actorId?: string, note?: string) {
-    const before = await this.prisma.order.findUnique({ where: { id: orderId } });
+    const before = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, status: true, userId: true, deliveryMode: true, driverId: true },
+    });
     if (!before) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
     }
+    if (before.status === nextStatus) {
+      return { success: true, loyaltyEarned: 0 };
+    }
+    this.assertStatusTransition(before.status, nextStatus, {
+      deliveryMode: before.deliveryMode,
+      driverId: before.driverId,
+    });
     if (nextStatus === OrderStatus.CANCELED) {
       return this.adminCancelOrder(orderId, actorId, note);
     }
@@ -2080,6 +2105,10 @@ export class OrdersService {
       await this.clearCachesForOrder(orderId, order.userId);
       return { success: true };
     }
+    this.assertStatusTransition(order.status, OrderStatus.CANCELED, {
+      deliveryMode: order.deliveryMode,
+      driverId: order.driverId,
+    });
 
     const automationEvents: AutomationEventRef[] = [];
     await this.prisma.allowStatusUpdates(async () =>
@@ -2227,16 +2256,50 @@ export class OrdersService {
     );
   }
 
-  private allowedTransitions(status: OrderStatus): OrderStatus[] {
+  private getAllowedTransitions(status: OrderStatus, context: StatusTransitionContext = {}): OrderStatus[] {
+    const deliveryMode = context.deliveryMode ?? DeliveryMode.PLATFORM;
     switch (status) {
       case OrderStatus.PENDING:
-        return [OrderStatus.PROCESSING, OrderStatus.CANCELED];
-      case OrderStatus.PROCESSING:
-        return [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.CANCELED];
+        return [OrderStatus.CONFIRMED, OrderStatus.CANCELED];
+      case OrderStatus.CONFIRMED:
+        return [OrderStatus.PREPARING, OrderStatus.CANCELED];
+      case OrderStatus.PREPARING: {
+        const base: OrderStatus[] = [OrderStatus.CANCELED];
+        const canDispatch = deliveryMode === DeliveryMode.MERCHANT || Boolean(context.driverId);
+        if (canDispatch) {
+          base.push(OrderStatus.OUT_FOR_DELIVERY);
+        }
+        if (deliveryMode === DeliveryMode.MERCHANT) {
+          base.push(OrderStatus.DELIVERED);
+        }
+        return base;
+      }
       case OrderStatus.OUT_FOR_DELIVERY:
         return [OrderStatus.DELIVERED, OrderStatus.CANCELED];
       default:
         return [];
+    }
+  }
+
+  private assertStatusTransition(
+    currentStatus: OrderStatus,
+    nextStatus: OrderStatus,
+    context: StatusTransitionContext = {},
+  ) {
+    if (currentStatus === nextStatus) return;
+    const allowed = this.getAllowedTransitions(currentStatus, context);
+    if (!allowed.includes(nextStatus)) {
+      throw new DomainError(
+        ErrorCode.ORDER_INVALID_STATUS_TRANSITION,
+        `Cannot transition from ${currentStatus} to ${nextStatus}`,
+      );
+    }
+    const deliveryMode = context.deliveryMode ?? DeliveryMode.PLATFORM;
+    if (nextStatus === OrderStatus.OUT_FOR_DELIVERY && deliveryMode === DeliveryMode.PLATFORM && !context.driverId) {
+      throw new DomainError(
+        ErrorCode.ORDER_INVALID_STATUS_TRANSITION,
+        'Driver must be assigned before marking out for delivery',
+      );
     }
   }
 
@@ -2290,8 +2353,10 @@ export class OrdersService {
 
   private mapStatusToAutomationEvent(status: OrderStatus): string | null {
     switch (status) {
-      case OrderStatus.PROCESSING:
+      case OrderStatus.CONFIRMED:
         return 'order.confirmed';
+      case OrderStatus.PREPARING:
+        return 'order.preparing';
       case OrderStatus.OUT_FOR_DELIVERY:
         return 'order.out_for_delivery';
       case OrderStatus.DELIVERED:
@@ -2413,12 +2478,14 @@ export class OrdersService {
 
   private toPublicStatus(status: OrderStatus): PublicStatus {
     switch (status) {
-      case OrderStatus.PROCESSING:
+      case OrderStatus.CONFIRMED:
         return 'CONFIRMED';
+      case OrderStatus.PREPARING:
+        return 'PREPARING';
       case OrderStatus.OUT_FOR_DELIVERY:
-        return 'DELIVERING';
+        return 'OUT_FOR_DELIVERY';
       case OrderStatus.DELIVERED:
-        return 'COMPLETED';
+        return 'DELIVERED';
       case OrderStatus.CANCELED:
         return 'CANCELED';
       default:

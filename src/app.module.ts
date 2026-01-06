@@ -32,6 +32,7 @@ import { TelegramModule } from './telegram/telegram.module';
 import { BillingModule } from './billing/billing.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ProvidersModule } from './providers/providers.module';
+import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
   imports: [
@@ -134,6 +135,7 @@ import { ProvidersModule } from './providers/providers.module';
     BillingModule,
     AnalyticsModule,
     ProvidersModule,
+    ReviewsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

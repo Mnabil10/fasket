@@ -119,7 +119,7 @@ export class ProductsService {
       if (query.fromDate || query.toDate) whereOrder.createdAt = {};
       if (query.fromDate) (whereOrder.createdAt as Prisma.DateTimeFilter).gte = new Date(query.fromDate);
       if (query.toDate) (whereOrder.createdAt as Prisma.DateTimeFilter).lte = new Date(query.toDate);
-      whereOrder.status = { in: ['PENDING', 'PROCESSING', 'OUT_FOR_DELIVERY', 'DELIVERED'] as any };
+      whereOrder.status = { in: ['PENDING', 'CONFIRMED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERED'] as any };
 
       const agg = await this.prisma.orderItem.groupBy({
         by: ['productId'],

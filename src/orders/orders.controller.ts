@@ -24,12 +24,16 @@ export class OrdersController {
   }
 
   @Get(':id')
-  async detail(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Res() res: Response) {
+  async detail(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const result = await this.service.detail(user.userId, id);
     if (result.etag) {
       res.setHeader('ETag', result.etag);
     }
-    return res.json(result);
+    return result;
   }
 
   @Get(':id/timeline')

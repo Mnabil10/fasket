@@ -13,21 +13,21 @@ export class AuthCompatController {
   async sendOtp(@Body() body: { phone: string }, @Req() req: Request, @Res() res: Response) {
     const result = await this.otp.requestOtp(body.phone, 'LOGIN', req.ip);
     res.setHeader('x-deprecated-endpoint', 'true');
-    return res.json(result);
+    return res.json({ ...result, success: true });
   }
 
   @Post('otp/verify')
   async verifyOtp(@Body() body: { phone: string; otp: string }, @Req() req: Request, @Res() res: Response) {
     const result = await this.otp.verifyOtpLegacy(body.phone, 'LOGIN', body.otp, req.ip);
     res.setHeader('x-deprecated-endpoint', 'true');
-    return res.json(result);
+    return res.json({ ...result, success: true });
   }
 
   @Post('forgot-password')
   async forgotPassword(@Body() body: { identifier: string }, @Req() req: Request, @Res() res: Response) {
     const result = await this.passwordReset.requestReset(body.identifier, req.ip);
     res.setHeader('x-deprecated-endpoint', 'true');
-    return res.json(result);
+    return res.json({ ...result, success: true });
   }
 
   @Post('reset-password')
@@ -44,6 +44,6 @@ export class AuthCompatController {
     }
     const result = await this.passwordReset.confirmReset(resetToken, body.newPassword);
     res.setHeader('x-deprecated-endpoint', 'true');
-    return res.json(result);
+    return res.json({ ...result, success: true });
   }
 }

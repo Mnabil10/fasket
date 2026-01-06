@@ -50,6 +50,42 @@ See `.env.example` for the full list.
 - **Caching** - `ProductsService` and `CategoriesService` consult Redis first; `CacheInvalidationService` wipes relevant keys when products/categories/home sections mutate.
 - **Audit & Stock Logs** - `AuditLog` captures who changed what, while `ProductStockLog` records every stock delta (admin edits, bulk import, checkout flows).
 
+## Order Lifecycle
+
+Canonical order statuses:
+
+- `PENDING` -> `CONFIRMED` -> `PREPARING` -> `OUT_FOR_DELIVERY` -> `DELIVERED`
+- `CANCELED` is terminal and can be reached from any non-terminal state.
+
+Transition rules:
+
+- `PENDING` -> `CONFIRMED` | `CANCELED`
+- `CONFIRMED` -> `PREPARING` | `CANCELED`
+- `PREPARING` -> `OUT_FOR_DELIVERY` | `DELIVERED` (merchant delivery only) | `CANCELED`
+- `OUT_FOR_DELIVERY` -> `DELIVERED` | `CANCELED`
+
+Platform delivery requires a driver assignment before moving to `OUT_FOR_DELIVERY`.
+
+Admin status endpoints:
+
+- `POST /api/v1/admin/orders/:id/confirm`
+- `POST /api/v1/admin/orders/:id/prepare`
+- `POST /api/v1/admin/orders/:id/out-for-delivery`
+- `POST /api/v1/admin/orders/:id/deliver`
+- `POST /api/v1/admin/orders/:id/cancel`
+- `PATCH /api/v1/admin/orders/:id/status` (fallback; still validated)
+
+Automation events emitted for order updates:
+
+- `order.created`, `order.confirmed`, `order.preparing`, `order.out_for_delivery`, `order.delivered`, `order.canceled`
+- `order.status_changed` for every transition
+
+See `Backend/AUTOMATION_CONTRACT.md` for payload details and webhook signing.
+
+## Provider Onboarding
+
+Provider application lifecycle, approval flow, and plan/commission rules are documented in `Backend/PROVIDER_ONBOARDING.md`.
+
 ## Bulk Upload Contracts
 
 1. Accepts `.xlsx` or `.csv` template downloaded from `/admin/products/bulk-template`.

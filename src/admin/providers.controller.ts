@@ -42,12 +42,16 @@ export class AdminProvidersController {
 
   @Get(':id')
   async one(@Param('id') id: string) {
-    return this.svc.prisma.provider.findUnique({
+    const provider = await this.svc.prisma.provider.findUnique({
       where: { id },
       include: {
         branches: { select: { id: true, name: true, status: true, isDefault: true } },
       },
     });
+    if (!provider) {
+      throw new NotFoundException('Provider not found');
+    }
+    return provider;
   }
 
   @Post()

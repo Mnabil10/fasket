@@ -104,6 +104,7 @@ export class AdminSubscriptionsController {
         trialEndsAt,
         cancelAt,
         canceledAt,
+        commissionRateBpsOverride: dto.commissionRateBpsOverride ?? undefined,
       },
     });
     await this.svc.audit.log({
@@ -130,6 +131,9 @@ export class AdminSubscriptionsController {
       payload.plan = { connect: { id: dto.planId } };
     }
     if (dto.status !== undefined) payload.status = dto.status as any;
+    if (dto.commissionRateBpsOverride !== undefined) {
+      payload.commissionRateBpsOverride = dto.commissionRateBpsOverride ?? null;
+    }
     if (dto.currentPeriodStart !== undefined) payload.currentPeriodStart = new Date(dto.currentPeriodStart);
     if (dto.currentPeriodEnd !== undefined) payload.currentPeriodEnd = new Date(dto.currentPeriodEnd);
     if (dto.trialEndsAt !== undefined) payload.trialEndsAt = new Date(dto.trialEndsAt);

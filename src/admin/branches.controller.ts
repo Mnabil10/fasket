@@ -45,10 +45,14 @@ export class AdminBranchesController {
 
   @Get(':id')
   async one(@Param('id') id: string) {
-    return this.svc.prisma.branch.findUnique({
+    const branch = await this.svc.prisma.branch.findUnique({
       where: { id },
       include: { provider: { select: { id: true, name: true, slug: true } } },
     });
+    if (!branch) {
+      throw new NotFoundException('Branch not found');
+    }
+    return branch;
   }
 
   @Post()

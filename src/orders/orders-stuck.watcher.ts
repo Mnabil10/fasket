@@ -27,7 +27,15 @@ export class OrdersStuckWatcher implements OnModuleInit, OnModuleDestroy {
     this.scanIntervalMs = (Number(process.env.ORDER_STUCK_SCAN_MINUTES || 5) || 5) * 60 * 1000;
     this.thresholds = [
       { status: OrderStatus.PENDING, minutes: Number(process.env.ORDER_STUCK_PENDING_MINUTES || 30) || 30 },
-      { status: OrderStatus.PROCESSING, minutes: Number(process.env.ORDER_STUCK_PROCESSING_MINUTES || 60) || 60 },
+      {
+        status: OrderStatus.CONFIRMED,
+        minutes:
+          Number(process.env.ORDER_STUCK_CONFIRMED_MINUTES ?? process.env.ORDER_STUCK_PROCESSING_MINUTES ?? 60) || 60,
+      },
+      {
+        status: OrderStatus.PREPARING,
+        minutes: Number(process.env.ORDER_STUCK_PREPARING_MINUTES ?? 90) || 90,
+      },
       { status: OrderStatus.OUT_FOR_DELIVERY, minutes: Number(process.env.ORDER_STUCK_OUT_FOR_DELIVERY_MINUTES || 120) || 120 },
     ];
   }
@@ -106,14 +114,18 @@ export class OrdersStuckWatcher implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private toPublicStatus(status: OrderStatus): 'PENDING' | 'CONFIRMED' | 'DELIVERING' | 'COMPLETED' | 'CANCELED' {
+  private toPublicStatus(
+    status: OrderStatus,
+  ): 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELED' {
     switch (status) {
-      case OrderStatus.PROCESSING:
+      case OrderStatus.CONFIRMED:
         return 'CONFIRMED';
+      case OrderStatus.PREPARING:
+        return 'PREPARING';
       case OrderStatus.OUT_FOR_DELIVERY:
-        return 'DELIVERING';
+        return 'OUT_FOR_DELIVERY';
       case OrderStatus.DELIVERED:
-        return 'COMPLETED';
+        return 'DELIVERED';
       case OrderStatus.CANCELED:
         return 'CANCELED';
       default:

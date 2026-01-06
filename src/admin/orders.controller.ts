@@ -1,9 +1,9 @@
-import { Body, Controller, ForbiddenException, Get, Logger, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Logger, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Prisma, ProviderStatus, UserRole } from '@prisma/client';
 import { AdminOnly, ProviderOrStaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
-import { UpdateOrderStatusDto } from './dto/order-status.dto';
+import { OrderStatusNoteDto, UpdateOrderStatusDto } from './dto/order-status.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CurrentUserPayload } from '../common/types/current-user.type';
 import { AssignDriverDto } from '../delivery-drivers/dto/driver.dto';
@@ -33,7 +33,7 @@ export class AdminOrdersController {
   ) {}
 
   @Get()
-  @ApiQuery({ name: 'status', required: false, enum: ['PENDING','PROCESSING','OUT_FOR_DELIVERY','DELIVERED','CANCELED'] })
+  @ApiQuery({ name: 'status', required: false, enum: ['PENDING','CONFIRMED','PREPARING','OUT_FOR_DELIVERY','DELIVERED','CANCELED'] })
   @ApiQuery({ name: 'from', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'to', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'customer', required: false })
@@ -109,8 +109,11 @@ export class AdminOrdersController {
         },
       },
     });
-    if (!order && providerScope) {
-      throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Order not found', 403);
+    if (!order) {
+      if (providerScope) {
+        throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Order not found', 403);
+      }
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
     }
     return order;
   }
@@ -145,6 +148,50 @@ export class AdminOrdersController {
     const nextStatus = dto.to as OrderStatus;
     const result = await this.orders.updateStatus(id, nextStatus, user.userId, dto.note);
     this.logger.log({ msg: 'Order status updated', orderId: id, to: dto.to, actorId: user.userId });
+    return result;
+  }
+
+  @Post(':id/confirm')
+  async confirm(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: OrderStatusNoteDto) {
+    await this.assertProviderOrderAccess(user, id);
+    const result = await this.orders.updateStatus(id, OrderStatus.CONFIRMED, user.userId, dto.note);
+    this.logger.log({ msg: 'Order confirmed', orderId: id, actorId: user.userId });
+    return result;
+  }
+
+  @Post(':id/prepare')
+  async prepare(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: OrderStatusNoteDto) {
+    await this.assertProviderOrderAccess(user, id);
+    const result = await this.orders.updateStatus(id, OrderStatus.PREPARING, user.userId, dto.note);
+    this.logger.log({ msg: 'Order preparing', orderId: id, actorId: user.userId });
+    return result;
+  }
+
+  @Post(':id/out-for-delivery')
+  async outForDelivery(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() dto: OrderStatusNoteDto,
+  ) {
+    await this.assertProviderOrderAccess(user, id);
+    const result = await this.orders.updateStatus(id, OrderStatus.OUT_FOR_DELIVERY, user.userId, dto.note);
+    this.logger.log({ msg: 'Order out for delivery', orderId: id, actorId: user.userId });
+    return result;
+  }
+
+  @Post(':id/deliver')
+  async deliver(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: OrderStatusNoteDto) {
+    await this.assertProviderOrderAccess(user, id);
+    const result = await this.orders.updateStatus(id, OrderStatus.DELIVERED, user.userId, dto.note);
+    this.logger.log({ msg: 'Order delivered', orderId: id, actorId: user.userId });
+    return result;
+  }
+
+  @Post(':id/cancel')
+  async cancel(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: OrderStatusNoteDto) {
+    await this.assertProviderOrderAccess(user, id);
+    const result = await this.orders.updateStatus(id, OrderStatus.CANCELED, user.userId, dto.note);
+    this.logger.log({ msg: 'Order canceled', orderId: id, actorId: user.userId });
     return result;
   }
 

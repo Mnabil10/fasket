@@ -153,12 +153,14 @@ export class AutomationSupportService {
 
   private toPublicStatus(status: string) {
     switch (status) {
-      case 'PROCESSING':
+      case 'CONFIRMED':
         return 'CONFIRMED';
+      case 'PREPARING':
+        return 'PREPARING';
       case 'OUT_FOR_DELIVERY':
-        return 'DELIVERING';
+        return 'OUT_FOR_DELIVERY';
       case 'DELIVERED':
-        return 'COMPLETED';
+        return 'DELIVERED';
       case 'CANCELED':
         return 'CANCELED';
       default:

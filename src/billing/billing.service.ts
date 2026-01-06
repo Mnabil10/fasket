@@ -26,9 +26,10 @@ export class BillingService {
       orderBy: { createdAt: 'desc' },
     });
     const plan = subscription?.plan;
-    if (!plan || plan.commissionRateBps <= 0) return null;
+    const rateBps = subscription?.commissionRateBpsOverride ?? plan?.commissionRateBps ?? 0;
+    if (!plan || rateBps <= 0) return null;
 
-    const commissionCents = Math.round((order.subtotalCents * plan.commissionRateBps) / 10000);
+    const commissionCents = Math.round((order.subtotalCents * rateBps) / 10000);
     if (commissionCents <= 0) return null;
 
     const now = new Date();
@@ -52,7 +53,7 @@ export class BillingService {
         type: InvoiceItemType.COMMISSION,
         amountCents: commissionCents,
         currency: plan.currency ?? 'EGP',
-        metadata: { rateBps: plan.commissionRateBps },
+        metadata: { rateBps },
       },
     });
 

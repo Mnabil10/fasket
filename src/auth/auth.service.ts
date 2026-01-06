@@ -3,6 +3,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   UnauthorizedException,
@@ -611,10 +612,15 @@ export class AuthService {
         },
       })
       .catch(() => undefined);
+    const accessTtl = Number(
+      this.config.get('JWT_ACCESS_TTL_SECONDS') ??
+        this.config.get('JWT_ACCESS_TTL') ??
+        900,
+    );
     return this.ok({
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      expiresInSeconds: Number(this.config.get('JWT_ACCESS_TTL_SECONDS') ?? 3600),
+      expiresInSeconds: Number.isFinite(accessTtl) && accessTtl > 0 ? accessTtl : 900,
       user: { id: user.id, phoneE164: user.phone },
     });
   }
@@ -659,11 +665,11 @@ export class AuthService {
   async issueTokens(user: { id: string; role: string; phone: string; email?: string | null; twoFaVerified?: boolean }) {
     const accessSecret = this.config.get<string>('JWT_ACCESS_SECRET');
     if (!accessSecret) {
-      throw new Error('JWT_ACCESS_SECRET is not configured');
+      throw new InternalServerErrorException('JWT_ACCESS_SECRET is not configured');
     }
     const refreshSecret = this.config.get<string>('JWT_REFRESH_SECRET');
     if (!refreshSecret) {
-      throw new Error('JWT_REFRESH_SECRET is not configured');
+      throw new InternalServerErrorException('JWT_REFRESH_SECRET is not configured');
     }
     const accessTtl = this.config.get<number>('JWT_ACCESS_TTL') ?? 900;
     const refreshTtl = this.config.get<number>('JWT_REFRESH_TTL') ?? 1209600;
@@ -808,7 +814,7 @@ export class AuthService {
       this.config.get<string>('JWT_REFRESH_SECRET') ??
       this.config.get<string>('JWT_ACCESS_SECRET');
     if (!secret) {
-      throw new Error('SIGNUP_SESSION_SECRET is not configured');
+      throw new InternalServerErrorException('SIGNUP_SESSION_SECRET is not configured');
     }
     return secret;
   }
@@ -852,7 +858,11 @@ export class AuthService {
         secret: this.signupSessionSecret(),
       });
       if (!payload?.sessionId || !payload.phone) {
-        throw new Error('SESSION_INVALID');
+        throw new UnauthorizedException({
+          success: false,
+          error: 'SESSION_EXPIRED',
+          message: 'Signup session expired or invalid',
+        });
       }
       return payload;
     } catch (err) {
@@ -861,6 +871,9 @@ export class AuthService {
         correlationId,
         error: (err as Error)?.message,
       });
+      if (err instanceof UnauthorizedException) {
+        throw err;
+      }
       throw new UnauthorizedException({
         success: false,
         error: 'SESSION_EXPIRED',

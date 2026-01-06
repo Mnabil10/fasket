@@ -24,7 +24,7 @@ All events are delivered as JSON with HMAC-SHA256 signature over `"{timestamp}.{
 
 ## Event payloads
 
-- `order.created` / `order.confirmed` / `order.out_for_delivery` / `order.delivered` / `order.canceled`
+- `order.created` / `order.confirmed` / `order.preparing` / `order.out_for_delivery` / `order.delivered` / `order.canceled`
   - `order_id`, `order_code`, `status`, `status_internal`, `customer_phone`, `total_cents`,
     `payment_method`, `items[] { name, qty }`, `items_summary`, `delivery_zone { id, name }`,
     `eta_minutes`, `estimated_delivery_time`, `driver { id, name, phone }`, `address { label, city, street, building, apartment, zone_id }`
@@ -32,6 +32,11 @@ All events are delivered as JSON with HMAC-SHA256 signature over `"{timestamp}.{
 - `order.status_changed`
   - All `order.*` fields above plus:
   - `from_status`, `to_status`, `from_internal`, `to_internal`, `actor_id`, `history_id`, `changed_at`
+
+- `provider.application_submitted` / `provider.application_approved` / `provider.application_rejected` / `provider.onboarded`
+  - `application_id`, `application_status`, `provider_id`, `provider_status`, `business_name`, `provider_type`, `city`, `region`,
+    `owner_name`, `phone`, `email`, `delivery_mode`, `plan_id`, `plan_code`, `commission_rate_bps`,
+    `submitted_at`, `reviewed_at`, `updated_at`
 
 - `auth.otp.requested`
   - `phone`, `otpId`, `purpose`, `expiresInSeconds`, `channel`, `requestId`

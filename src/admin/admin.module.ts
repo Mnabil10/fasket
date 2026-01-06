@@ -27,6 +27,10 @@ import { AdminPlansController } from './plans.controller';
 import { AdminSubscriptionsController } from './subscriptions.controller';
 import { AdminInvoicesController } from './invoices.controller';
 import { AdminCampaignsController } from './campaigns.controller';
+import { AdminReviewsController } from './reviews.controller';
+import { ReviewsModule } from '../reviews/reviews.module';
+import { AdminProviderApplicationsController } from './provider-applications.controller';
+import { ProvidersModule } from '../providers/providers.module';
 
 @Module({
   controllers: [
@@ -51,6 +55,8 @@ import { AdminCampaignsController } from './campaigns.controller';
     AdminSubscriptionsController,
     AdminInvoicesController,
     AdminCampaignsController,
+    AdminReviewsController,
+    AdminProviderApplicationsController,
   ],
   imports: [
     // Additional modules can be wired here when needed
@@ -59,6 +65,8 @@ import { AdminCampaignsController } from './campaigns.controller';
     OrdersModule,
     DeliveryDriversModule,
     AutomationModule,
+    ReviewsModule,
+    ProvidersModule,
     // ...other modules
   ],
   providers: [AdminService, ProductsBulkService],

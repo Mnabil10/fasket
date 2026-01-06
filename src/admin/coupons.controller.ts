@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Logger, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Logger, NotFoundException, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AdminOnly } from './_admin-guards';
 import { AdminService } from './admin.service';
@@ -62,7 +62,7 @@ export class AdminCouponsController {
     return this.svc.prisma.$transaction(async (tx) => {
       const before = await tx.coupon.findUnique({ where: { id } });
       if (!before) {
-        throw new Error('Coupon not found');
+        throw new NotFoundException('Coupon not found');
       }
       const data: any = { ...dto };
       const suppliedValue = dto.percent ?? dto.value ?? dto.valueCents;

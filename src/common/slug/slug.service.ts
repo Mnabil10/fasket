@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { DomainError, ErrorCode } from '../errors';
 import { slugify } from '../utils/slug.util';
 
 type SupportedModels = 'product' | 'category' | 'provider' | 'branch';
@@ -11,7 +12,7 @@ export class SlugService {
   async generateUniqueSlug(model: SupportedModels, base: string, excludeId?: string) {
     let slug = slugify(base);
     if (!slug) {
-      throw new Error('Unable to generate slug');
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Name or slug is required');
     }
     let counter = 1;
     while (await this.exists(model, slug, excludeId)) {

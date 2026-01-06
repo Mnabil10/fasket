@@ -15,6 +15,7 @@ export enum ProviderTypeDto {
 export enum ProviderStatusDto {
   PENDING = 'PENDING',
   ACTIVE = 'ACTIVE',
+  REJECTED = 'REJECTED',
   SUSPENDED = 'SUSPENDED',
   DISABLED = 'DISABLED',
 }

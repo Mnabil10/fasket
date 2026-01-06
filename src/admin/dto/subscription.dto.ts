@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, IntersectionType, PartialType } from '@nestjs/swagger';
 import { SubscriptionStatus } from '@prisma/client';
 import { Transform } from 'class-transformer';
-import { IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { PaginationDto } from './pagination.dto';
 
 export class CreateSubscriptionDto {
@@ -44,6 +44,12 @@ export class CreateSubscriptionDto {
   @IsOptional()
   @IsDateString()
   canceledAt?: string;
+
+  @ApiPropertyOptional({ description: 'Override commission rate (basis points)' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  commissionRateBpsOverride?: number;
 }
 
 export class UpdateSubscriptionDto extends PartialType(CreateSubscriptionDto) {}
