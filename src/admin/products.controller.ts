@@ -286,6 +286,7 @@ export class AdminProductsController {
       payload.images = this.normalizeImagesInput(image.variants) ?? [];
     }
     const created = await this.svc.prisma.product.create({ data: payload as Prisma.ProductCreateInput });
+    await this.ensureDefaultBranchProduct(created);
     await this.svc.audit.log({
       action: 'product.create',
       entity: 'Product',
@@ -386,6 +387,7 @@ export class AdminProductsController {
       where: { id },
       data: updateData,
     });
+    await this.ensureDefaultBranchProduct(updated);
     if (payload.stock !== undefined && payload.stock !== existing.stock) {
       await this.recordStockChange(id, existing.stock, payload.stock, 'admin.update');
     }
@@ -533,6 +535,28 @@ export class AdminProductsController {
         reason,
         actorId: this.context.get('userId'),
       },
+    });
+  }
+
+  private async ensureDefaultBranchProduct(product: { id: string; providerId?: string | null }) {
+    if (!product?.providerId) return;
+    const branch = await this.svc.prisma.branch.findFirst({
+      where: { providerId: product.providerId, status: 'ACTIVE' },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      select: { id: true, isDefault: true },
+    });
+    if (!branch) {
+      this.logger.warn({
+        msg: 'No active branch found for product',
+        productId: product.id,
+        providerId: product.providerId,
+      });
+      return;
+    }
+    await this.svc.prisma.branchProduct.upsert({
+      where: { branchId_productId: { branchId: branch.id, productId: product.id } },
+      update: {},
+      create: { branchId: branch.id, productId: product.id, isActive: true },
     });
   }
 }

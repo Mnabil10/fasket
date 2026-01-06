@@ -55,10 +55,14 @@ export class ProductsService {
         });
         if (category) where.categoryId = category.id;
       }
-      if (q?.q) {
+      const search = q?.q?.trim();
+      if (search) {
         where.OR = [
-          { name: { contains: q.q, mode: 'insensitive' } },
-          { slug: { contains: q.q, mode: 'insensitive' } },
+          { name: { contains: search, mode: 'insensitive' } },
+          { nameAr: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { descriptionAr: { contains: search, mode: 'insensitive' } },
+          { slug: { contains: search, mode: 'insensitive' } },
         ];
       }
       if (q?.min !== undefined || q?.max !== undefined) {

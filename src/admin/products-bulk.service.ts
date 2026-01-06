@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma, Product, ProductStatus } from '@prisma/client';
 import { Express } from 'express';
 import * as XLSX from 'xlsx';
@@ -90,6 +90,7 @@ class RowError extends Error {
 
 @Injectable()
 export class ProductsBulkService {
+  private readonly logger = new Logger(ProductsBulkService.name);
   private readonly statusSet = new Set<string>(Object.values(ProductStatus));
   private readonly batchSize = Number(process.env.BULK_PRODUCT_BATCH_SIZE || 25);
 
@@ -277,6 +278,7 @@ export class ProductsBulkService {
         where: { id: op.existing.id },
         data: data as Prisma.ProductUncheckedUpdateInput,
       });
+      await this.ensureDefaultBranchProduct(updated.id, updated.providerId);
       if (op.values.stock !== undefined && op.existing.stock !== op.values.stock) {
         await this.recordStockChange(op.existing.id, op.existing.stock, op.values.stock, 'bulk.upload');
       }
@@ -287,6 +289,7 @@ export class ProductsBulkService {
       return { status: 'created' as const };
     }
     const created = await this.prisma.product.create({ data: data as Prisma.ProductUncheckedCreateInput });
+    await this.ensureDefaultBranchProduct(created.id, created.providerId);
     return { status: 'created' as const, productId: created.id };
   }
 
@@ -367,6 +370,24 @@ export class ProductsBulkService {
       if (product.sku) skuMap.set(product.sku, product);
     }
     return product;
+  }
+
+  private async ensureDefaultBranchProduct(productId: string, providerId?: string | null) {
+    if (!providerId) return;
+    const branch = await this.prisma.branch.findFirst({
+      where: { providerId, status: 'ACTIVE' },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      select: { id: true, isDefault: true },
+    });
+    if (!branch) {
+      this.logger.warn({ msg: 'No active branch found for bulk product', productId, providerId });
+      return;
+    }
+    await this.prisma.branchProduct.upsert({
+      where: { branchId_productId: { branchId: branch.id, productId } },
+      update: {},
+      create: { branchId: branch.id, productId, isActive: true },
+    });
   }
 
   private async mapRowToProduct(row: BulkRow, categoryMap: Map<string, string>) {
