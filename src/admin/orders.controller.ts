@@ -40,6 +40,7 @@ export class AdminOrdersController {
   @ApiQuery({ name: 'minTotalCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'driverId', required: false })
+  @ApiQuery({ name: 'hasDriver', required: false, type: Boolean })
   @ApiOkResponse({ description: 'Paginated orders with filters' })
   async list(@CurrentUser() user: CurrentUserPayload, @Query() query: AdminOrderListDto) {
     const providerScope = await this.resolveProviderScope(user);
@@ -65,6 +66,8 @@ export class AdminOrdersController {
     }
     if (query.driverId) {
       where.driverId = query.driverId;
+    } else if (query.hasDriver !== undefined) {
+      where.driverId = query.hasDriver ? { not: null } : null;
     }
     if (providerScope) {
       where.providerId = providerScope;
@@ -127,7 +130,24 @@ export class AdminOrdersController {
   @Get(':id/transitions')
   async getTransitions(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
     await this.assertProviderOrderAccess(user, id);
-    return this.orders.getOrderTransitions(id);
+    const transitions = await this.orders.getOrderTransitions(id);
+    if (user.role !== UserRole.PROVIDER) return transitions;
+    const order = await this.svc.prisma.order.findFirst({
+      where: { id, providerId: await this.resolveProviderScope(user) },
+      select: { status: true, driverId: true },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Order not found', 403);
+    }
+    const blockedStatuses = new Set<OrderStatus>([OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED]);
+    const cancelableStatuses: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PREPARING];
+    const canCancel = cancelableStatuses.includes(order.status as OrderStatus) && !order.driverId;
+    return transitions.filter((t) => {
+      const target = t.to as OrderStatus;
+      if (blockedStatuses.has(target)) return false;
+      if (target === OrderStatus.CANCELED && !canCancel) return false;
+      return true;
+    });
   }
 
   @Get(':id/driver-location')
@@ -146,6 +166,7 @@ export class AdminOrdersController {
   async updateStatus(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     await this.assertProviderOrderAccess(user, id);
     const nextStatus = dto.to as OrderStatus;
+    await this.assertProviderStatusAllowed(user, id, nextStatus);
     const result = await this.orders.updateStatus(id, nextStatus, user.userId, dto.note);
     this.logger.log({ msg: 'Order status updated', orderId: id, to: dto.to, actorId: user.userId });
     return result;
@@ -154,6 +175,7 @@ export class AdminOrdersController {
   @Post(':id/confirm')
   async confirm(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: OrderStatusNoteDto) {
     await this.assertProviderOrderAccess(user, id);
+    await this.assertProviderStatusAllowed(user, id, OrderStatus.CONFIRMED);
     const result = await this.orders.updateStatus(id, OrderStatus.CONFIRMED, user.userId, dto.note);
     this.logger.log({ msg: 'Order confirmed', orderId: id, actorId: user.userId });
     return result;
@@ -162,6 +184,7 @@ export class AdminOrdersController {
   @Post(':id/prepare')
   async prepare(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: OrderStatusNoteDto) {
     await this.assertProviderOrderAccess(user, id);
+    await this.assertProviderStatusAllowed(user, id, OrderStatus.PREPARING);
     const result = await this.orders.updateStatus(id, OrderStatus.PREPARING, user.userId, dto.note);
     this.logger.log({ msg: 'Order preparing', orderId: id, actorId: user.userId });
     return result;
@@ -174,6 +197,7 @@ export class AdminOrdersController {
     @Body() dto: OrderStatusNoteDto,
   ) {
     await this.assertProviderOrderAccess(user, id);
+    await this.assertProviderStatusAllowed(user, id, OrderStatus.OUT_FOR_DELIVERY);
     const result = await this.orders.updateStatus(id, OrderStatus.OUT_FOR_DELIVERY, user.userId, dto.note);
     this.logger.log({ msg: 'Order out for delivery', orderId: id, actorId: user.userId });
     return result;
@@ -182,6 +206,7 @@ export class AdminOrdersController {
   @Post(':id/deliver')
   async deliver(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: OrderStatusNoteDto) {
     await this.assertProviderOrderAccess(user, id);
+    await this.assertProviderStatusAllowed(user, id, OrderStatus.DELIVERED);
     const result = await this.orders.updateStatus(id, OrderStatus.DELIVERED, user.userId, dto.note);
     this.logger.log({ msg: 'Order delivered', orderId: id, actorId: user.userId });
     return result;
@@ -190,6 +215,7 @@ export class AdminOrdersController {
   @Post(':id/cancel')
   async cancel(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: OrderStatusNoteDto) {
     await this.assertProviderOrderAccess(user, id);
+    await this.assertProviderStatusAllowed(user, id, OrderStatus.CANCELED);
     const result = await this.orders.updateStatus(id, OrderStatus.CANCELED, user.userId, dto.note);
     this.logger.log({ msg: 'Order canceled', orderId: id, actorId: user.userId });
     return result;
@@ -234,6 +260,32 @@ export class AdminOrdersController {
     });
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Order not found', 403);
+    }
+  }
+
+  private async assertProviderStatusAllowed(user: CurrentUserPayload, orderId: string, nextStatus: OrderStatus) {
+    if (user.role !== UserRole.PROVIDER) return;
+    const allowed = new Set<OrderStatus>([OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.CANCELED]);
+    if (!allowed.has(nextStatus)) {
+      throw new ForbiddenException('Provider accounts cannot update to this status');
+    }
+    if (nextStatus !== OrderStatus.CANCELED) return;
+    const providerScope = await this.resolveProviderScope(user);
+    if (!providerScope) return;
+    const order = await this.svc.prisma.order.findFirst({
+      where: { id: orderId, providerId: providerScope },
+      select: { status: true, driverId: true },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Order not found', 403);
+    }
+    const status = order.status as OrderStatus;
+    const cancelBlockedStatuses: OrderStatus[] = [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED];
+    if (cancelBlockedStatuses.includes(status)) {
+      throw new ForbiddenException('Provider accounts cannot cancel after driver pickup');
+    }
+    if (order.driverId) {
+      throw new ForbiddenException('Provider accounts cannot cancel once a driver is assigned');
     }
   }
 }

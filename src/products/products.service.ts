@@ -34,6 +34,7 @@ export class ProductsService {
       q.q ?? '',
       q.categoryId ?? '',
       q.categorySlug ?? '',
+      q.providerId ?? '',
       q.min ?? '',
       q.max ?? '',
       q.orderBy ?? '',
@@ -48,6 +49,7 @@ export class ProductsService {
         status: ProductStatus.ACTIVE,
       };
       if (q?.categoryId) where.categoryId = q.categoryId;
+      if (q?.providerId) where.providerId = q.providerId;
       if (q?.categorySlug) {
         const category = await this.prisma.category.findFirst({
           where: { slug: q.categorySlug, deletedAt: null },
@@ -111,6 +113,7 @@ export class ProductsService {
     const cacheKey = this.cache.buildKey(
       'home:best',
       lang ?? 'en',
+      query.providerId ?? '',
       currentPage,
       take,
       query.fromDate ?? '',
@@ -125,10 +128,15 @@ export class ProductsService {
       if (query.toDate) (whereOrder.createdAt as Prisma.DateTimeFilter).lte = new Date(query.toDate);
       whereOrder.status = { in: ['PENDING', 'CONFIRMED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERED'] as any };
 
+      const whereOrderItem: Prisma.OrderItemWhereInput = { order: whereOrder };
+      if (query.providerId) {
+        whereOrderItem.product = { providerId: query.providerId };
+      }
+
       const agg = await this.prisma.orderItem.groupBy({
         by: ['productId'],
         _sum: { qty: true },
-        where: { order: whereOrder },
+        where: whereOrderItem,
         orderBy: { _sum: { qty: query.sort ?? 'desc' } },
         skip: (currentPage - 1) * take,
         take,
@@ -136,7 +144,12 @@ export class ProductsService {
       if (!agg.length) return [];
       const ids = agg.map((a) => a.productId);
       const products = await this.prisma.product.findMany({
-        where: { id: { in: ids }, deletedAt: null, status: ProductStatus.ACTIVE },
+        where: {
+          id: { in: ids },
+          deletedAt: null,
+          status: ProductStatus.ACTIVE,
+          ...(query.providerId ? { providerId: query.providerId } : {}),
+        },
         include: { category: { select: categorySelect } },
       });
       const productMap = new Map(products.map((p) => [p.id, p]));
@@ -154,10 +167,15 @@ export class ProductsService {
     const currentPage = query.page ?? 1;
     const take = query.pageSize ?? 10;
     const lang = query.lang;
-    const cacheKey = this.cache.buildKey('home:hot', lang ?? 'en', currentPage, take);
+    const cacheKey = this.cache.buildKey('home:hot', lang ?? 'en', query.providerId ?? '', currentPage, take);
     return this.cache.wrap(cacheKey, async () => {
       const items = await this.prisma.product.findMany({
-        where: { isHotOffer: true, status: ProductStatus.ACTIVE, deletedAt: null },
+        where: {
+          isHotOffer: true,
+          status: ProductStatus.ACTIVE,
+          deletedAt: null,
+          ...(query.providerId ? { providerId: query.providerId } : {}),
+        },
         include: { category: { select: categorySelect } },
         orderBy: { updatedAt: 'desc' },
         skip: (currentPage - 1) * take,
@@ -187,6 +205,7 @@ export class ProductsService {
       priceCents: product.priceCents,
       salePriceCents: product.salePriceCents,
       stock: product.stock,
+      providerId: product.providerId,
       category: product.category
         ? {
             id: product.category.id,
@@ -213,6 +232,7 @@ export class ProductsService {
       stock: product.stock,
       status: product.status,
       isHotOffer: product.isHotOffer,
+      providerId: product.providerId,
       category: product.category
         ? {
             id: product.category.id,

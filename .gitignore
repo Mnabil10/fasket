@@ -1,7 +1,7 @@
 # Node / Nest artifacts
 node_modules
 dist
-
+docs
 # Environment & local
 .env
 .env.local

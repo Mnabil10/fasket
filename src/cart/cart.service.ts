@@ -102,6 +102,7 @@ type CouponValidationResult =
 export class CartService {
   private readonly defaultProviderId = 'prov_default';
   private readonly defaultBranchId = 'branch_default';
+  private readonly serviceFeeCents = 300;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -464,20 +465,41 @@ export class CartService {
       }),
     );
 
-    const shippingFeeCents = groupResponses.reduce((sum, group) => sum + group.shippingFeeCents, 0);
+    let shippingFeeCents = groupResponses.reduce((sum, group) => sum + group.shippingFeeCents, 0);
+    if (groupResponses.length > 1) {
+      let maxFee = 0;
+      let maxIndex = -1;
+      groupResponses.forEach((group, index) => {
+        if (group.shippingFeeCents > maxFee) {
+          maxFee = group.shippingFeeCents;
+          maxIndex = index;
+        }
+      });
+      groupResponses.forEach((group, index) => {
+        if (index !== maxIndex) {
+          group.shippingFeeCents = 0;
+        }
+      });
+      shippingFeeCents = maxFee;
+    }
+    const serviceFeeCents = groupResponses.length > 0 ? groupResponses.length * this.serviceFeeCents : 0;
     const { discountCents, coupon, couponNotice } = await this.resolveCouponDiscount(
       cart.id,
       couponCode,
       cartSnapshot.subtotalCents,
       couponOverride,
     );
-    const totalCents = Math.max(cartSnapshot.subtotalCents + shippingFeeCents - discountCents, 0);
+    const totalCents = Math.max(
+      cartSnapshot.subtotalCents + shippingFeeCents + serviceFeeCents - discountCents,
+      0,
+    );
     return {
       cartId: cart.id,
       items: cartSnapshot.items,
       groups: groupResponses,
       subtotalCents: cartSnapshot.subtotalCents,
       shippingFeeCents,
+      serviceFeeCents,
       discountCents,
       totalCents,
       coupon,

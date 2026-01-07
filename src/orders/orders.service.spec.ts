@@ -189,3 +189,131 @@ describe('OrdersService status transitions', () => {
     expect(result).toEqual({ id: 'evt1' });
   });
 });
+
+describe('OrdersService.assignDriverToOrder', () => {
+  const buildService = ({
+    order,
+    driver,
+    updated,
+  }: {
+    order: any;
+    driver: any;
+    updated: any;
+  }) => {
+    const tx = {
+      order: {
+        update: jest.fn().mockResolvedValue(updated),
+      },
+    } as any;
+    const prisma = {
+      order: { findUnique: jest.fn().mockResolvedValue(order) },
+      deliveryDriver: { findUnique: jest.fn().mockResolvedValue(driver) },
+      $transaction: jest.fn((cb: any) => cb(tx)),
+    } as any;
+    const audit = { log: jest.fn() } as any;
+    const cache = { buildKey: jest.fn(), del: jest.fn() } as any;
+    const automation = { emit: jest.fn().mockResolvedValue({ id: 'evt1' }), enqueueMany: jest.fn() } as any;
+    const service = new OrdersService(prisma, {} as any, {} as any, audit, cache, automation, {} as any);
+    jest.spyOn(service, 'clearCachesForOrder').mockResolvedValue(undefined);
+    return { service, prisma, tx };
+  };
+
+  it('assigns an active driver and stores assignedAt', async () => {
+    const order = { id: 'o1', userId: 'u1', status: OrderStatus.CONFIRMED, driverId: null };
+    const driver = { id: 'd1', fullName: 'Driver One', phone: '+1', isActive: true, vehicle: null };
+    const updated = {
+      id: 'o1',
+      userId: 'u1',
+      driverAssignedAt: new Date(),
+      driver: { id: driver.id, fullName: driver.fullName, phone: driver.phone, vehicle: null },
+    };
+    const { service, tx } = buildService({ order, driver, updated });
+    await service.assignDriverToOrder('o1', 'd1', 'admin');
+    expect(tx.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'o1' },
+        data: expect.objectContaining({
+          driverId: 'd1',
+          driverAssignedAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it('blocks assignment when status is not eligible', async () => {
+    const order = { id: 'o1', userId: 'u1', status: OrderStatus.PENDING, driverId: null };
+    const driver = { id: 'd1', fullName: 'Driver One', phone: '+1', isActive: true, vehicle: null };
+    const updated = { id: 'o1', userId: 'u1', driverAssignedAt: new Date(), driver: driver };
+    const { service } = buildService({ order, driver, updated });
+    await expect(service.assignDriverToOrder('o1', 'd1', 'admin')).rejects.toMatchObject({
+      code: ErrorCode.ORDER_ASSIGNMENT_NOT_ALLOWED,
+    });
+  });
+});
+
+describe('OrdersService.updateStatus delivery timestamps', () => {
+  const buildService = (order: any) => {
+    const tx = {
+      order: {
+        update: jest.fn().mockResolvedValue(undefined),
+      },
+      orderStatusHistory: {
+        create: jest.fn().mockResolvedValue({ id: 'hist1' }),
+      },
+    } as any;
+    const prisma = {
+      order: { findUnique: jest.fn().mockResolvedValue(order) },
+      allowStatusUpdates: jest.fn((cb: any) => cb()),
+      $transaction: jest.fn((cb: any) => cb(tx)),
+    } as any;
+    const audit = { log: jest.fn() } as any;
+    const cache = { buildKey: jest.fn(), del: jest.fn() } as any;
+    const automation = { emit: jest.fn(), enqueueMany: jest.fn() } as any;
+    const service = new OrdersService(prisma, {} as any, {} as any, audit, cache, automation, {} as any);
+    jest.spyOn(service as any, 'emitOrderStatusAutomationEvent').mockResolvedValue(null);
+    jest.spyOn(service as any, 'emitStatusChanged').mockResolvedValue(null);
+    jest.spyOn(service, 'clearCachesForOrder').mockResolvedValue(undefined);
+    jest.spyOn(service, 'awardLoyaltyForOrder').mockResolvedValue(0);
+    return { service, tx };
+  };
+
+  it('sets outForDeliveryAt when moving to out-for-delivery', async () => {
+    const { service, tx } = buildService({
+      id: 'o1',
+      status: OrderStatus.PREPARING,
+      userId: 'u1',
+      deliveryMode: DeliveryMode.PLATFORM,
+      driverId: 'd1',
+    });
+    await service.updateStatus('o1', OrderStatus.OUT_FOR_DELIVERY, 'driver-1');
+    expect(tx.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'o1' },
+        data: expect.objectContaining({
+          status: OrderStatus.OUT_FOR_DELIVERY,
+          outForDeliveryAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it('sets deliveredAt when moving to delivered', async () => {
+    const { service, tx } = buildService({
+      id: 'o1',
+      status: OrderStatus.OUT_FOR_DELIVERY,
+      userId: 'u1',
+      deliveryMode: DeliveryMode.PLATFORM,
+      driverId: 'd1',
+    });
+    await service.updateStatus('o1', OrderStatus.DELIVERED, 'driver-1');
+    expect(tx.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'o1' },
+        data: expect.objectContaining({
+          status: OrderStatus.DELIVERED,
+          deliveredAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+});

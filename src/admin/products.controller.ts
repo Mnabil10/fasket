@@ -260,6 +260,7 @@ export class AdminProductsController {
   ) {
     const providerScope = await this.resolveProviderScope(user);
     const payload = await this.prepareProductPayload(dto);
+    this.validatePricing(payload);
     if (providerScope) {
       payload.providerId = providerScope;
       if (payload.categoryId) {
@@ -351,6 +352,7 @@ export class AdminProductsController {
     });
     if (!existing) throw new NotFoundException('Product not found');
     const payload = await this.prepareProductPayload(dto, id);
+    this.validatePricing(payload, existing);
     if (providerScope) {
       payload.providerId = providerScope;
       if (payload.categoryId) {
@@ -469,6 +471,20 @@ export class AdminProductsController {
       }
     }
     return data;
+  }
+
+  private validatePricing(payload: Record<string, any>, existing?: { priceCents: number; salePriceCents?: number | null }) {
+    const price = payload.priceCents ?? existing?.priceCents;
+    const sale = payload.salePriceCents ?? existing?.salePriceCents ?? null;
+    if (price !== undefined && price < 0) {
+      throw new BadRequestException('Invalid price');
+    }
+    if (sale !== null && sale !== undefined && price !== undefined && sale >= price) {
+      throw new BadRequestException('Sale price must be lower than price');
+    }
+    if (payload.stock !== undefined && payload.stock < 0) {
+      throw new BadRequestException('Invalid stock');
+    }
   }
 
   private normalizeImagesInput(value: unknown): string[] | undefined {

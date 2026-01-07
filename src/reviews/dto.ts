@@ -87,3 +87,10 @@ export class ReviewModerateDto {
   @IsString()
   moderationNote?: string;
 }
+
+export class ReviewReplyDto {
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  reply!: string;
+}

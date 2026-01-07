@@ -17,6 +17,7 @@ import { AuditLogService } from '../common/audit/audit-log.service';
 import { CacheService } from '../common/cache/cache.service';
 import { AutomationEventsService, AutomationEventRef } from '../automation/automation-events.service';
 import { BillingService } from '../billing/billing.service';
+import { FinanceService } from '../finance/finance.service';
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
@@ -72,6 +73,7 @@ export class OrdersService {
   private readonly receiptTtl = Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60);
   private readonly defaultProviderId = 'prov_default';
   private readonly defaultBranchId = 'branch_default';
+  private readonly serviceFeeCents = 300;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -81,6 +83,7 @@ export class OrdersService {
     private readonly cache: CacheService,
     private readonly automation: AutomationEventsService,
     private readonly billing: BillingService,
+    private readonly finance: FinanceService,
   ) {}
 
   async list(userId: string) {
@@ -251,6 +254,8 @@ export class OrdersService {
     const idempotencyKey = payload.idempotencyKey?.trim() || null;
     const splitPolicy =
       (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
+    const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
+    await this.assertPaymentMethodEnabled(paymentMethod, { userId, idempotencyKey });
     const automationEvents: AutomationEventRef[] = [];
 
     if (idempotencyKey) {
@@ -545,7 +550,6 @@ export class OrdersService {
         const groupEntries = Array.from(grouped.entries());
         const discountByBranch = this.allocateDiscounts(discountCents, groupEntries);
 
-        let shippingFeeCentsTotal = 0;
         const shippingByBranch = new Map<
           string,
           { fee: number; distanceKm: number | null; ratePerKmCents: number | null; etaMinutes?: number | null; estimatedDeliveryTime?: string | null }
@@ -556,7 +560,6 @@ export class OrdersService {
             addressLat: address.lat ?? null,
             addressLng: address.lng ?? null,
           });
-          shippingFeeCentsTotal += quote.shippingFeeCents;
           shippingByBranch.set(branchId, {
             fee: quote.shippingFeeCents,
             distanceKm: distancePricingEnabled ? quote.distanceKm : null,
@@ -566,7 +569,13 @@ export class OrdersService {
           });
         }
 
-        const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
+        const branchIds = groupEntries.map(([branchId]) => branchId);
+        const { totalFeeCents: shippingFeeCentsTotal, primaryBranchId } = this.resolveCombinedShippingFee(
+          branchIds,
+          shippingByBranch,
+        );
+        const serviceFeeCentsTotal = this.calculateServiceFeeCents(groupEntries.length);
+
         const orderGroup = await tx.orderGroup.create({
           data: {
             userId,
@@ -579,7 +588,7 @@ export class OrdersService {
             subtotalCents: subtotalCentsTotal,
             shippingFeeCents: shippingFeeCentsTotal,
             discountCents,
-            totalCents: subtotalCentsTotal + shippingFeeCentsTotal - discountCents,
+            totalCents: subtotalCentsTotal + shippingFeeCentsTotal + serviceFeeCentsTotal - discountCents,
           },
         });
 
@@ -593,10 +602,12 @@ export class OrdersService {
             DeliveryMode.PLATFORM;
           const deliveryDistanceKm = distancePricingEnabled ? shippingQuote?.distanceKm ?? null : null;
           const deliveryRatePerKmCents = distancePricingEnabled ? shippingQuote?.ratePerKmCents ?? null : null;
-          const shippingFeeCents = shippingQuote?.fee ?? 0;
+          const shippingFeeCents =
+            groupEntries.length > 1 ? (branchId === primaryBranchId ? shippingFeeCentsTotal : 0) : shippingQuote?.fee ?? 0;
           const deliveryEtaMinutes = shippingQuote?.etaMinutes ?? null;
           const estimatedDeliveryTime = shippingQuote?.estimatedDeliveryTime ?? null;
-          const totalCents = group.subtotalCents + shippingFeeCents - discountForBranch;
+          const totalCents =
+            group.subtotalCents + shippingFeeCents + this.serviceFeeCents - discountForBranch;
 
           const code = await this.generateOrderCode(tx);
           const order = await tx.order.create({
@@ -696,9 +707,7 @@ export class OrdersService {
             }
           }
 
-          await this.billing.recordCommissionForOrder(order.id, tx);
-
-          const eventPayload = await this.buildOrderEventPayload(order.id, tx);
+            const eventPayload = await this.buildOrderEventPayload(order.id, tx);
           const createdEvent = await this.automation.emit('order.created', eventPayload, {
             tx,
             dedupeKey: `order:${order.id}:${OrderStatus.PENDING}:created`,
@@ -720,13 +729,19 @@ export class OrdersService {
               data: {
                 loyaltyDiscountCents: redemption.discountCents,
                 loyaltyPointsUsed: redemption.pointsUsed,
-                totalCents: Math.max(subtotalCentsTotal + shippingFeeCentsTotal - discountCents - redemption.discountCents, 0),
+                totalCents: Math.max(
+                  subtotalCentsTotal + shippingFeeCentsTotal + serviceFeeCentsTotal - discountCents - redemption.discountCents,
+                  0,
+                ),
               },
             });
             await tx.orderGroup.update({
               where: { id: orderGroup.id },
               data: {
-                totalCents: Math.max(subtotalCentsTotal + shippingFeeCentsTotal - discountCents - redemption.discountCents, 0),
+                totalCents: Math.max(
+                  subtotalCentsTotal + shippingFeeCentsTotal + serviceFeeCentsTotal - discountCents - redemption.discountCents,
+                  0,
+                ),
               },
             });
           }
@@ -762,6 +777,19 @@ export class OrdersService {
         skippedBranchIds: result.skippedBranchIds,
       };
     } catch (error) {
+      const err = error as Error;
+      const errorCode = error instanceof DomainError ? error.code : (error as any)?.code;
+      this.logger.error(
+        {
+          msg: 'Checkout failed',
+          userId,
+          idempotencyKey,
+          paymentMethod,
+          errorCode,
+          errorMessage: err?.message,
+        },
+        err?.stack,
+      );
       if (idempotencyKey && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         const existingGroup = await this.prisma.orderGroup.findFirst({
           where: { userId, idempotencyKey },
@@ -852,12 +880,30 @@ export class OrdersService {
       });
 
       const subtotalCents = groups.reduce((sum, group) => sum + group.subtotalCents, 0);
-      const shippingFeeCents = groups.reduce((sum, group) => sum + group.shippingFeeCents, 0);
-      const totalCents = Math.max(subtotalCents + shippingFeeCents, 0);
+      let shippingFeeCents = groups.reduce((sum, group) => sum + group.shippingFeeCents, 0);
+      if (groups.length > 1) {
+        let maxFee = 0;
+        let maxIndex = -1;
+        groups.forEach((group, index) => {
+          if (group.shippingFeeCents > maxFee) {
+            maxFee = group.shippingFeeCents;
+            maxIndex = index;
+          }
+        });
+        groups.forEach((group, index) => {
+          if (index !== maxIndex) {
+            group.shippingFeeCents = 0;
+          }
+        });
+        shippingFeeCents = maxFee;
+      }
+      const serviceFeeCents = groups.length > 0 ? groups.length * this.serviceFeeCents : 0;
+      const totalCents = Math.max(subtotalCents + shippingFeeCents + serviceFeeCents, 0);
 
       return {
         subtotalCents,
         shippingFeeCents,
+        serviceFeeCents,
         totalCents,
         groups,
         skippedBranchIds: Array.from(branchErrors.keys()),
@@ -876,6 +922,8 @@ export class OrdersService {
     if (!guestName || !guestPhone) {
       throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Guest name and phone are required');
     }
+    const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
+    await this.assertPaymentMethodEnabled(paymentMethod, { guestPhone, idempotencyKey });
     if (
       distancePricingEnabled &&
       (!Number.isFinite(address.lat) || !Number.isFinite(address.lng))
@@ -951,12 +999,14 @@ export class OrdersService {
           (sum, [, group]) => sum + group.subtotalCents,
           0,
         );
-        const shippingFeeCentsTotal = groupEntries.reduce((sum, [branchId]) => {
-          return sum + (shippingByBranch.get(branchId)?.fee ?? 0);
-        }, 0);
+        const branchIds = groupEntries.map(([branchId]) => branchId);
+        const { totalFeeCents: shippingFeeCentsTotal, primaryBranchId } = this.resolveCombinedShippingFee(
+          branchIds,
+          shippingByBranch,
+        );
+        const serviceFeeCentsTotal = this.calculateServiceFeeCents(groupEntries.length);
 
         const guestAddress = this.buildGuestAddress(address);
-        const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
         const orderGroup = await tx.orderGroup.create({
           data: {
             userId: null,
@@ -973,7 +1023,7 @@ export class OrdersService {
             subtotalCents: subtotalCentsTotal,
             shippingFeeCents: shippingFeeCentsTotal,
             discountCents: 0,
-            totalCents: subtotalCentsTotal + shippingFeeCentsTotal,
+            totalCents: subtotalCentsTotal + shippingFeeCentsTotal + serviceFeeCentsTotal,
           },
         });
 
@@ -986,10 +1036,11 @@ export class OrdersService {
             DeliveryMode.PLATFORM;
           const deliveryDistanceKm = distancePricingEnabled ? shippingQuote?.distanceKm ?? null : null;
           const deliveryRatePerKmCents = distancePricingEnabled ? shippingQuote?.ratePerKmCents ?? null : null;
-          const shippingFeeCents = shippingQuote?.fee ?? 0;
+          const shippingFeeCents =
+            groupEntries.length > 1 ? (branchId === primaryBranchId ? shippingFeeCentsTotal : 0) : shippingQuote?.fee ?? 0;
           const deliveryEtaMinutes = shippingQuote?.etaMinutes ?? null;
           const estimatedDeliveryTime = shippingQuote?.estimatedDeliveryTime ?? null;
-          const totalCents = group.subtotalCents + shippingFeeCents;
+          const totalCents = group.subtotalCents + shippingFeeCents + this.serviceFeeCents;
 
           const code = await this.generateOrderCode(tx);
           const order = await tx.order.create({
@@ -1094,9 +1145,7 @@ export class OrdersService {
             }
           }
 
-          await this.billing.recordCommissionForOrder(order.id, tx);
-
-          const eventPayload = await this.buildOrderEventPayload(order.id, tx);
+            const eventPayload = await this.buildOrderEventPayload(order.id, tx);
           const createdEvent = await this.automation.emit('order.created', eventPayload, {
             tx,
             dedupeKey: `order:${order.id}:${OrderStatus.PENDING}:created`,
@@ -1124,6 +1173,19 @@ export class OrdersService {
         skippedBranchIds: result.skippedBranchIds,
       };
     } catch (error) {
+      const err = error as Error;
+      const errorCode = error instanceof DomainError ? error.code : (error as any)?.code;
+      this.logger.error(
+        {
+          msg: 'Guest checkout failed',
+          guestPhone,
+          idempotencyKey,
+          paymentMethod,
+          errorCode,
+          errorMessage: err?.message,
+        },
+        err?.stack,
+      );
       if (idempotencyKey && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         const existingGroup = await this.prisma.orderGroup.findFirst({
           where: { idempotencyKey, userId: null, guestPhone },
@@ -1454,12 +1516,19 @@ export class OrdersService {
     if (!group) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order group not found', 404);
     }
+    const serviceFeeCents = this.inferServiceFeeCents({
+      subtotalCents: group.subtotalCents,
+      shippingFeeCents: group.shippingFeeCents,
+      discountCents: group.discountCents,
+      totalCents: group.totalCents,
+    });
     return {
       orderGroupId: group.id,
       code: group.code,
       status: group.status,
       subtotalCents: group.subtotalCents,
       shippingFeeCents: group.shippingFeeCents,
+      serviceFeeCents,
       discountCents: group.discountCents,
       totalCents: group.totalCents,
       createdAt: group.createdAt,
@@ -1469,6 +1538,12 @@ export class OrdersService {
         status: this.toPublicStatus(order.status),
         subtotalCents: order.subtotalCents,
         shippingFeeCents: order.shippingFeeCents,
+        serviceFeeCents: this.inferServiceFeeCents({
+          subtotalCents: order.subtotalCents,
+          shippingFeeCents: order.shippingFeeCents ?? 0,
+          discountCents: order.discountCents ?? 0,
+          totalCents: order.totalCents,
+        }),
         discountCents: order.discountCents,
         totalCents: order.totalCents,
         providerId: order.providerId,
@@ -1585,81 +1660,106 @@ export class OrdersService {
   }
 
   async assignDriverToOrder(orderId: string, driverId: string, actorId?: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      select: { id: true, userId: true, status: true, driverId: true },
-    });
-    if (!order) {
-      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
-    }
-    if (order.status === OrderStatus.DELIVERED || order.status === OrderStatus.CANCELED) {
-      throw new DomainError(ErrorCode.ORDER_ALREADY_COMPLETED, 'Cannot assign driver to completed order');
-    }
-
-    const driver = await this.prisma.deliveryDriver.findUnique({
-      where: { id: driverId },
-      select: {
-        id: true,
-        fullName: true,
-        phone: true,
-        isActive: true,
-        vehicle: { select: { type: true, plateNumber: true } },
-      },
-    });
-    if (!driver) {
-      throw new DomainError(ErrorCode.DRIVER_NOT_FOUND, 'Driver not found');
-    }
-    if (!driver.isActive) {
-      throw new DomainError(ErrorCode.DRIVER_INACTIVE, 'Driver is inactive');
-    }
-
-    const automationEvents: AutomationEventRef[] = [];
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const next = await tx.order.update({
+    try {
+      const order = await this.prisma.order.findUnique({
         where: { id: orderId },
-        data: { driverId: driver.id, driverAssignedAt: new Date() },
+        select: { id: true, userId: true, status: true, driverId: true },
+      });
+      if (!order) {
+        throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+      }
+      if (order.status === OrderStatus.DELIVERED || order.status === OrderStatus.CANCELED) {
+        throw new DomainError(ErrorCode.ORDER_ALREADY_COMPLETED, 'Cannot assign driver to completed order');
+      }
+      const assignableStatuses: OrderStatus[] = [OrderStatus.CONFIRMED, OrderStatus.PREPARING];
+      if (!assignableStatuses.includes(order.status)) {
+        throw new DomainError(
+          ErrorCode.ORDER_ASSIGNMENT_NOT_ALLOWED,
+          'Driver assignment is only allowed for confirmed or preparing orders',
+        );
+      }
+
+      const driver = await this.prisma.deliveryDriver.findUnique({
+        where: { id: driverId },
         select: {
           id: true,
-          userId: true,
-          driverAssignedAt: true,
-          driver: {
-            select: { id: true, fullName: true, phone: true, vehicle: { select: { type: true, plateNumber: true } } },
-          },
+          fullName: true,
+          phone: true,
+          isActive: true,
+          vehicle: { select: { type: true, plateNumber: true } },
         },
       });
+      if (!driver) {
+        throw new DomainError(ErrorCode.DRIVER_NOT_FOUND, 'Driver not found');
+      }
+      if (!driver.isActive) {
+        throw new DomainError(ErrorCode.DRIVER_INACTIVE, 'Driver is inactive');
+      }
 
-      const payload = await this.buildOrderEventPayload(orderId, tx);
-      const event = await this.automation.emit('order.driver_assigned', payload, {
-        tx,
-        dedupeKey: `order:${orderId}:driver:${driver.id}`,
+      const automationEvents: AutomationEventRef[] = [];
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const next = await tx.order.update({
+          where: { id: orderId },
+          data: { driverId: driver.id, driverAssignedAt: new Date() },
+          select: {
+            id: true,
+            userId: true,
+            driverAssignedAt: true,
+            driver: {
+              select: { id: true, fullName: true, phone: true, vehicle: { select: { type: true, plateNumber: true } } },
+            },
+          },
+        });
+
+        const payload = await this.buildOrderEventPayload(orderId, tx);
+        const event = await this.automation.emit('order.driver_assigned', payload, {
+          tx,
+          dedupeKey: `order:${orderId}:driver:${driver.id}`,
+        });
+        automationEvents.push(event);
+        return next;
       });
-      automationEvents.push(event);
-      return next;
-    });
 
-    await this.audit.log({
-      action: 'order.assign-driver',
-      entity: 'order',
-      entityId: orderId,
-      actorId,
-      before: { driverId: order.driverId ?? null },
-      after: { driverId: driver.id },
-    });
+      await this.audit.log({
+        action: 'order.assign-driver',
+        entity: 'order',
+        entityId: orderId,
+        actorId,
+        before: { driverId: order.driverId ?? null },
+        after: { driverId: driver.id },
+      });
+      this.logger.log({ msg: 'Driver assigned to order', orderId, driverId: driver.id, actorId });
 
-    await this.automation.enqueueMany(automationEvents);
-    await this.clearCachesForOrder(orderId, updated.userId);
+      await this.automation.enqueueMany(automationEvents);
+      await this.clearCachesForOrder(orderId, updated.userId);
 
-    return {
-      orderId: updated.id,
-      driverAssignedAt: updated.driverAssignedAt,
-      driver: {
-        id: updated.driver?.id ?? driver.id,
-        fullName: updated.driver?.fullName ?? driver.fullName,
-        phone: updated.driver?.phone ?? driver.phone,
-        vehicleType: updated.driver?.vehicle?.type,
-        plateNumber: updated.driver?.vehicle?.plateNumber,
-      },
-    };
+      return {
+        orderId: updated.id,
+        driverAssignedAt: updated.driverAssignedAt,
+        driver: {
+          id: updated.driver?.id ?? driver.id,
+          fullName: updated.driver?.fullName ?? driver.fullName,
+          phone: updated.driver?.phone ?? driver.phone,
+          vehicleType: updated.driver?.vehicle?.type,
+          plateNumber: updated.driver?.vehicle?.plateNumber,
+        },
+      };
+    } catch (error) {
+      const err = error as Error;
+      const errorCode = error instanceof DomainError ? error.code : (error as any)?.code;
+      this.logger.error(
+        {
+          msg: 'Driver assignment failed',
+          orderId,
+          driverId,
+          actorId,
+          errorCode,
+          errorMessage: err?.message,
+        },
+        err?.stack,
+      );
+      throw error;
+    }
   }
 
   async clearCachesForOrder(orderId: string, userId?: string | null) {
@@ -1694,12 +1794,19 @@ export class OrdersService {
     if (!group) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order group not found', 404);
     }
+    const serviceFeeCents = this.inferServiceFeeCents({
+      subtotalCents: group.subtotalCents,
+      shippingFeeCents: group.shippingFeeCents,
+      discountCents: group.discountCents,
+      totalCents: group.totalCents,
+    });
     return {
       orderGroupId: group.id,
       code: group.code,
       status: group.status,
       subtotalCents: group.subtotalCents,
       shippingFeeCents: group.shippingFeeCents,
+      serviceFeeCents,
       discountCents: group.discountCents,
       totalCents: group.totalCents,
       createdAt: group.createdAt,
@@ -1709,6 +1816,12 @@ export class OrdersService {
         status: this.toPublicStatus(order.status),
         subtotalCents: order.subtotalCents,
         shippingFeeCents: order.shippingFeeCents,
+        serviceFeeCents: this.inferServiceFeeCents({
+          subtotalCents: order.subtotalCents,
+          shippingFeeCents: order.shippingFeeCents ?? 0,
+          discountCents: order.discountCents ?? 0,
+          totalCents: order.totalCents,
+        }),
         discountCents: order.discountCents,
         totalCents: order.totalCents,
         providerId: order.providerId,
@@ -1752,6 +1865,46 @@ export class OrdersService {
       remaining -= share;
     });
     return allocations;
+  }
+
+  private calculateServiceFeeCents(groupCount: number) {
+    return groupCount > 0 ? groupCount * this.serviceFeeCents : 0;
+  }
+
+  private resolveCombinedShippingFee(
+    branchIds: string[],
+    shippingByBranch: Map<string, { fee: number }>,
+  ) {
+    let sum = 0;
+    let maxFee = 0;
+    let primaryBranchId: string | null = null;
+    for (const branchId of branchIds) {
+      const fee = shippingByBranch.get(branchId)?.fee ?? 0;
+      sum += fee;
+      if (fee > maxFee || primaryBranchId === null) {
+        maxFee = fee;
+        primaryBranchId = branchId;
+      }
+    }
+    if (branchIds.length > 1) {
+      return { totalFeeCents: maxFee, primaryBranchId };
+    }
+    return { totalFeeCents: sum, primaryBranchId };
+  }
+
+  private inferServiceFeeCents(params: {
+    subtotalCents: number;
+    shippingFeeCents: number;
+    discountCents: number;
+    loyaltyDiscountCents?: number | null;
+    totalCents: number;
+  }) {
+    const base =
+      params.subtotalCents +
+      params.shippingFeeCents -
+      params.discountCents -
+      (params.loyaltyDiscountCents ?? 0);
+    return Math.max(params.totalCents - base, 0);
   }
 
   async reorder(userId: string, fromOrderId: string) {
@@ -1911,7 +2064,7 @@ export class OrdersService {
         estimatedDeliveryTime = quote.estimatedDeliveryTime ?? null;
       }
 
-      const totalCents = subtotalCents + shippingFeeCents;
+      const totalCents = subtotalCents + shippingFeeCents + this.serviceFeeCents;
       const code = await this.generateOrderCode(tx);
       const order = await tx.order.create({
         data: {
@@ -1950,8 +2103,6 @@ export class OrdersService {
           },
         },
       });
-
-      await this.billing.recordCommissionForOrder(order.id, tx);
 
       const eventPayload = await this.buildOrderEventPayload(order.id, tx);
       const createdEvent = await this.automation.emit('order.created', eventPayload, {
@@ -2059,12 +2210,20 @@ export class OrdersService {
     const automationEvents: AutomationEventRef[] = [];
     await this.prisma.allowStatusUpdates(async () =>
       this.prisma.$transaction(async (tx) => {
-        await tx.order.update({ where: { id: orderId }, data: { status: nextStatus } });
+        const statusUpdate: Prisma.OrderUpdateInput = { status: nextStatus };
+        if (nextStatus === OrderStatus.OUT_FOR_DELIVERY) {
+          statusUpdate.outForDeliveryAt = new Date();
+        }
+        if (nextStatus === OrderStatus.DELIVERED) {
+          statusUpdate.deliveredAt = new Date();
+        }
+        await tx.order.update({ where: { id: orderId }, data: statusUpdate });
         const history = await tx.orderStatusHistory.create({
           data: { orderId, from: before.status as any, to: nextStatus as any, note: note ?? undefined, actorId },
         });
         if (nextStatus === OrderStatus.DELIVERED) {
           loyaltyEarned = await this.awardLoyaltyForOrder(orderId, tx);
+          await this.finance.settleOrder(orderId, tx);
         }
         const automationEvent = await this.emitOrderStatusAutomationEvent(
           tx,
@@ -2307,6 +2466,25 @@ export class OrdersService {
     return status.replace(/_/g, ' ');
   }
 
+  private async assertPaymentMethodEnabled(
+    paymentMethod: PaymentMethodDto,
+    context: { userId?: string | null; guestPhone?: string | null; idempotencyKey?: string | null } = {},
+  ) {
+    const settings = await this.settings.getSettings();
+    const payment = (settings.payment ?? {}) as Record<string, any>;
+    const codEnabled = payment?.cashOnDelivery?.enabled !== false;
+    const cardEnabled = payment?.creditCards?.enabled === true;
+
+    if (paymentMethod === PaymentMethodDto.COD && !codEnabled) {
+      this.logger.warn({ msg: 'Payment method disabled', paymentMethod, ...context });
+      throw new DomainError(ErrorCode.PAYMENT_METHOD_DISABLED, 'Cash on delivery is currently disabled');
+    }
+    if (paymentMethod === PaymentMethodDto.CARD && !cardEnabled) {
+      this.logger.warn({ msg: 'Payment method disabled', paymentMethod, ...context });
+      throw new DomainError(ErrorCode.PAYMENT_METHOD_DISABLED, 'Card payments are currently disabled');
+    }
+  }
+
   private findLatestDriverLocation(driverId: string | null) {
     if (!driverId) return null;
     return this.prisma.deliveryDriverLocation.findFirst({
@@ -2495,6 +2673,13 @@ export class OrdersService {
 
   private toOrderDetail(order: OrderWithRelations, zone?: any) {
     const guestAddress = (order as any).guestAddress as Record<string, any> | null | undefined;
+    const serviceFeeCents = this.inferServiceFeeCents({
+      subtotalCents: order.subtotalCents,
+      shippingFeeCents: order.shippingFeeCents ?? 0,
+      discountCents: order.discountCents ?? 0,
+      loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
+      totalCents: order.totalCents ?? 0,
+    });
     return {
       id: order.id,
       code: order.code ?? order.id,
@@ -2503,6 +2688,7 @@ export class OrdersService {
       paymentMethod: order.paymentMethod,
       subtotalCents: order.subtotalCents,
       shippingFeeCents: order.shippingFeeCents,
+      serviceFeeCents,
       discountCents: order.discountCents,
       loyaltyDiscountCents: order.loyaltyDiscountCents,
       loyaltyPointsUsed: order.loyaltyPointsUsed,

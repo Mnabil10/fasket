@@ -33,6 +33,7 @@ import { BillingModule } from './billing/billing.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ProvidersModule } from './providers/providers.module';
 import { ReviewsModule } from './reviews/reviews.module';
+import { FinanceModule } from './finance/finance.module';
 
 @Module({
   imports: [
@@ -136,6 +137,7 @@ import { ReviewsModule } from './reviews/reviews.module';
     AnalyticsModule,
     ProvidersModule,
     ReviewsModule,
+    FinanceModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

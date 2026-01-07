@@ -262,6 +262,18 @@ export class AuthService {
         throw new DomainError(ErrorCode.AUTH_ACCOUNT_DISABLED, 'Provider account pending approval');
       }
     }
+    if (user.role === UserRole.DRIVER) {
+      const driver = await this.prisma.deliveryDriver.findFirst({
+        where: { userId: user.id },
+        select: { id: true, isActive: true },
+      });
+      if (!driver) {
+        throw new DomainError(ErrorCode.AUTH_ACCOUNT_DISABLED, 'Driver account is not linked');
+      }
+      if (!driver.isActive) {
+        throw new DomainError(ErrorCode.AUTH_ACCOUNT_DISABLED, 'Driver account is disabled');
+      }
+    }
 
     await this.rateLimiter.reset(identifier, metadata.ip);
     const tokens = await this.issueTokens({
@@ -275,6 +287,40 @@ export class AuthService {
     await this.logSession(user.id, metadata);
     this.logger.log({ msg: 'Login success', userId: user.id, ip: metadata.ip });
     return { user: safeUser, ...tokens };
+  }
+
+  async loginWithOtp(
+    input: { phone: string; otp: string },
+    metadata: { ip?: string; userAgent?: string },
+  ) {
+    const rawPhone = input.phone?.trim();
+    const otp = input.otp?.trim();
+    if (!rawPhone || !otp) {
+      throw new BadRequestException('Phone and OTP are required');
+    }
+    const normalizedPhone = normalizePhoneToE164(rawPhone);
+    const user = await this.prisma.user.findUnique({
+      where: { phone: normalizedPhone },
+    });
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const requireAdmin2fa = (this.config.get<string>('AUTH_REQUIRE_ADMIN_2FA') ?? 'false') === 'true';
+    if (user.role === UserRole.ADMIN && requireAdmin2fa) {
+      throw new DomainError(ErrorCode.AUTH_2FA_REQUIRED, 'Two-factor authentication required');
+    }
+
+    const result = await this.otp.verifyOtpLegacy(normalizedPhone, 'LOGIN', otp, metadata.ip);
+    const tokens = (result as any)?.tokens;
+    if (!tokens?.accessToken) {
+      throw new UnauthorizedException('Invalid OTP');
+    }
+
+    const safeUser = { id: user.id, name: user.name, phone: user.phone, email: user.email, role: user.role };
+    await this.logSession(user.id, metadata);
+    this.logger.log({ msg: 'Login OTP success', userId: user.id, ip: metadata.ip });
+    return { user: safeUser, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
   }
 
   async signupStart(
@@ -709,6 +755,15 @@ export class AuthService {
       });
       if (!membership || membership.provider.status !== ProviderStatus.ACTIVE) {
         throw new UnauthorizedException('Provider account disabled');
+      }
+    }
+    if (user.role === UserRole.DRIVER) {
+      const driver = await this.prisma.deliveryDriver.findFirst({
+        where: { userId: sub },
+        select: { id: true, isActive: true },
+      });
+      if (!driver || !driver.isActive) {
+        throw new UnauthorizedException('Driver account disabled');
       }
     }
     if (previousJti) {

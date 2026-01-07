@@ -168,6 +168,7 @@ export class AdminDeliveryDriversController {
       nationalId: body.nationalId,
       nationalIdImageUrl: body.nationalIdImageUrl,
       isActive: body.isActive,
+      loginPassword: body.loginPassword,
       ...(vehicle ? { vehicle } : {}),
     };
   }

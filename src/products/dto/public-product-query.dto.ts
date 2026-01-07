@@ -20,6 +20,11 @@ export class PublicProductListDto extends PaginationDto {
   @IsString()
   categorySlug?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by provider id' })
+  @IsOptional()
+  @IsString()
+  providerId?: string;
+
   @ApiPropertyOptional({ description: 'Minimum price (EGP)', type: 'number' })
   @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
   @IsOptional()
@@ -59,6 +64,11 @@ export class PublicProductFeedDto extends PaginationDto {
     return normalizeLang(value);
   })
   lang?: 'en' | 'ar';
+
+  @ApiPropertyOptional({ description: 'Filter by provider id' })
+  @IsOptional()
+  @IsString()
+  providerId?: string;
 
   @ApiPropertyOptional({ description: 'ISO date start bound for best-selling analytics', type: String })
   @IsOptional()

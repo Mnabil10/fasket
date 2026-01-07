@@ -22,6 +22,17 @@ Expected:
 - Delivery fee and ETA are shown.
 - Order is created successfully and appears in Orders list.
 
+### C2b - Map-based location capture
+Steps:
+1) Open Addresses and create a new address.
+2) Use the map to drop a pin and save the address.
+3) Edit the address and use "Use current location" to update the pin.
+4) Place a guest order and set the location pin on checkout.
+Expected:
+- Latitude/longitude are stored with the address.
+- Guest checkout accepts GPS + pin-drop coordinates without errors.
+- Delivery pricing recalculates when location changes.
+
 ### C3 - Track order status through full lifecycle
 Steps:
 1) Open Orders list and select the latest order.
@@ -50,7 +61,8 @@ Expected:
 Steps:
 1) Attempt checkout with an empty cart.
 2) Try selecting a zone that is inactive.
-3) Trigger an API failure (disable network) and retry.
+3) Disable Cash on Delivery in admin settings and attempt checkout.
+4) Trigger an API failure (disable network) and retry.
 Expected:
 - Clear error messages are shown.
 - Retry controls are visible.
@@ -83,6 +95,18 @@ Steps:
 Expected:
 - Driver assignment succeeds for active orders.
 - Completed orders show a clear restriction message.
+
+## Driver
+
+### D1 - Driver portal order flow
+Steps:
+1) Log in to the Driver Portal with a driver account.
+2) Confirm assigned orders are visible (active statuses only).
+3) Start delivery on a PREPARING order.
+4) Mark the order as DELIVERED.
+Expected:
+- Status updates succeed and appear in the customer timeline.
+- Delivered orders move out of the active list by default.
 
 ### A4 - Reviews moderation
 Steps:

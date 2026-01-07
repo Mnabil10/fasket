@@ -11,11 +11,13 @@
   - Ops: `ORDER_STUCK_*` thresholds, `SENTRY_DSN` (optional but recommended).
 - Storage is ready (local uploads or S3 bucket).
 - Bootstrap defaults are seeded (run once): `node scripts/bootstrap-marketplace.js`.
+- Optional demo data seed (providers/products/drivers): `node scripts/seed-demo.js`.
 - Admin user account exists and can log into Admin Web.
 
 ## Backoffice / Admin setup (ops tasks)
 - Delivery zones are created and marked Active (zone name, fee, ETA, min order).
 - Delivery pricing is verified (platform fees, distance pricing if enabled).
+- Payment methods are configured (Cash on Delivery toggle at minimum).
 - Subscription plans are configured (monthly/yearly, commission rates, trial days).
 - Provider onboarding is ready:
   - Decide which categories to accept (supermarket, restaurant, pharmacy).
@@ -24,11 +26,13 @@
   - Supermarket, Restaurant, Pharmacy.
   - Each provider has one active branch with a delivery mode and location.
 - Products and categories are uploaded for each provider (with images).
+- Driver accounts are created, active, and have login credentials.
 - Reviews moderation policy is defined (who approves/rejects and how fast).
 - Automation Outbox is monitored (Admin > Automation Outbox page visible).
 
 ## Manual customer flows to test
-- New user: register/login with OTP, add address, place COD order, track, and submit a review.
+- New user: register/login with OTP, add address via map pin, place COD order, track, and submit a review.
+- Guest user: add items, set map location on checkout, place guest order.
 - Returning user: re-open app after token expiration and re-authenticate smoothly.
 - Edge cases:
   - No providers in the user area.
@@ -42,6 +46,10 @@
 - Provider status changes (ACTIVE, SUSPENDED, DISABLED) take effect in customer app.
 - Orders can move through the full lifecycle without invalid transitions.
 
+## Manual driver flows to test
+- Driver logs in to Driver Portal and sees assigned orders.
+- Driver marks order OUT_FOR_DELIVERY and DELIVERED successfully.
+
 ## Monitoring & logs
 - API health check: `GET /api/v1/system/health` returns success.
 - Automation Outbox shows event status and retries.
@@ -53,3 +61,5 @@
 - Backend tests: `cd Backend && npm run test`
 - Admin build: `cd admin-web && npm run build`
 - Mobile build (web): `cd mobileapp && npm run build`
+
+For deployment sequencing and rollback steps, see `Backend/docs/ROLLOUT_ROLLBACK.md`.

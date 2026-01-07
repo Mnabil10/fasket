@@ -18,6 +18,11 @@ export class PublicCategoryListDto extends PaginationDto {
   @IsString()
   q?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by provider id' })
+  @IsOptional()
+  @IsString()
+  providerId?: string;
+
   @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'asc' })
   @IsOptional()
   @IsIn(['asc', 'desc'])

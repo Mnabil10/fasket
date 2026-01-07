@@ -6,6 +6,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import {
   LoginDto,
+  LoginOtpDto,
   RefreshDto,
   RegisterDto,
   ProviderRegisterDto,
@@ -114,6 +115,15 @@ export class AuthController {
   @Throttle({ authLogin: {} })
   login(@Body() dto: LoginDto, @Req() req: Request) {
     return this.service.login(dto, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+  }
+
+  @Post('login-otp')
+  @Throttle({ otpVerify: {} })
+  loginOtp(@Body() dto: LoginOtpDto, @Req() req: Request) {
+    return this.service.loginWithOtp(dto, {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });

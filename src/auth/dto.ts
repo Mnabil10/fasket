@@ -128,6 +128,19 @@ export class LoginDto {
   otp?: string;
 }
 
+export class LoginOtpDto {
+  @ApiProperty({ description: 'Phone number for OTP login', example: '+201234567890' })
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  phone!: string;
+
+  @ApiProperty({ description: 'OTP code', example: '123456' })
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  @Matches(/^\d{4,8}$/, { message: 'Invalid OTP format' })
+  otp!: string;
+}
+
 export class RefreshDto {
   @ApiProperty({ required: false })
   @Transform(({ value }) => cleanNullableString(value))

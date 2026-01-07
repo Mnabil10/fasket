@@ -9,6 +9,8 @@ import { UploadsService } from './uploads.service';
 import { AdminOnly } from '../admin/_admin-guards';
 import { Express } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 
 @ApiTags('Admin/Uploads')
 @ApiBearerAuth()
@@ -31,6 +33,48 @@ export class UploadsController {
     if (!filename || !contentType) throw new BadRequestException('filename and contentType are required');
     return this.uploads.createSignedUrl({ filename, contentType });
   }
+
+  @Post()
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+      required: ['file'],
+    },
+  })
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: Number(process.env.UPLOAD_MAX_BYTES || 10 * 1024 * 1024) },
+    fileFilter: (req, file, cb) => {
+      const allowed = String(process.env.UPLOAD_ALLOWED_MIME || 'image/jpeg,image/png,image/webp')
+        .split(',').map(s => s.trim());
+      if (!allowed.includes(file.mimetype)) return cb(new BadRequestException('Unsupported content type') as any, false);
+      cb(null, true);
+    },
+  }))
+  @ApiOkResponse({ description: 'Uploads a file and returns its public URL' })
+  async multipart(
+    @UploadedFile(new ParseFilePipe({
+      validators: [
+        new MaxFileSizeValidator({ maxSize: Number(process.env.UPLOAD_MAX_BYTES || 10 * 1024 * 1024) }),
+        new FileTypeValidator({ fileType: /(image\/jpeg|image\/png|image\/webp)$/ })
+      ],
+    })) file: Express.Multer.File,
+  ) {
+    return this.uploads.uploadBuffer(file);
+  }
+}
+
+@ApiTags('Provider/Uploads')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('PROVIDER')
+@Controller({ path: 'provider/uploads', version: ['1'] })
+export class ProviderUploadsController {
+  constructor(private readonly uploads: UploadsService) {}
 
   @Post()
   @ApiConsumes('multipart/form-data')

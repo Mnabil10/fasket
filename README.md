@@ -26,6 +26,25 @@ npm run start:dev
 - Redis (for cache + auth rate limiting)
 - Optional S3-compatible storage when `UPLOADS_DRIVER=s3`
 
+## Demo seed data
+
+Run `node scripts/seed-demo.js` to create a demo admin, provider owner, driver, customer, delivery zone, branch, and products.
+
+Default demo credentials (local/dev only):
+- Admin: `+20-100-000-0000` / `Admin123!`
+- Vendor: `+20-100-000-0001` / `Vendor123!`
+- Driver: `+20-100-000-0002` / `Driver123!`
+- Driver 2: `+20-100-000-0004` / `Driver456!`
+- Customer: `+20-100-000-0003` / `Customer123!`
+
+Vendor portal (Admin Web):
+- Sign in with the vendor credentials above.
+- OTP login: `POST /api/v1/auth/request-otp` then `POST /api/v1/auth/login-otp`.
+
+Driver portal (web):
+- Open the Admin Web app and sign in with a driver account.
+- Driver users land on `/driver-orders` to view assigned orders and update status.
+
 ## Configuration
 
 All tunables live in `.env`. Key additions:
@@ -75,6 +94,12 @@ Admin status endpoints:
 - `POST /api/v1/admin/orders/:id/cancel`
 - `PATCH /api/v1/admin/orders/:id/status` (fallback; still validated)
 
+Driver status endpoints:
+
+- `GET /api/v1/driver/orders` (defaults to active orders)
+- `POST /api/v1/driver/orders/:id/start-delivery`
+- `POST /api/v1/driver/orders/:id/complete`
+
 Automation events emitted for order updates:
 
 - `order.created`, `order.confirmed`, `order.preparing`, `order.out_for_delivery`, `order.delivered`, `order.canceled`
@@ -85,6 +110,14 @@ See `Backend/AUTOMATION_CONTRACT.md` for payload details and webhook signing.
 ## Provider Onboarding
 
 Provider application lifecycle, approval flow, and plan/commission rules are documented in `Backend/PROVIDER_ONBOARDING.md`.
+
+## Finance & Vendor Docs
+
+- `Backend/docs/COMMISSION_ENGINE.md`
+- `Backend/docs/PAYOUTS_WORKFLOW.md`
+- `Backend/docs/VENDOR_PORTAL_GUIDE.md`
+- `Backend/docs/API_VENDOR_PORTAL.md`
+- `Backend/docs/API_FINANCE.md`
 
 ## Bulk Upload Contracts
 

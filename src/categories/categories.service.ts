@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
 import { CacheService } from '../common/cache/cache.service';
@@ -18,6 +19,7 @@ export class CategoriesService {
       'categories:active',
       lang,
       query.q ?? '',
+      query.providerId ?? '',
       query.page,
       query.pageSize,
       sort,
@@ -31,6 +33,15 @@ export class CategoriesService {
             { name: { contains: query.q, mode: 'insensitive' } },
             { slug: { contains: query.q, mode: 'insensitive' } },
           ];
+        }
+        if (query.providerId) {
+          where.products = {
+            some: {
+              providerId: query.providerId,
+              status: ProductStatus.ACTIVE,
+              deletedAt: null,
+            },
+          };
         }
         const [items, total] = await this.prisma.$transaction([
           this.prisma.category.findMany({

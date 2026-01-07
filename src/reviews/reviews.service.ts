@@ -3,7 +3,7 @@ import { OrderStatus, Prisma, ReviewStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { DomainError, ErrorCode } from '../common/errors';
 import { AuditLogService } from '../common/audit/audit-log.service';
-import { AdminReviewListDto, CreateReviewDto, ReviewListDto, ReviewModerateDto, UpdateReviewDto } from './dto';
+import { AdminReviewListDto, CreateReviewDto, ReviewListDto, ReviewModerateDto, ReviewReplyDto, UpdateReviewDto } from './dto';
 
 @Injectable()
 export class ReviewsService {
@@ -204,6 +204,48 @@ export class ReviewsService {
       await this.recalculateProviderRating(review.providerId);
     }
 
+    return updated;
+  }
+
+  async replyToReview(userId: string, reviewId: string, dto: ReviewReplyDto) {
+    const membership = await this.prisma.providerUser.findFirst({
+      where: { userId },
+      include: { provider: { select: { id: true, status: true } } },
+    });
+    if (!membership?.provider || membership.provider.status !== 'ACTIVE') {
+      throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Provider not active', 403);
+    }
+
+    const review = await this.prisma.review.findFirst({
+      where: { id: reviewId, providerId: membership.provider.id },
+    });
+    if (!review) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Review not found', 404);
+    }
+    if (review.status !== ReviewStatus.APPROVED) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Review is not published yet', 400);
+    }
+    if (review.reply) {
+      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Review already has a reply', 400);
+    }
+
+    const updated = await this.prisma.review.update({
+      where: { id: reviewId },
+      data: {
+        reply: dto.reply.trim(),
+        replyAt: new Date(),
+        replyById: userId,
+      },
+    });
+
+    await this.audit.log({
+      action: 'review.reply',
+      entity: 'Review',
+      entityId: reviewId,
+      before: review,
+      after: updated,
+      actorId: userId,
+    });
     return updated;
   }
 

@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsOptional, IsString, Matches, ValidateNested } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, Matches, MinLength, ValidateNested } from 'class-validator';
 
 const toBoolean = (value: unknown) => {
   if (value === undefined || value === null) return undefined;
@@ -56,6 +56,12 @@ export class CreateDriverDto {
   @Transform(({ value }) => toBoolean(value))
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Optional login password for driver portal' })
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  loginPassword?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
