@@ -1,7 +1,8 @@
-import { Body, Controller, ForbiddenException, Get, Headers, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Header, Headers, Post, Query, Req } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
+import { SkipResponseWrapper } from '../../common/decorators/skip-response-wrapper.decorator';
 import { WhatsappWebhookService } from './whatsapp-webhook.service';
 
 @ApiTags('Webhooks')
@@ -10,6 +11,8 @@ export class WhatsappWebhookController {
   constructor(private readonly webhook: WhatsappWebhookService) {}
 
   @Get()
+  @Header('Content-Type', 'text/plain')
+  @SkipResponseWrapper()
   verify(
     @Query('hub.mode') mode?: string,
     @Query('hub.verify_token') token?: string,
