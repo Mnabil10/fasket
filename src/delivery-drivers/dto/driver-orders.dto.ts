@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { OrderStatus } from '@prisma/client';
+import { DeliveryFailureReason, OrderStatus } from '@prisma/client';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -22,6 +22,17 @@ export class DriverOrderStatusDto {
 }
 
 export class DriverOrderActionDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class DriverOrderFailureDto {
+  @ApiProperty({ enum: DeliveryFailureReason })
+  @IsEnum(DeliveryFailureReason)
+  reason!: DeliveryFailureReason;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

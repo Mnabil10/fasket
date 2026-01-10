@@ -116,7 +116,7 @@ export class OrdersStuckWatcher implements OnModuleInit, OnModuleDestroy {
 
   private toPublicStatus(
     status: OrderStatus,
-  ): 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELED' {
+  ): 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'OUT_FOR_DELIVERY' | 'DELIVERY_FAILED' | 'DELIVERED' | 'CANCELED' {
     switch (status) {
       case OrderStatus.CONFIRMED:
         return 'CONFIRMED';
@@ -124,6 +124,8 @@ export class OrdersStuckWatcher implements OnModuleInit, OnModuleDestroy {
         return 'PREPARING';
       case OrderStatus.OUT_FOR_DELIVERY:
         return 'OUT_FOR_DELIVERY';
+      case OrderStatus.DELIVERY_FAILED:
+        return 'DELIVERY_FAILED';
       case OrderStatus.DELIVERED:
         return 'DELIVERED';
       case OrderStatus.CANCELED:

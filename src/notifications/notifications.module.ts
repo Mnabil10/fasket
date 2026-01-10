@@ -6,6 +6,7 @@ import { NotificationsService } from './notifications.service';
 import { NotificationsController } from './notifications.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { NotificationsProcessor } from './notifications.processor';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
 
 // Ensure .env is loaded before evaluating the flag
 dotenv.config();
@@ -63,6 +64,7 @@ const queueProviders = redisEnabled
 @Module({
   imports: [
     PrismaModule,
+    WhatsappModule,
     ...queueImports,
   ],
   providers: [NotificationsService, ...queueProviders],

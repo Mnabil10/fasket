@@ -97,15 +97,16 @@ export class AuthService {
   }
 
   async register(input: { name: string; phone: string; email?: string; password: string }) {
+    const normalizedPhone = normalizePhoneToE164(input.phone);
     const normalizedEmail = this.normalizeEmail(input.email);
-    const or: any[] = [{ phone: input.phone }];
+    const or: any[] = [{ phone: normalizedPhone }];
     if (normalizedEmail) or.push({ email: normalizedEmail });
     const exists = await this.prisma.user.findFirst({ where: { OR: or } });
     if (exists) throw new BadRequestException('User already exists');
 
     const hash = await bcrypt.hash(input.password, this.bcryptRounds());
     const user = await this.prisma.user.create({
-      data: { name: input.name, phone: input.phone, email: normalizedEmail, password: hash },
+      data: { name: input.name, phone: normalizedPhone, email: normalizedEmail, password: hash },
       select: { id: true, name: true, phone: true, email: true, role: true },
     });
     const tokens = await this.issueTokens({
@@ -131,8 +132,9 @@ export class AuthService {
     branchCity?: string;
     branchRegion?: string;
   }) {
+    const normalizedPhone = normalizePhoneToE164(input.phone);
     const normalizedEmail = this.normalizeEmail(input.email);
-    const or: any[] = [{ phone: input.phone }];
+    const or: any[] = [{ phone: normalizedPhone }];
     if (normalizedEmail) or.push({ email: normalizedEmail });
     const exists = await this.prisma.user.findFirst({ where: { OR: or } });
     if (exists) throw new BadRequestException('User already exists');
@@ -147,7 +149,7 @@ export class AuthService {
       const user = await tx.user.create({
         data: {
           name: input.name.trim(),
-          phone: input.phone,
+          phone: normalizedPhone,
           email: normalizedEmail,
           password: passwordHash,
           role: UserRole.PROVIDER,
@@ -164,7 +166,7 @@ export class AuthService {
           status: ProviderStatus.PENDING,
           deliveryMode: DeliveryMode.PLATFORM,
           contactEmail: normalizedEmail ?? undefined,
-          contactPhone: input.phone,
+          contactPhone: normalizedPhone,
         },
       });
 
@@ -210,10 +212,17 @@ export class AuthService {
     }
     await this.rateLimiter.ensureCanAttempt(identifier, metadata.ip);
     const normalizedEmail = this.normalizeEmail(identifier);
+    let normalizedPhone: string | null = null;
+    try {
+      normalizedPhone = normalizePhoneToE164(identifier);
+    } catch {
+      normalizedPhone = null;
+    }
     const user = await this.prisma.user.findFirst({
       where: {
         OR: [
           { phone: identifier },
+          ...(normalizedPhone && normalizedPhone !== identifier ? [{ phone: normalizedPhone }] : []),
           { email: identifier },
           ...(normalizedEmail && normalizedEmail !== identifier ? [{ email: normalizedEmail }] : []),
         ],

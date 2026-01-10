@@ -1,12 +1,14 @@
-import { DeliveryMode, OrderStatus } from '@prisma/client';
+import { DeliveryFailureReason, DeliveryMode, OrderStatus } from '@prisma/client';
 import { ErrorCode } from '../common/errors/error-codes';
 import { OrdersService } from './orders.service';
+import { PaymentMethodDto } from './dto';
 
 describe('OrdersService.awardLoyaltyForOrder', () => {
   const mockAudit = { log: jest.fn() } as any;
   const mockCache = {} as any;
   const mockAutomation = { emit: jest.fn(), enqueueMany: jest.fn() } as any;
   const mockBilling = { voidCommissionForOrder: jest.fn() } as any;
+  const mockFinance = {} as any;
 
   const baseConfig = {
     enabled: true,
@@ -56,7 +58,17 @@ describe('OrdersService.awardLoyaltyForOrder', () => {
       awardPoints: jest.fn().mockResolvedValue(awardPointsReturn),
     } as any;
 
-    const service = new OrdersService(prisma, settings, loyalty, mockAudit, mockCache, mockAutomation, mockBilling);
+    const service = new OrdersService(
+      prisma,
+      settings,
+      loyalty,
+      mockAudit,
+      mockCache,
+      mockAutomation,
+      mockBilling,
+      mockFinance,
+      {} as any,
+    );
     return { service, prisma, tx, settings, loyalty };
   };
 
@@ -116,6 +128,8 @@ describe('OrdersService status transitions', () => {
       { log: jest.fn() } as any,
       {} as any,
       { emit: jest.fn(), enqueueMany: jest.fn() } as any,
+      {} as any,
+      {} as any,
       {} as any,
     );
     return { service, prisma };
@@ -190,6 +204,249 @@ describe('OrdersService status transitions', () => {
   });
 });
 
+describe('OrdersService.create delivery terms', () => {
+  const buildService = () => {
+    const prisma = {
+      orderGroup: { findFirst: jest.fn() },
+    } as any;
+    const service = new OrdersService(
+      prisma,
+      {} as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      {} as any,
+      { emit: jest.fn(), enqueueMany: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { service, prisma };
+  };
+
+  it('rejects orders without delivery terms acceptance', async () => {
+    const { service } = buildService();
+    await expect(
+      service.create('user-1', {
+        addressId: 'addr-1',
+        paymentMethod: PaymentMethodDto.COD,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.DELIVERY_TERMS_NOT_ACCEPTED });
+  });
+
+  it('allows orders when delivery terms are accepted', async () => {
+    const { service, prisma } = buildService();
+    jest.spyOn(service as any, 'assertPaymentMethodEnabled').mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'getOrderGroupSummary').mockResolvedValue({ orderGroupId: 'group-1' } as any);
+    prisma.orderGroup.findFirst.mockResolvedValue({ id: 'group-1' });
+
+    const result = await service.create('user-1', {
+      addressId: 'addr-1',
+      paymentMethod: PaymentMethodDto.COD,
+      idempotencyKey: 'idempotent-1',
+      deliveryTermsAccepted: true,
+    });
+
+    expect(result).toEqual({ orderGroupId: 'group-1' });
+  });
+});
+
+describe('OrdersService.computeGroupTotals', () => {
+  const buildService = () => {
+    const service = new OrdersService(
+      {} as any,
+      {} as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      {} as any,
+      { emit: jest.fn(), enqueueMany: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return service;
+  };
+
+  it('charges delivery fee once and service fee per provider', () => {
+    const service = buildService();
+    const totals = (service as any).computeGroupTotals([
+      {
+        status: OrderStatus.PENDING,
+        subtotalCents: 2000,
+        shippingFeeCents: 1200,
+        serviceFeeCents: 300,
+        discountCents: 0,
+        totalCents: 3500,
+      },
+      {
+        status: OrderStatus.CONFIRMED,
+        subtotalCents: 1500,
+        shippingFeeCents: 0,
+        serviceFeeCents: 300,
+        discountCents: 0,
+        totalCents: 1800,
+      },
+      {
+        status: OrderStatus.CANCELED,
+        subtotalCents: 500,
+        shippingFeeCents: 700,
+        serviceFeeCents: 300,
+        discountCents: 0,
+        totalCents: 1500,
+      },
+    ]);
+
+    expect(totals).toEqual({
+      subtotalCents: 3500,
+      shippingFeeCents: 1200,
+      serviceFeeCents: 600,
+      discountCents: 0,
+      totalCents: 5300,
+    });
+  });
+});
+
+describe('OrdersService.cancelOrderGroup', () => {
+  const buildService = () => {
+    const prisma = {
+      orderGroup: { findFirst: jest.fn(), update: jest.fn() },
+    } as any;
+    const service = new OrdersService(
+      prisma,
+      {} as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      {} as any,
+      { emit: jest.fn(), enqueueMany: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { service, prisma };
+  };
+
+  it('cancels eligible suborders and reports blocked providers', async () => {
+    const { service, prisma } = buildService();
+    prisma.orderGroup.findFirst
+      .mockResolvedValueOnce({
+        id: 'group-1',
+        orders: [
+          {
+            id: 'order-1',
+            status: OrderStatus.PENDING,
+            providerId: 'prov-1',
+            provider: { name: 'Provider One' },
+          },
+          {
+            id: 'order-2',
+            status: OrderStatus.PREPARING,
+            providerId: 'prov-2',
+            provider: { name: 'Provider Two' },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        id: 'group-1',
+        orders: [
+          {
+            id: 'order-1',
+            status: OrderStatus.CANCELED,
+            subtotalCents: 0,
+            shippingFeeCents: 0,
+            serviceFeeCents: 0,
+            discountCents: 0,
+            totalCents: 0,
+          },
+          {
+            id: 'order-2',
+            status: OrderStatus.PREPARING,
+            subtotalCents: 1000,
+            shippingFeeCents: 0,
+            serviceFeeCents: 300,
+            discountCents: 0,
+            totalCents: 1300,
+          },
+        ],
+      });
+    jest.spyOn(service, 'cancelOrder').mockResolvedValue({} as any);
+
+    const result = await service.cancelOrderGroup('user-1', 'group-1');
+
+    expect(service.cancelOrder).toHaveBeenCalledWith('user-1', 'order-1');
+    expect(result.cancelledProviders).toEqual([
+      { orderId: 'order-1', providerId: 'prov-1', providerName: 'Provider One' },
+    ]);
+    expect(result.blockedProviders).toEqual([
+      { orderId: 'order-2', providerId: 'prov-2', providerName: 'Provider Two', status: 'PREPARING' },
+    ]);
+  });
+});
+
+describe('OrdersService.refreshOrderGroupTotals', () => {
+  const buildService = () => {
+    const prisma = {
+      orderGroup: { findUnique: jest.fn(), update: jest.fn() },
+      order: { update: jest.fn() },
+    } as any;
+    const service = new OrdersService(
+      prisma,
+      {} as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      {} as any,
+      { emit: jest.fn(), enqueueMany: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { service, prisma };
+  };
+
+  it('reassigns delivery fee when the primary order is canceled', async () => {
+    const { service, prisma } = buildService();
+    prisma.orderGroup.findUnique.mockResolvedValue({
+      id: 'group-1',
+      shippingFeeCents: 1200,
+      orders: [
+        {
+          id: 'order-1',
+          status: OrderStatus.CANCELED,
+          subtotalCents: 2000,
+          shippingFeeCents: 1200,
+          serviceFeeCents: 300,
+          discountCents: 0,
+          totalCents: 3500,
+        },
+        {
+          id: 'order-2',
+          status: OrderStatus.CONFIRMED,
+          subtotalCents: 1500,
+          shippingFeeCents: 0,
+          serviceFeeCents: 300,
+          discountCents: 0,
+          totalCents: 1800,
+        },
+      ],
+    });
+
+    await (service as any).refreshOrderGroupTotals('group-1', prisma);
+
+    expect(prisma.order.update).toHaveBeenCalledWith({
+      where: { id: 'order-2' },
+      data: { shippingFeeCents: 1200, totalCents: 3000 },
+    });
+    expect(prisma.orderGroup.update).toHaveBeenCalledWith({
+      where: { id: 'group-1' },
+      data: {
+        subtotalCents: 1500,
+        shippingFeeCents: 1200,
+        serviceFeeCents: 300,
+        discountCents: 0,
+        totalCents: 3000,
+      },
+    });
+  });
+});
+
 describe('OrdersService.assignDriverToOrder', () => {
   const buildService = ({
     order,
@@ -213,7 +470,18 @@ describe('OrdersService.assignDriverToOrder', () => {
     const audit = { log: jest.fn() } as any;
     const cache = { buildKey: jest.fn(), del: jest.fn() } as any;
     const automation = { emit: jest.fn().mockResolvedValue({ id: 'evt1' }), enqueueMany: jest.fn() } as any;
-    const service = new OrdersService(prisma, {} as any, {} as any, audit, cache, automation, {} as any);
+    const service = new OrdersService(
+      prisma,
+      {} as any,
+      {} as any,
+      audit,
+      cache,
+      automation,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    jest.spyOn(service as any, 'buildOrderEventPayload').mockResolvedValue({ orderId: 'o1' });
     jest.spyOn(service, 'clearCachesForOrder').mockResolvedValue(undefined);
     return { service, prisma, tx };
   };
@@ -269,7 +537,18 @@ describe('OrdersService.updateStatus delivery timestamps', () => {
     const audit = { log: jest.fn() } as any;
     const cache = { buildKey: jest.fn(), del: jest.fn() } as any;
     const automation = { emit: jest.fn(), enqueueMany: jest.fn() } as any;
-    const service = new OrdersService(prisma, {} as any, {} as any, audit, cache, automation, {} as any);
+    const finance = { settleOrder: jest.fn() } as any;
+    const service = new OrdersService(
+      prisma,
+      {} as any,
+      {} as any,
+      audit,
+      cache,
+      automation,
+      {} as any,
+      finance,
+      {} as any,
+    );
     jest.spyOn(service as any, 'emitOrderStatusAutomationEvent').mockResolvedValue(null);
     jest.spyOn(service as any, 'emitStatusChanged').mockResolvedValue(null);
     jest.spyOn(service, 'clearCachesForOrder').mockResolvedValue(undefined);
@@ -312,6 +591,51 @@ describe('OrdersService.updateStatus delivery timestamps', () => {
         data: expect.objectContaining({
           status: OrderStatus.DELIVERED,
           deliveredAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it('stores delivery failure metadata and clears it on retry', async () => {
+    const { service, tx } = buildService({
+      id: 'o1',
+      status: OrderStatus.OUT_FOR_DELIVERY,
+      userId: 'u1',
+      deliveryMode: DeliveryMode.PLATFORM,
+      driverId: 'd1',
+    });
+    await service.updateStatus('o1', OrderStatus.DELIVERY_FAILED, 'driver-1', 'no response', {
+      deliveryFailedReason: DeliveryFailureReason.NO_ANSWER,
+      deliveryFailedNote: 'no response',
+    });
+    expect(tx.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'o1' },
+        data: expect.objectContaining({
+          status: OrderStatus.DELIVERY_FAILED,
+          deliveryFailedAt: expect.any(Date),
+          deliveryFailedReason: DeliveryFailureReason.NO_ANSWER,
+          deliveryFailedNote: 'no response',
+        }),
+      }),
+    );
+
+    const { service: retryService, tx: retryTx } = buildService({
+      id: 'o1',
+      status: OrderStatus.DELIVERY_FAILED,
+      userId: 'u1',
+      deliveryMode: DeliveryMode.PLATFORM,
+      driverId: 'd1',
+    });
+    await retryService.updateStatus('o1', OrderStatus.PREPARING, 'admin');
+    expect(retryTx.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'o1' },
+        data: expect.objectContaining({
+          status: OrderStatus.PREPARING,
+          deliveryFailedAt: null,
+          deliveryFailedReason: null,
+          deliveryFailedNote: null,
         }),
       }),
     );

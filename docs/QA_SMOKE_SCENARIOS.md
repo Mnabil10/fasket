@@ -16,10 +16,11 @@ Expected:
 Steps:
 1) Add a new address with delivery zone, street, and notes.
 2) Browse providers, open a provider, add items to cart.
-3) Proceed to checkout and place a Cash on Delivery order.
+3) Proceed to checkout, accept the delivery terms, and place a Cash on Delivery order.
 Expected:
 - Address saved and marked as default if it is the first address.
 - Delivery fee and ETA are shown.
+- Delivery terms acceptance is required before placing the order.
 - Order is created successfully and appears in Orders list.
 
 ### C2b - Map-based location capture

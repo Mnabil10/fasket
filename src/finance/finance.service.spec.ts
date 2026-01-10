@@ -28,6 +28,7 @@ describe('calculateOrderFinancials', () => {
       order: {
         subtotalCents: 10000,
         shippingFeeCents: 1000,
+        serviceFeeCents: 0,
         discountCents: 1000,
         loyaltyDiscountCents: 0,
         totalCents: 10000,
@@ -44,12 +45,34 @@ describe('calculateOrderFinancials', () => {
     expect(result.platformRevenueCents).toBe(1180);
   });
 
+  it('adds service fee to platform revenue', () => {
+    const result = calculateOrderFinancials({
+      order: {
+        subtotalCents: 10000,
+        shippingFeeCents: 0,
+        serviceFeeCents: 300,
+        discountCents: 0,
+        loyaltyDiscountCents: 0,
+        totalCents: 10300,
+        paymentMethod: PaymentMethod.COD,
+      },
+      items: [{ categoryId: null, qty: 1, priceCents: 10000 }],
+      planRateBps: 200,
+      baseConfig,
+      categoryOverrides: new Map(),
+    });
+
+    expect(result.serviceFeeCents).toBe(300);
+    expect(result.platformRevenueCents).toBe(500);
+  });
+
   it('skips commission for subscription-only mode', () => {
     const config = { ...baseConfig, mode: CommissionMode.SUBSCRIPTION_ONLY };
     const result = calculateOrderFinancials({
       order: {
         subtotalCents: 10000,
         shippingFeeCents: 0,
+        serviceFeeCents: 0,
         discountCents: 0,
         loyaltyDiscountCents: 0,
         totalCents: 10000,
@@ -69,6 +92,7 @@ describe('calculateOrderFinancials', () => {
       order: {
         subtotalCents: 10000,
         shippingFeeCents: 0,
+        serviceFeeCents: 0,
         discountCents: 0,
         loyaltyDiscountCents: 0,
         totalCents: 10000,
@@ -88,6 +112,7 @@ describe('calculateOrderFinancials', () => {
       order: {
         subtotalCents: 10000,
         shippingFeeCents: 0,
+        serviceFeeCents: 0,
         discountCents: 0,
         loyaltyDiscountCents: 0,
         totalCents: 10000,
@@ -107,6 +132,7 @@ describe('calculateOrderFinancials', () => {
       order: {
         subtotalCents: 10000,
         shippingFeeCents: 0,
+        serviceFeeCents: 0,
         discountCents: 1000,
         loyaltyDiscountCents: 0,
         totalCents: 9000,
@@ -132,6 +158,7 @@ describe('calculateOrderFinancials', () => {
       order: {
         subtotalCents: 10000,
         shippingFeeCents: 1000,
+        serviceFeeCents: 0,
         discountCents: 0,
         loyaltyDiscountCents: 0,
         totalCents: 11000,
@@ -153,6 +180,7 @@ describe('calculateOrderFinancials', () => {
       order: {
         subtotalCents: 10000,
         shippingFeeCents: 0,
+        serviceFeeCents: 0,
         discountCents: 0,
         loyaltyDiscountCents: 0,
         totalCents: 10000,
@@ -178,9 +206,10 @@ describe('FinanceService.settleOrder', () => {
           status: 'DELIVERED',
           subtotalCents: 10000,
           shippingFeeCents: 1000,
+          serviceFeeCents: 300,
           discountCents: 0,
           loyaltyDiscountCents: 0,
-          totalCents: 11000,
+          totalCents: 11300,
           paymentMethod: PaymentMethod.COD,
           items: [{ qty: 1, priceSnapshotCents: 10000, product: { categoryId: null } }],
         }),
@@ -198,7 +227,14 @@ describe('FinanceService.settleOrder', () => {
     const service = new FinanceService(prisma, configs as CommissionConfigService);
     await service.settleOrder('order-1');
 
-    expect(prisma.orderFinancials.create).toHaveBeenCalled();
+    expect(prisma.orderFinancials.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          serviceFeeCents: 300,
+          platformRevenueCents: 1500,
+        }),
+      }),
+    );
     expect(prisma.transactionLedger.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ type: 'ORDER_SETTLEMENT', amountCents: 9800 }),
@@ -219,6 +255,7 @@ describe('FinanceService.settleOrder', () => {
           status: 'DELIVERED',
           subtotalCents: 10000,
           shippingFeeCents: 0,
+          serviceFeeCents: 0,
           discountCents: 0,
           loyaltyDiscountCents: 0,
           totalCents: 10000,

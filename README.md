@@ -31,11 +31,12 @@ npm run start:dev
 Run `node scripts/seed-demo.js` to create a demo admin, provider owner, driver, customer, delivery zone, branch, and products.
 
 Default demo credentials (local/dev only):
-- Admin: `+20-100-000-0000` / `Admin123!`
-- Vendor: `+20-100-000-0001` / `Vendor123!`
-- Driver: `+20-100-000-0002` / `Driver123!`
-- Driver 2: `+20-100-000-0004` / `Driver456!`
-- Customer: `+20-100-000-0003` / `Customer123!`
+- Phone numbers are stored in E.164 format (example: `+201000000000`).
+- Admin: `+201000000000` / `Admin123!`
+- Vendor: `+201000000001` / `Vendor123!`
+- Driver: `+201000000002` / `Driver123!`
+- Driver 2: `+201000000004` / `Driver456!`
+- Customer: `+201000000003` / `Customer123!`
 
 Vendor portal (Admin Web):
 - Sign in with the vendor credentials above.
@@ -52,7 +53,7 @@ All tunables live in `.env`. Key additions:
 | Variable | Description |
 | --- | --- |
 | `API_PREFIX` | Base REST prefix (`api`). Do **not** include `/v1`; versioning is added automatically. |
-| `ENFORCE_HTTPS` | `true` to reject non-HTTPS requests (useful behind load balancers). |
+| `ENFORCE_HTTPS` | `true` to reject non-HTTPS requests (defaults to enforced in production). |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated origins (`regex:` supported). |
 | `REDIS_URL` / `CACHE_*_TTL` | Redis connection + TTLs for different caches. |
 | `AUTH_BRUTE_*` | Threshold + TTL for login attempt limiter. |
@@ -84,6 +85,7 @@ Transition rules:
 - `OUT_FOR_DELIVERY` -> `DELIVERED` | `CANCELED`
 
 Platform delivery requires a driver assignment before moving to `OUT_FOR_DELIVERY`.
+Checkout requests must include `deliveryTermsAccepted=true`.
 
 Admin status endpoints:
 

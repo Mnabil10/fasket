@@ -282,7 +282,7 @@ export class DeliveryDriversService {
 
   async recordLocation(driverId: string, dto: DriverLocationDto) {
     await this.ensureDriver(driverId);
-    let orderId: string | null = dto.orderId ?? null;
+    const orderId: string | null = dto.orderId ?? null;
     if (orderId) {
       const order = await this.prisma.order.findUnique({
         where: { id: orderId },

@@ -27,7 +27,7 @@ describe('DriverOrdersController', () => {
     expect(where).toEqual(
       expect.objectContaining({
         driverId: 'driver-1',
-        status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELED] },
+        status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELED, OrderStatus.DELIVERY_FAILED] },
       }),
     );
   });

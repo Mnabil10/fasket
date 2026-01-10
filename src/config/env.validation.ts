@@ -26,6 +26,7 @@ const baseSchema = z.object({
   OTP_MAX_PER_DAY: z.coerce.number().int().positive().optional(),
   OTP_PER_IP_LIMIT: z.coerce.number().int().positive().default(20),
   RESET_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  PASSWORD_RESET_URL_BASE: z.string().optional(),
 
   RATE_LIMIT_TTL: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
@@ -93,6 +94,15 @@ const baseSchema = z.object({
   N8N_SEND_TELEGRAM_OTP_URL: z.string().url().optional(),
   N8N_SECRET: z.string().optional(),
 
+  WHATSAPP_PROVIDER: z.enum(['mock', 'meta']).default('mock'),
+  WHATSAPP_ACCESS_TOKEN: z.string().optional(),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+  WHATSAPP_WEBHOOK_SECRET: z.string().optional(),
+  WHATSAPP_API_VERSION: z.string().optional(),
+  WHATSAPP_API_BASE_URL: z.string().url().optional(),
+  WHATSAPP_DEFAULT_LANGUAGE: z.enum(['en', 'ar']).optional(),
+
   SENTRY_DSN: z.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().optional(),
   SENTRY_PROFILES_SAMPLE_RATE: z.coerce.number().optional(),
@@ -132,6 +142,14 @@ export function validateEnv(config: Record<string, unknown>) {
         code: 'custom',
         message: 'AUTOMATION_WEBHOOK_SECRET is required in production',
       });
+    }
+    if (env.WHATSAPP_PROVIDER === 'meta') {
+      if (!env.WHATSAPP_ACCESS_TOKEN) {
+        ctx.addIssue({ code: 'custom', message: 'WHATSAPP_ACCESS_TOKEN is required when WHATSAPP_PROVIDER=meta' });
+      }
+      if (!env.WHATSAPP_PHONE_NUMBER_ID) {
+        ctx.addIssue({ code: 'custom', message: 'WHATSAPP_PHONE_NUMBER_ID is required when WHATSAPP_PROVIDER=meta' });
+      }
     }
     // Internal secret is optional; guard will fall back to INTERNAL_TELEGRAM_SECRET or JWT_ACCESS_SECRET
   }).safeParse(config);

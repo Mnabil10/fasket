@@ -5,6 +5,8 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDeviceDto } from './dto';
 import { NotificationJob, TemplateKey } from './notifications.types';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { WhatsappTemplateKey, WhatsappTemplateLanguage } from '../whatsapp/templates/whatsapp.templates';
 
 @Injectable()
 export class NotificationsService {
@@ -12,6 +14,7 @@ export class NotificationsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly whatsapp: WhatsappService,
     @InjectQueue('notifications') @Optional() private readonly queue?: Queue<NotificationJob>,
   ) {}
 
@@ -77,6 +80,39 @@ export class NotificationsService {
     });
     this.logger.log({ msg: 'Unregistered push device', userId });
     return { success: true };
+  }
+
+  async sendWhatsappTemplate(params: {
+    to: string;
+    template: WhatsappTemplateKey;
+    variables: Record<string, string | number | null | undefined>;
+    language?: WhatsappTemplateLanguage;
+    metadata?: Record<string, any>;
+  }) {
+    return this.whatsapp.sendTemplate({
+      to: params.to,
+      template: params.template,
+      variables: params.variables,
+      language: params.language,
+      metadata: params.metadata,
+    });
+  }
+
+  async sendWhatsappText(params: { to: string; body: string; metadata?: Record<string, any> }) {
+    return this.whatsapp.sendText({
+      to: params.to,
+      body: params.body,
+      metadata: params.metadata,
+    });
+  }
+
+  async sendWhatsappDocument(params: { to: string; link: string; filename?: string; metadata?: Record<string, any> }) {
+    return this.whatsapp.sendDocument({
+      to: params.to,
+      link: params.link,
+      filename: params.filename,
+      metadata: params.metadata,
+    });
   }
 
   private async enqueue(payload: NotificationJob) {

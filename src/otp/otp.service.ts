@@ -1,5 +1,5 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException, forwardRef } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Inject, Injectable, Logger, UnauthorizedException, forwardRef } from '@nestjs/common';
 import type { Cache } from 'cache-manager';
 import { randomUUID, createHash, createHmac } from 'crypto';
 import axios from 'axios';
@@ -12,6 +12,8 @@ import { AuditLogService } from '../common/audit/audit-log.service';
 import { TelegramService } from '../telegram/telegram.service';
 import { RequestContextService } from '../common/context/request-context.service';
 import { normalizePhoneToE164 } from '../common/utils/phone.util';
+import { NotificationsService } from '../notifications/notifications.service';
+import { ErrorCode } from '../common/errors';
 
 export type OtpPurpose = 'LOGIN' | 'PASSWORD_RESET' | 'SIGNUP';
 
@@ -35,9 +37,17 @@ interface OtpDispatchInput {
 
 interface OtpDispatchResult {
   delivered: boolean;
-  channel: 'telegram' | 'fallback' | 'sms_required';
+  channel: 'whatsapp' | 'telegram' | 'fallback' | 'sms_required';
   blocked?: boolean;
   error?: string;
+}
+
+interface CachedDispatchPayload {
+  otpId: string;
+  expiresInSeconds: number;
+  channel: 'whatsapp' | 'telegram' | 'fallback' | 'sms_required';
+  requestId: string;
+  resendAfterSeconds: number;
 }
 
 @Injectable()
@@ -63,6 +73,7 @@ export class OtpService {
     @Inject(forwardRef(() => AuthService)) private readonly auth: AuthService,
     private readonly audit: AuditLogService,
     private readonly telegram: TelegramService,
+    private readonly notifications: NotificationsService,
     private readonly context: RequestContextService,
   ) {
     this.otpTtlSec = this.resolveOtpTtlSeconds();
@@ -97,7 +108,7 @@ export class OtpService {
     const hash = this.hashOtp(otp);
     const expiresAt = Date.now() + this.otpTtlSec * 1000;
     const record: OtpRecord = { otpHash: hash, otpId, attempts: 0, expiresAt, requestId };
-    await this.cache.set(this.otpKey(purpose, normalizedPhone), record, this.otpTtlSec);
+    await this.cache.set(this.otpKey(purpose, normalizedPhone), record, this.ttlMs(this.otpTtlSec));
 
     const deduped = await this.cachedDispatch(requestId);
     if (deduped) {
@@ -130,6 +141,7 @@ export class OtpService {
           expires: Math.ceil(this.otpTtlSec / 60),
           channel: 'sms_required',
           requestId,
+          resendAfterSeconds: this.otpRateLimitSeconds,
         };
       }
       throw new BadRequestException('Unable to send OTP at this time. Please try again later.');
@@ -140,6 +152,7 @@ export class OtpService {
       expiresInSeconds: this.otpTtlSec,
       channel: dispatch.channel,
       requestId,
+      resendAfterSeconds: this.otpRateLimitSeconds,
     });
 
     await this.automation.emit(
@@ -159,6 +172,7 @@ export class OtpService {
       expiresInSeconds: this.otpTtlSec,
       channel: dispatch.channel,
       requestId,
+      resendAfterSeconds: this.otpRateLimitSeconds,
     };
   }
 
@@ -175,7 +189,10 @@ export class OtpService {
         before: null,
         after: { purpose, phone: this.maskPhone(normalizedPhone) },
       });
-      throw new UnauthorizedException('Too many attempts. Please try again later.');
+      throw new UnauthorizedException({
+        code: ErrorCode.OTP_LOCKED,
+        message: 'Too many attempts. Please try again later.',
+      });
     }
 
     const record = await this.cache.get<OtpRecord>(this.otpKey(purpose, normalizedPhone));
@@ -187,7 +204,10 @@ export class OtpService {
         before: null,
         after: { purpose, phone: this.maskPhone(normalizedPhone), reason: 'expired_or_missing' },
       });
-      throw new UnauthorizedException('Invalid or expired OTP');
+      throw new UnauthorizedException({
+        code: ErrorCode.OTP_EXPIRED,
+        message: 'Invalid or expired OTP',
+      });
     }
 
     const requestId = record.requestId;
@@ -196,9 +216,9 @@ export class OtpService {
       const attempts = record.attempts + 1;
       record.attempts = attempts;
       const ttl = Math.max(1, Math.ceil((record.expiresAt - Date.now()) / 1000));
-      await this.cache.set(this.otpKey(purpose, normalizedPhone), record, ttl);
+      await this.cache.set(this.otpKey(purpose, normalizedPhone), record, this.ttlMs(ttl));
       if (attempts >= this.maxAttempts) {
-        await this.cache.set(lockKey, true, this.lockMinutes * 60);
+        await this.cache.set(lockKey, true, this.ttlMs(this.lockMinutes * 60));
         await this.cache.del(this.otpKey(purpose, normalizedPhone));
       }
       await this.audit.log({
@@ -208,7 +228,10 @@ export class OtpService {
         before: null,
         after: { purpose, phone: this.maskPhone(normalizedPhone), attempts, requestId },
       });
-      throw new UnauthorizedException('Invalid OTP');
+      throw new UnauthorizedException({
+        code: attempts >= this.maxAttempts ? ErrorCode.OTP_TOO_MANY_ATTEMPTS : ErrorCode.OTP_INVALID,
+        message: attempts >= this.maxAttempts ? 'Too many attempts. Please try again later.' : 'Invalid OTP',
+      });
     }
 
     await this.cache.del(this.otpKey(purpose, normalizedPhone));
@@ -242,7 +265,8 @@ export class OtpService {
       const resetToken = randomUUID();
       const hashedToken = this.hashOtp(resetToken);
       const ttl = Number(this.config.get('RESET_TOKEN_TTL_SECONDS') ?? 900);
-      await this.cache.set(this.resetKey(hashedToken), { phone: normalizedPhone, otpId }, ttl);
+      await this.cache.set(this.resetKey(hashedToken), { phone: normalizedPhone, otpId }, this.ttlMs(ttl));
+      await this.sendPasswordResetWhatsapp(normalizedPhone, otp, resetToken, ttl, record.requestId);
       return { success: true, resetToken, expiresInSeconds: ttl };
     }
 
@@ -262,16 +286,24 @@ export class OtpService {
   async verifyOtpLegacy(phone: string, purpose: OtpPurpose, otp: string, ip?: string) {
     const record = await this.cache.get<OtpRecord>(this.otpKey(purpose, normalizePhoneToE164(phone)));
     if (!record) {
-      throw new UnauthorizedException('Invalid or expired OTP');
+      throw new UnauthorizedException({
+        code: ErrorCode.OTP_EXPIRED,
+        message: 'Invalid or expired OTP',
+      });
     }
     return this.verifyOtp(phone, purpose, record.otpId, otp, ip);
   }
 
   private async dispatchOtp(params: OtpDispatchInput): Promise<OtpDispatchResult> {
     let blocked = false;
-    const link = await this.telegram.getActiveLinkByPhone(params.phone);
     const userId = params.userId ?? (await this.prisma.user.findUnique({ where: { phone: params.phone }, select: { id: true } }))?.id;
 
+    const whatsapp = await this.tryWhatsapp(params);
+    if (whatsapp.delivered) {
+      return { delivered: true, channel: 'whatsapp' };
+    }
+
+    const link = await this.telegram.getActiveLinkByPhone(params.phone);
     if (link && userId) {
       const result = await this.tryTelegram(link, params, userId);
       if (result.delivered) {
@@ -282,10 +314,33 @@ export class OtpService {
 
     const fallback = await this.sendFallbackOtp(params);
     if (fallback.delivered) {
-      await this.cacheDispatch(params.requestId, { otpId: params.otpId, expiresInSeconds: params.expiresInSeconds, channel: 'fallback', requestId: params.requestId });
+      await this.cacheDispatch(params.requestId, {
+        otpId: params.otpId,
+        expiresInSeconds: params.expiresInSeconds,
+        channel: 'fallback',
+        requestId: params.requestId,
+        resendAfterSeconds: this.otpRateLimitSeconds,
+      });
       return { delivered: true, channel: 'fallback', blocked };
     }
     return { delivered: false, channel: 'sms_required', blocked, error: fallback.error };
+  }
+
+  private async tryWhatsapp(params: OtpDispatchInput) {
+    try {
+      const expiresMinutes = Math.max(1, Math.ceil(params.expiresInSeconds / 60));
+      await this.notifications.sendWhatsappTemplate({
+        to: params.phone,
+        template: 'otp_verification_v1',
+        variables: { otp: params.otp, expires_in: expiresMinutes },
+        metadata: { purpose: params.purpose, requestId: params.requestId },
+      });
+      return { delivered: true };
+    } catch (err) {
+      const message = (err as Error)?.message || 'whatsapp_failed';
+      this.logger.warn({ msg: 'WhatsApp OTP send failed', error: message });
+      return { delivered: false, error: message };
+    }
   }
 
   private async tryTelegram(link: TelegramLink, params: OtpDispatchInput, userId: string) {
@@ -366,6 +421,7 @@ export class OtpService {
           expiresInSeconds: params.expiresInSeconds,
           channel: 'fallback',
           requestId: params.requestId,
+          resendAfterSeconds: this.otpRateLimitSeconds,
         });
         return { delivered: true };
       }
@@ -404,12 +460,14 @@ export class OtpService {
       1,
       this.otpRateLimitSeconds,
       'Please wait before requesting another OTP',
+      ErrorCode.OTP_RATE_LIMIT,
     );
     await this.bumpOrThrow(
       `otp:req:${purpose}:phone:${phone}:day:${this.dayKey()}`,
       this.otpDailyLimit,
       24 * 60 * 60,
       'You have reached the OTP request limit for today',
+      ErrorCode.OTP_DAILY_LIMIT,
     );
     if (ip) {
       await this.bumpOrThrow(
@@ -417,16 +475,24 @@ export class OtpService {
         this.otpPerIpLimit,
         this.otpRateLimitSeconds,
         'Too many OTP requests from this IP',
+        ErrorCode.OTP_IP_LIMIT,
       );
     }
   }
 
-  private async bumpOrThrow(key: string, limit: number, ttl: number, message: string) {
+  private async bumpOrThrow(key: string, limit: number, ttl: number, message: string, code: ErrorCode) {
     const current = (await this.cache.get<number>(key)) ?? 0;
     if (current >= limit) {
-      throw new UnauthorizedException(message);
+      throw new HttpException(
+        {
+          code,
+          message,
+          details: { resendAfterSeconds: ttl },
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
-    await this.cache.set(key, current + 1, ttl);
+    await this.cache.set(key, current + 1, this.ttlMs(ttl));
   }
 
   private dayKey() {
@@ -491,19 +557,24 @@ export class OtpService {
 
   private async cacheDispatch(
     requestId: string,
-    payload: { otpId: string; expiresInSeconds: number; channel: string; requestId: string },
+    payload: { otpId: string; expiresInSeconds: number; channel: string; requestId: string; resendAfterSeconds: number },
   ) {
-    await this.cache.set(this.requestIdKey(requestId), payload, this.requestIdTtlSeconds);
+    await this.cache.set(this.requestIdKey(requestId), payload, this.ttlMs(this.requestIdTtlSeconds));
+  }
+
+  private ttlMs(seconds: number) {
+    return Math.max(1, Math.ceil(seconds * 1000));
   }
 
   private async cachedDispatch(requestId: string) {
-    const cached = await this.cache.get<any>(this.requestIdKey(requestId));
+    const cached = await this.cache.get<CachedDispatchPayload>(this.requestIdKey(requestId));
     if (!cached) return undefined;
     return {
       otpId: cached.otpId,
       expiresInSeconds: cached.expiresInSeconds,
-      channel: cached.channel as 'telegram' | 'fallback' | 'sms_required',
+      channel: cached.channel as 'whatsapp' | 'telegram' | 'fallback' | 'sms_required',
       requestId: cached.requestId,
+      resendAfterSeconds: cached.resendAfterSeconds,
     };
   }
 
@@ -511,5 +582,33 @@ export class OtpService {
     if (!phone) return '';
     if (phone.length <= 6) return '***';
     return `${phone.slice(0, 4)}***${phone.slice(-3)}`;
+  }
+
+  private async sendPasswordResetWhatsapp(
+    phone: string,
+    otp: string,
+    resetToken: string,
+    ttlSeconds: number,
+    requestId: string,
+  ) {
+    try {
+      const link = this.buildResetLink(resetToken);
+      await this.notifications.sendWhatsappTemplate({
+        to: phone,
+        template: 'password_reset_v1',
+        variables: { otp, reset_link: link },
+        metadata: { purpose: 'PASSWORD_RESET', requestId, ttlSeconds },
+      });
+    } catch (err) {
+      this.logger.warn({ msg: 'WhatsApp password reset send failed', error: (err as Error)?.message });
+    }
+  }
+
+  private buildResetLink(resetToken: string) {
+    const base = (this.config.get<string>('PASSWORD_RESET_URL_BASE') || '').trim();
+    if (!base) return resetToken;
+    if (base.includes('{{token}}')) return base.replace('{{token}}', encodeURIComponent(resetToken));
+    const join = base.includes('?') ? '&' : '?';
+    return `${base}${join}token=${encodeURIComponent(resetToken)}`;
   }
 }

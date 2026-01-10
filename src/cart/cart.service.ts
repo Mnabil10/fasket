@@ -30,6 +30,11 @@ type CartItemWithProduct = Prisma.CartItemGetPayload<{
         nameAr: true;
         status: true;
         providerId: true;
+        provider: {
+          select: {
+            status: true;
+          };
+        };
       };
     };
   };
@@ -137,13 +142,19 @@ export class CartService {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable');
     }
     const branch = await this.resolveBranchForProduct(product, dto.branchId);
+    if (branch.provider && branch.provider.status !== 'ACTIVE') {
+      throw new DomainError(ErrorCode.CART_PROVIDER_UNAVAILABLE, 'Provider unavailable');
+    }
     const branchProduct = await this.prisma.branchProduct.findUnique({
       where: { branchId_productId: { branchId: branch.id, productId: product.id } },
     });
     if (!branchProduct || !branchProduct.isActive) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Product unavailable in this branch');
     }
-    const stock = branchProduct.stock ?? product.stock ?? 0;
+    const stock = this.resolveEffectiveStock(product.stock, branchProduct.stock);
+    if (stock <= 0) {
+      throw new DomainError(ErrorCode.CART_PRODUCT_OUT_OF_STOCK, 'Product out of stock');
+    }
     if (stock < dto.qty) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
@@ -173,7 +184,7 @@ export class CartService {
     const cart = await this.ensureCart(userId);
     const item = await this.prisma.cartItem.findFirst({
       where: { id, cartId: cart.id },
-      include: { product: true, branch: true },
+      include: { product: true, branch: { include: { provider: { select: { status: true } } } } },
     });
     if (!item) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Item not found in cart');
@@ -185,6 +196,10 @@ export class CartService {
     if (!item.branch || item.branch.status !== 'ACTIVE') {
       await this.prisma.cartItem.delete({ where: { id: item.id } });
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Branch unavailable');
+    }
+    if (item.branch.provider && item.branch.provider.status !== 'ACTIVE') {
+      await this.prisma.cartItem.delete({ where: { id: item.id } });
+      throw new DomainError(ErrorCode.CART_PROVIDER_UNAVAILABLE, 'Provider unavailable');
     }
     const branchProduct = await this.prisma.branchProduct.findUnique({
       where: { branchId_productId: { branchId: item.branch.id, productId: item.product.id } },
@@ -198,7 +213,11 @@ export class CartService {
       await this.prisma.cartItem.delete({ where: { id: item.id } });
       return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
     }
-    const availableStock = branchProduct.stock ?? item.product.stock ?? 0;
+    const availableStock = this.resolveEffectiveStock(item.product.stock, branchProduct.stock);
+    if (availableStock <= 0) {
+      await this.prisma.cartItem.delete({ where: { id: item.id } });
+      throw new DomainError(ErrorCode.CART_PRODUCT_OUT_OF_STOCK, 'Product out of stock');
+    }
     if (qty > availableStock) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
@@ -276,6 +295,7 @@ export class CartService {
             nameAr: true,
             status: true,
             providerId: true,
+            provider: { select: { status: true } },
           },
         },
       },
@@ -289,7 +309,8 @@ export class CartService {
           item.product.deletedAt ||
           item.product.status !== ProductStatus.ACTIVE ||
           !item.branch ||
-          item.branch.status !== 'ACTIVE',
+          item.branch.status !== 'ACTIVE' ||
+          (item.branch.provider && item.branch.provider.status !== 'ACTIVE'),
       )
       .map((item) => item.id);
     if (orphanIds.length) {
@@ -301,7 +322,8 @@ export class CartService {
         !item.product.deletedAt &&
         item.product.status === ProductStatus.ACTIVE &&
         item.branch &&
-        item.branch.status === 'ACTIVE',
+        item.branch.status === 'ACTIVE' &&
+        (!item.branch.provider || item.branch.provider.status === 'ACTIVE'),
     );
 
     const branchPairs = validItems
@@ -375,6 +397,15 @@ export class CartService {
     });
   }
 
+  private resolveEffectiveStock(productStock?: number | null, branchStock?: number | null) {
+    const productValue = productStock ?? null;
+    const branchValue = branchStock ?? null;
+    if (productValue === null && branchValue === null) return 0;
+    if (productValue === null) return branchValue ?? 0;
+    if (branchValue === null) return productValue ?? 0;
+    return Math.min(productValue, branchValue);
+  }
+
   private async buildCartResponse(
     cart: CartEntity,
     lang?: Lang,
@@ -427,7 +458,7 @@ export class CartService {
         let ratePerKmCents: number | null = null;
         let deliveryRequiresLocation = false;
         let deliveryUnavailable = false;
-        let deliveryMode = branch?.deliveryMode ?? undefined;
+        const deliveryMode = branch?.deliveryMode ?? undefined;
 
         const hasLocation = addressLat !== null && addressLng !== null;
         if (!distancePricingEnabled || hasLocation) {
@@ -528,10 +559,13 @@ export class CartService {
     if (branchId) {
       const branch = await this.prisma.branch.findUnique({
         where: { id: branchId },
-        select: { id: true, providerId: true, status: true },
+        select: { id: true, providerId: true, status: true, provider: { select: { status: true } } },
       });
       if (!branch || branch.status !== 'ACTIVE') {
         throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Branch unavailable');
+      }
+      if (branch.provider && branch.provider.status !== 'ACTIVE') {
+        throw new DomainError(ErrorCode.CART_PROVIDER_UNAVAILABLE, 'Provider unavailable');
       }
       if (product.providerId && branch.providerId !== product.providerId) {
         throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Branch does not match product provider');
@@ -544,15 +578,18 @@ export class CartService {
       (await this.prisma.branch.findFirst({
         where: { providerId, status: 'ACTIVE' },
         orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-        select: { id: true, providerId: true, status: true },
+        select: { id: true, providerId: true, status: true, provider: { select: { status: true } } },
       })) ??
       (await this.prisma.branch.findUnique({
         where: { id: this.defaultBranchId },
-        select: { id: true, providerId: true, status: true },
+        select: { id: true, providerId: true, status: true, provider: { select: { status: true } } },
       }));
 
     if (!branch || branch.status !== 'ACTIVE') {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Branch unavailable');
+    }
+    if (branch.provider && branch.provider.status !== 'ACTIVE') {
+      throw new DomainError(ErrorCode.CART_PROVIDER_UNAVAILABLE, 'Provider unavailable');
     }
     return branch;
   }

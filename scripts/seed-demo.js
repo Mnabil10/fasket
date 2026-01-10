@@ -92,7 +92,7 @@ async function ensureProvider() {
         deliveryRatePerKmCents: 200,
         minDeliveryFeeCents: 1500,
         maxDeliveryFeeCents: 5000,
-        contactPhone: "+20-100-000-0000",
+        contactPhone: "+201000000000",
       },
     }));
   return provider;
@@ -434,7 +434,7 @@ async function ensureDemoPayout(providerId, amountCents) {
 async function ensureProviderOwner(providerId) {
   const owner = await upsertUser({
     name: "Demo Vendor Owner",
-    phone: "+20-100-000-0001",
+    phone: "+201000000001",
     role: UserRole.PROVIDER,
     password: "Vendor123!",
   });
@@ -458,14 +458,14 @@ async function ensureProviderOwner(providerId) {
 async function ensureAdmin() {
   return upsertUser({
     name: "Demo Admin",
-    phone: "+20-100-000-0000",
+    phone: "+201000000000",
     role: UserRole.ADMIN,
     password: "Admin123!",
   });
 }
 
 async function ensureDriver() {
-  const phone = "+20-100-000-0002";
+  const phone = "+201000000002";
   const user = await upsertUser({
     name: "Demo Driver",
     phone,
@@ -486,7 +486,7 @@ async function ensureDriver() {
 }
 
 async function ensureDriverTwo() {
-  const phone = "+20-100-000-0004";
+  const phone = "+201000000004";
   const user = await upsertUser({
     name: "Demo Driver 2",
     phone,
@@ -509,7 +509,7 @@ async function ensureDriverTwo() {
 async function ensureCustomer() {
   return upsertUser({
     name: "Demo Customer",
-    phone: "+20-100-000-0003",
+    phone: "+201000000003",
     role: UserRole.CUSTOMER,
     password: "Customer123!",
   });

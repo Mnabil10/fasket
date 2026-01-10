@@ -9,19 +9,17 @@ import { IsIn, IsOptional, IsString } from 'class-validator';
 class OtpRequestDto {
   @ApiProperty() @IsString()
   phone!: string;
-  @ApiProperty({ enum: ['LOGIN', 'PASSWORD_RESET', 'SIGNUP'], required: false })
-  @IsOptional()
+  @ApiProperty({ enum: ['LOGIN', 'PASSWORD_RESET', 'SIGNUP'] })
   @IsIn(['LOGIN', 'PASSWORD_RESET', 'SIGNUP'])
-  purpose?: OtpPurpose;
+  purpose!: OtpPurpose;
 }
 
 class OtpVerifyDto {
   @ApiProperty() @IsString()
   phone!: string;
-  @ApiProperty({ enum: ['LOGIN', 'PASSWORD_RESET', 'SIGNUP'], required: false })
-  @IsOptional()
+  @ApiProperty({ enum: ['LOGIN', 'PASSWORD_RESET', 'SIGNUP'] })
   @IsIn(['LOGIN', 'PASSWORD_RESET', 'SIGNUP'])
-  purpose?: OtpPurpose;
+  purpose!: OtpPurpose;
   @ApiProperty({ required: false }) @IsOptional() @IsString()
   otpId?: string;
   @ApiProperty() @IsString()
@@ -37,16 +35,15 @@ export class OtpController {
   @Post('request')
   @Throttle({ otpRequest: {} })
   request(@Body() dto: OtpRequestDto, @Req() req: Request) {
-    return this.otp.requestOtp(dto.phone, dto.purpose ?? 'LOGIN', req.ip);
+    return this.otp.requestOtp(dto.phone, dto.purpose, req.ip);
   }
 
   @Post('verify')
   @Throttle({ otpVerify: {} })
   verify(@Body() dto: OtpVerifyDto, @Req() req: Request) {
-    const purpose = dto.purpose ?? 'LOGIN';
     if (dto.otpId) {
-      return this.otp.verifyOtp(dto.phone, purpose, dto.otpId, dto.otp, req.ip);
+      return this.otp.verifyOtp(dto.phone, dto.purpose, dto.otpId, dto.otp, req.ip);
     }
-    return this.otp.verifyOtpLegacy(dto.phone, purpose, dto.otp, req.ip);
+    return this.otp.verifyOtpLegacy(dto.phone, dto.purpose, dto.otp, req.ip);
   }
 }

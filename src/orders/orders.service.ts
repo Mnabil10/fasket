@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   DeliveryMode,
+  DeliveryFailureReason,
+  OrderGroupStatus,
   OrderSplitFailurePolicy,
   OrderStatus,
   PaymentMethod,
@@ -18,6 +20,8 @@ import { CacheService } from '../common/cache/cache.service';
 import { AutomationEventsService, AutomationEventRef } from '../automation/automation-events.service';
 import { BillingService } from '../billing/billing.service';
 import { FinanceService } from '../finance/finance.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { normalizeWhatsappLanguage, WhatsappTemplateLanguage } from '../whatsapp/templates/whatsapp.templates';
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
@@ -41,7 +45,14 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
   };
 }>;
 
-type PublicStatus = 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELED';
+type PublicStatus =
+  | 'PENDING'
+  | 'CONFIRMED'
+  | 'PREPARING'
+  | 'OUT_FOR_DELIVERY'
+  | 'DELIVERY_FAILED'
+  | 'DELIVERED'
+  | 'CANCELED';
 
 type StatusTransitionContext = {
   deliveryMode?: DeliveryMode | null;
@@ -84,6 +95,7 @@ export class OrdersService {
     private readonly automation: AutomationEventsService,
     private readonly billing: BillingService,
     private readonly finance: FinanceService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async list(userId: string) {
@@ -117,6 +129,226 @@ export class OrdersService {
       loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
       loyaltyPointsEarned: order.loyaltyPointsEarned ?? 0,
     }));
+  }
+
+  async listOrderGroups(userId: string) {
+    const groups = await this.prisma.orderGroup.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        orders: {
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            totalCents: true,
+            subtotalCents: true,
+            shippingFeeCents: true,
+            serviceFeeCents: true,
+            discountCents: true,
+            providerId: true,
+            branchId: true,
+            createdAt: true,
+            provider: { select: { id: true, name: true, nameAr: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    return groups.map((group) => {
+      const totals = this.computeGroupTotals(group.orders);
+      const providers = group.orders.map((order) => ({
+        orderId: order.id,
+        providerId: order.providerId,
+        providerName: order.provider?.name ?? null,
+        providerNameAr: order.provider?.nameAr ?? null,
+        status: this.toPublicStatus(order.status),
+      }));
+      const orders = group.orders.map((order) => ({
+        id: order.id,
+        code: order.code ?? order.id,
+        status: this.toPublicStatus(order.status),
+        subtotalCents: order.subtotalCents,
+        shippingFeeCents: order.shippingFeeCents ?? 0,
+        serviceFeeCents:
+          order.serviceFeeCents ??
+          this.inferServiceFeeCents({
+            subtotalCents: order.subtotalCents,
+            shippingFeeCents: order.shippingFeeCents ?? 0,
+            discountCents: order.discountCents ?? 0,
+            totalCents: order.totalCents,
+          }),
+        discountCents: order.discountCents ?? 0,
+        totalCents: order.totalCents,
+        providerId: order.providerId ?? null,
+        branchId: order.branchId ?? null,
+        providerName: order.provider?.name ?? null,
+        providerNameAr: order.provider?.nameAr ?? null,
+        createdAt: order.createdAt,
+      }));
+      return {
+        orderGroupId: group.id,
+        code: group.code,
+        status: this.summarizeGroupStatus(group.orders.map((o) => o.status)),
+        subtotalCents: totals.subtotalCents,
+        shippingFeeCents: totals.shippingFeeCents,
+        serviceFeeCents: totals.serviceFeeCents,
+        discountCents: totals.discountCents,
+        totalCents: totals.totalCents,
+        createdAt: group.createdAt,
+        providers,
+        orders,
+      };
+    });
+  }
+
+  async getOrderGroupDetail(userId: string, orderGroupId: string) {
+    const group = await this.prisma.orderGroup.findFirst({
+      where: { id: orderGroupId, userId },
+      include: {
+        address: true,
+        orders: {
+          include: {
+            provider: { select: { id: true, name: true, nameAr: true } },
+            items: {
+              select: {
+                id: true,
+                productId: true,
+                productNameSnapshot: true,
+                priceSnapshotCents: true,
+                qty: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    if (!group) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order group not found', 404);
+    }
+    const totals = this.computeGroupTotals(group.orders);
+    const providerOrders = group.orders.map((order) => ({
+      id: order.id,
+      code: order.code ?? order.id,
+      providerId: order.providerId,
+      providerName: order.provider?.name ?? null,
+      providerNameAr: order.provider?.nameAr ?? null,
+      status: this.toPublicStatus(order.status),
+      subtotalCents: order.subtotalCents,
+      shippingFeeCents: order.shippingFeeCents ?? 0,
+      serviceFeeCents:
+        order.serviceFeeCents ??
+        this.inferServiceFeeCents({
+          subtotalCents: order.subtotalCents,
+          shippingFeeCents: order.shippingFeeCents ?? 0,
+          discountCents: order.discountCents ?? 0,
+          totalCents: order.totalCents,
+        }),
+      discountCents: order.discountCents ?? 0,
+      totalCents: order.totalCents,
+      createdAt: order.createdAt,
+      deliveryFailedAt: order.deliveryFailedAt ?? null,
+      deliveryFailedReason: order.deliveryFailedReason ?? null,
+      deliveryFailedNote: order.deliveryFailedNote ?? null,
+      items: (order.items || []).map((item) => ({
+        id: item.id,
+        productId: item.productId,
+        productNameSnapshot: item.productNameSnapshot,
+        priceSnapshotCents: item.priceSnapshotCents,
+        qty: item.qty,
+      })),
+    }));
+    return {
+      orderGroupId: group.id,
+      code: group.code,
+      status: this.summarizeGroupStatus(group.orders.map((o) => o.status)),
+      subtotalCents: totals.subtotalCents,
+      shippingFeeCents: totals.shippingFeeCents,
+      serviceFeeCents: totals.serviceFeeCents,
+      discountCents: totals.discountCents,
+      totalCents: totals.totalCents,
+      createdAt: group.createdAt,
+      address: group.address ?? null,
+      providerOrders,
+      orders: providerOrders,
+    };
+  }
+
+  async cancelOrderGroup(userId: string, orderGroupId: string) {
+    const group = await this.prisma.orderGroup.findFirst({
+      where: { id: orderGroupId, userId },
+      include: {
+        orders: {
+          include: { provider: { select: { id: true, name: true, nameAr: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    if (!group) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order group not found', 404);
+    }
+    const cancelableStatuses = new Set<OrderStatus>([OrderStatus.PENDING, OrderStatus.CONFIRMED]);
+    const cancelledProviders: Array<{ orderId: string; providerId: string | null; providerName: string | null }> = [];
+    const blockedProviders: Array<{ orderId: string; providerId: string | null; providerName: string | null; status: PublicStatus }> = [];
+
+    for (const order of group.orders) {
+      if (order.status === OrderStatus.CANCELED) {
+        cancelledProviders.push({
+          orderId: order.id,
+          providerId: order.providerId ?? null,
+          providerName: order.provider?.name ?? null,
+        });
+        continue;
+      }
+      if (!cancelableStatuses.has(order.status)) {
+        blockedProviders.push({
+          orderId: order.id,
+          providerId: order.providerId ?? null,
+          providerName: order.provider?.name ?? null,
+          status: this.toPublicStatus(order.status),
+        });
+        continue;
+      }
+      await this.cancelOrder(userId, order.id);
+      cancelledProviders.push({
+        orderId: order.id,
+        providerId: order.providerId ?? null,
+        providerName: order.provider?.name ?? null,
+      });
+    }
+
+    const refreshed = await this.prisma.orderGroup.findFirst({
+      where: { id: orderGroupId, userId },
+      include: { orders: true },
+    });
+
+    const remainingOrders = refreshed?.orders ?? [];
+    const totals = this.computeGroupTotals(remainingOrders);
+    const activeOrders = remainingOrders.filter((order) => order.status !== OrderStatus.CANCELED);
+    const groupUpdate: Prisma.OrderGroupUpdateInput = {
+      subtotalCents: totals.subtotalCents,
+      shippingFeeCents: totals.shippingFeeCents,
+      serviceFeeCents: totals.serviceFeeCents,
+      discountCents: totals.discountCents,
+      totalCents: totals.totalCents,
+    };
+    if (activeOrders.length === 0) {
+      groupUpdate.status = OrderGroupStatus.CANCELED;
+    }
+    await this.prisma.orderGroup.update({
+      where: { id: orderGroupId },
+      data: groupUpdate,
+    });
+
+    return {
+      orderGroupId,
+      cancelledProviders,
+      blockedProviders,
+      totals,
+      status: this.summarizeGroupStatus(remainingOrders.map((o) => o.status)),
+    };
   }
 
   async detail(userId: string, id: string) {
@@ -251,6 +483,9 @@ export class OrdersService {
   }
 
   async create(userId: string, payload: CreateOrderDto) {
+    if (payload.deliveryTermsAccepted !== true) {
+      throw new DomainError(ErrorCode.DELIVERY_TERMS_NOT_ACCEPTED, 'Delivery terms must be accepted');
+    }
     const idempotencyKey = payload.idempotencyKey?.trim() || null;
     const splitPolicy =
       (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
@@ -318,7 +553,7 @@ export class OrdersService {
         const explicitBranches = explicitBranchIds.length
           ? await tx.branch.findMany({
               where: { id: { in: explicitBranchIds } },
-              include: { provider: { select: { id: true, deliveryMode: true } } },
+              include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
             })
           : [];
         const branchById = new Map(explicitBranches.map((branch) => [branch.id, branch]));
@@ -337,7 +572,7 @@ export class OrdersService {
           ? await tx.branch.findMany({
               where: { providerId: { in: Array.from(providerIdsNeeded) }, status: 'ACTIVE' },
               orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-              include: { provider: { select: { id: true, deliveryMode: true } } },
+              include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
             })
           : [];
         const defaultBranchByProvider = new Map<string, (typeof providerBranches)[number]>();
@@ -348,7 +583,7 @@ export class OrdersService {
         }
         const fallbackBranch = await tx.branch.findUnique({
           where: { id: this.defaultBranchId },
-          include: { provider: { select: { id: true, deliveryMode: true } } },
+          include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
         });
 
         const branchErrors = new Map<string, string>();
@@ -368,7 +603,7 @@ export class OrdersService {
             providerId: string;
             status: string;
             deliveryMode: DeliveryMode | null;
-            provider?: { id: string; deliveryMode: DeliveryMode } | null;
+            provider?: { id: string; deliveryMode: DeliveryMode; status: string } | null;
           };
           qty: number;
         }> = [];
@@ -379,12 +614,16 @@ export class OrdersService {
             branchErrors.set(item.branchId ?? 'unknown', 'Product unavailable');
             continue;
           }
-          let branch =
+          const branch =
             (item.branchId ? branchById.get(item.branchId) : undefined) ??
             defaultBranchByProvider.get(product.providerId ?? this.defaultProviderId) ??
             (fallbackBranch ?? undefined);
           if (!branch || branch.status !== 'ACTIVE') {
             branchErrors.set(item.branchId ?? branch?.id ?? 'unknown', 'Branch unavailable');
+            continue;
+          }
+          if (branch.provider && branch.provider.status !== 'ACTIVE') {
+            branchErrors.set(item.branchId ?? branch.id, 'Provider unavailable');
             continue;
           }
           if (product.providerId && branch.providerId !== product.providerId) {
@@ -438,7 +677,11 @@ export class OrdersService {
             branchErrors.set(item.branch.id, 'Product unavailable in this branch');
             continue;
           }
-          const stock = branchProduct.stock ?? item.product.stock ?? 0;
+          const stock = this.resolveEffectiveStock(item.product.stock, branchProduct.stock);
+          if (stock <= 0) {
+            branchErrors.set(item.branch.id, `Out of stock: ${item.product.name}`);
+            continue;
+          }
           if (stock < item.qty) {
             branchErrors.set(item.branch.id, `Insufficient stock for ${item.product.name}`);
             continue;
@@ -584,9 +827,11 @@ export class OrdersService {
             status: 'PENDING',
             splitFailurePolicy: splitPolicy,
             paymentMethod: paymentMethod as PaymentMethod,
+            deliveryTermsAccepted: true,
             couponCode,
             subtotalCents: subtotalCentsTotal,
             shippingFeeCents: shippingFeeCentsTotal,
+            serviceFeeCents: serviceFeeCentsTotal,
             discountCents,
             totalCents: subtotalCentsTotal + shippingFeeCentsTotal + serviceFeeCentsTotal - discountCents,
           },
@@ -616,8 +861,10 @@ export class OrdersService {
               code,
               status: OrderStatus.PENDING,
               paymentMethod: paymentMethod as PaymentMethod,
+              deliveryTermsAccepted: true,
               subtotalCents: group.subtotalCents,
               shippingFeeCents,
+              serviceFeeCents: this.serviceFeeCents,
               discountCents: discountForBranch,
               totalCents,
               loyaltyDiscountCents: 0,
@@ -763,11 +1010,12 @@ export class OrdersService {
         };
       });
 
-      await this.automation.enqueueMany(automationEvents);
-      for (const orderId of result.orderIds) {
-        await this.clearCachesForOrder(orderId, userId);
-      }
-      this.logger.log({ msg: 'Order created', orderGroupId: result.orderGroupId, userId });
+        await this.automation.enqueueMany(automationEvents);
+        for (const orderId of result.orderIds) {
+          await this.clearCachesForOrder(orderId, userId);
+          await this.notifyOrderCreatedWhatsapp(orderId);
+        }
+        this.logger.log({ msg: 'Order created', orderGroupId: result.orderGroupId, userId });
       if (result.orderIds.length === 1) {
         return this.detail(userId, result.orderIds[0]);
       }
@@ -912,6 +1160,9 @@ export class OrdersService {
   }
 
   async createGuestOrder(payload: CreateGuestOrderDto) {
+    if (payload.deliveryTermsAccepted !== true) {
+      throw new DomainError(ErrorCode.DELIVERY_TERMS_NOT_ACCEPTED, 'Delivery terms must be accepted');
+    }
     const splitPolicy =
       (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
     const idempotencyKey = payload.idempotencyKey?.trim() || null;
@@ -1020,8 +1271,10 @@ export class OrdersService {
             status: 'PENDING',
             splitFailurePolicy: splitPolicy,
             paymentMethod: paymentMethod as PaymentMethod,
+            deliveryTermsAccepted: true,
             subtotalCents: subtotalCentsTotal,
             shippingFeeCents: shippingFeeCentsTotal,
+            serviceFeeCents: serviceFeeCentsTotal,
             discountCents: 0,
             totalCents: subtotalCentsTotal + shippingFeeCentsTotal + serviceFeeCentsTotal,
           },
@@ -1049,8 +1302,10 @@ export class OrdersService {
               code,
               status: OrderStatus.PENDING,
               paymentMethod: paymentMethod as PaymentMethod,
+              deliveryTermsAccepted: true,
               subtotalCents: group.subtotalCents,
               shippingFeeCents,
+              serviceFeeCents: this.serviceFeeCents,
               discountCents: 0,
               totalCents,
               loyaltyDiscountCents: 0,
@@ -1160,10 +1415,11 @@ export class OrdersService {
         };
       });
 
-      await this.automation.enqueueMany(automationEvents);
-      for (const orderId of result.orderIds) {
-        await this.clearCachesForOrder(orderId, null);
-      }
+        await this.automation.enqueueMany(automationEvents);
+        for (const orderId of result.orderIds) {
+          await this.clearCachesForOrder(orderId, null);
+          await this.notifyOrderCreatedWhatsapp(orderId);
+        }
       if (result.orderIds.length === 1) {
         return this.getGuestOrderDetail(result.orderIds[0]);
       }
@@ -1225,6 +1481,7 @@ export class OrdersService {
             totalCents: true,
             subtotalCents: true,
             shippingFeeCents: true,
+            serviceFeeCents: true,
             discountCents: true,
             providerId: true,
             branchId: true,
@@ -1244,6 +1501,14 @@ export class OrdersService {
       status: group.status,
       subtotalCents: group.subtotalCents,
       shippingFeeCents: group.shippingFeeCents,
+      serviceFeeCents:
+        group.serviceFeeCents ??
+        this.inferServiceFeeCents({
+          subtotalCents: group.subtotalCents,
+          shippingFeeCents: group.shippingFeeCents,
+          discountCents: group.discountCents,
+          totalCents: group.totalCents,
+        }),
       discountCents: group.discountCents,
       totalCents: group.totalCents,
       createdAt: group.createdAt,
@@ -1253,6 +1518,14 @@ export class OrdersService {
         status: this.toPublicStatus(order.status),
         subtotalCents: order.subtotalCents,
         shippingFeeCents: order.shippingFeeCents,
+        serviceFeeCents:
+          order.serviceFeeCents ??
+          this.inferServiceFeeCents({
+            subtotalCents: order.subtotalCents,
+            shippingFeeCents: order.shippingFeeCents ?? 0,
+            discountCents: order.discountCents ?? 0,
+            totalCents: order.totalCents,
+          }),
         discountCents: order.discountCents,
         totalCents: order.totalCents,
         providerId: order.providerId,
@@ -1307,7 +1580,7 @@ export class OrdersService {
     const explicitBranches = explicitBranchIds.length
       ? await tx.branch.findMany({
           where: { id: { in: explicitBranchIds } },
-          include: { provider: { select: { id: true, deliveryMode: true } } },
+          include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
         })
       : [];
     const branchById = new Map(explicitBranches.map((branch) => [branch.id, branch]));
@@ -1326,7 +1599,7 @@ export class OrdersService {
       ? await tx.branch.findMany({
           where: { providerId: { in: Array.from(providerIdsNeeded) }, status: 'ACTIVE' },
           orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-          include: { provider: { select: { id: true, deliveryMode: true } } },
+          include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
         })
       : [];
     const defaultBranchByProvider = new Map<string, (typeof providerBranches)[number]>();
@@ -1338,7 +1611,7 @@ export class OrdersService {
 
     const fallbackBranch = await tx.branch.findUnique({
       where: { id: this.defaultBranchId },
-      include: { provider: { select: { id: true, deliveryMode: true } } },
+      include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
     });
 
     const branchErrors = new Map<string, string>();
@@ -1354,12 +1627,16 @@ export class OrdersService {
         branchErrors.set(item.branchId ?? 'unknown', 'Product unavailable');
         continue;
       }
-      let branch =
+      const branch =
         (item.branchId ? branchById.get(item.branchId) : undefined) ??
         defaultBranchByProvider.get(product.providerId ?? this.defaultProviderId) ??
         (fallbackBranch ?? undefined);
       if (!branch || branch.status !== 'ACTIVE') {
         branchErrors.set(item.branchId ?? branch?.id ?? 'unknown', 'Branch unavailable');
+        continue;
+      }
+      if (branch.provider && branch.provider.status !== 'ACTIVE') {
+        branchErrors.set(item.branchId ?? branch.id, 'Provider unavailable');
         continue;
       }
       if (product.providerId && branch.providerId !== product.providerId) {
@@ -1403,7 +1680,11 @@ export class OrdersService {
         branchErrors.set(item.branch.id, 'Product unavailable in this branch');
         continue;
       }
-      const stock = branchProduct.stock ?? item.product.stock ?? 0;
+      const stock = this.resolveEffectiveStock(item.product.stock, branchProduct.stock);
+      if (stock <= 0) {
+        branchErrors.set(item.branch.id, `Out of stock: ${item.product.name}`);
+        continue;
+      }
       if (stock < item.qty) {
         branchErrors.set(item.branch.id, `Insufficient stock for ${item.product.name}`);
         continue;
@@ -1504,6 +1785,7 @@ export class OrdersService {
             totalCents: true,
             subtotalCents: true,
             shippingFeeCents: true,
+            serviceFeeCents: true,
             discountCents: true,
             providerId: true,
             branchId: true,
@@ -1516,12 +1798,14 @@ export class OrdersService {
     if (!group) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order group not found', 404);
     }
-    const serviceFeeCents = this.inferServiceFeeCents({
-      subtotalCents: group.subtotalCents,
-      shippingFeeCents: group.shippingFeeCents,
-      discountCents: group.discountCents,
-      totalCents: group.totalCents,
-    });
+    const serviceFeeCents =
+      group.serviceFeeCents ??
+      this.inferServiceFeeCents({
+        subtotalCents: group.subtotalCents,
+        shippingFeeCents: group.shippingFeeCents,
+        discountCents: group.discountCents,
+        totalCents: group.totalCents,
+      });
     return {
       orderGroupId: group.id,
       code: group.code,
@@ -1538,12 +1822,14 @@ export class OrdersService {
         status: this.toPublicStatus(order.status),
         subtotalCents: order.subtotalCents,
         shippingFeeCents: order.shippingFeeCents,
-        serviceFeeCents: this.inferServiceFeeCents({
-          subtotalCents: order.subtotalCents,
-          shippingFeeCents: order.shippingFeeCents ?? 0,
-          discountCents: order.discountCents ?? 0,
-          totalCents: order.totalCents,
-        }),
+        serviceFeeCents:
+          order.serviceFeeCents ??
+          this.inferServiceFeeCents({
+            subtotalCents: order.subtotalCents,
+            shippingFeeCents: order.shippingFeeCents ?? 0,
+            discountCents: order.discountCents ?? 0,
+            totalCents: order.totalCents,
+          }),
         discountCents: order.discountCents,
         totalCents: order.totalCents,
         providerId: order.providerId,
@@ -1770,6 +2056,143 @@ export class OrdersService {
     await Promise.all(keys.map((key) => this.cache.del(key)));
   }
 
+  private summarizeGroupStatus(statuses: OrderStatus[]): PublicStatus {
+    if (!statuses.length) return 'PENDING';
+    const active = statuses.filter((status) => status !== OrderStatus.CANCELED);
+    if (!active.length) return 'CANCELED';
+    if (active.some((status) => status === OrderStatus.DELIVERY_FAILED)) {
+      return 'DELIVERY_FAILED';
+    }
+    if (active.every((status) => status === OrderStatus.DELIVERED)) {
+      return 'DELIVERED';
+    }
+    const rank: Record<OrderStatus, number> = {
+      [OrderStatus.PENDING]: 1,
+      [OrderStatus.CONFIRMED]: 2,
+      [OrderStatus.PREPARING]: 3,
+      [OrderStatus.OUT_FOR_DELIVERY]: 4,
+      [OrderStatus.DELIVERY_FAILED]: 5,
+      [OrderStatus.DELIVERED]: 6,
+      [OrderStatus.CANCELED]: 0,
+    };
+    const top = active.reduce((best, status) => (rank[status] > rank[best] ? status : best), active[0]);
+    return this.toPublicStatus(top);
+  }
+
+  private computeGroupTotals(
+    orders: Array<{
+      status: OrderStatus;
+      subtotalCents: number;
+      shippingFeeCents?: number | null;
+      serviceFeeCents?: number | null;
+      discountCents?: number | null;
+      totalCents?: number | null;
+      loyaltyDiscountCents?: number | null;
+    }>,
+  ) {
+    const active = orders.filter((order) => order.status !== OrderStatus.CANCELED);
+    if (!active.length) {
+      return {
+        subtotalCents: 0,
+        shippingFeeCents: 0,
+        serviceFeeCents: 0,
+        discountCents: 0,
+        totalCents: 0,
+      };
+    }
+    return active.reduce(
+      (acc, order) => {
+        const subtotalCents = order.subtotalCents ?? 0;
+        const shippingFeeCents = order.shippingFeeCents ?? 0;
+        const discountCents = order.discountCents ?? 0;
+        const totalCents = order.totalCents ?? 0;
+        const serviceFeeCents =
+          order.serviceFeeCents ??
+          this.inferServiceFeeCents({
+            subtotalCents,
+            shippingFeeCents,
+            discountCents,
+            loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
+            totalCents,
+          });
+        acc.subtotalCents += subtotalCents;
+        acc.shippingFeeCents = Math.max(acc.shippingFeeCents, shippingFeeCents);
+        acc.serviceFeeCents += serviceFeeCents;
+        acc.discountCents += discountCents;
+        acc.totalCents += totalCents;
+        return acc;
+      },
+      {
+        subtotalCents: 0,
+        shippingFeeCents: 0,
+        serviceFeeCents: 0,
+        discountCents: 0,
+        totalCents: 0,
+      },
+    );
+  }
+
+  private async refreshOrderGroupTotals(
+    orderGroupId: string | null | undefined,
+    tx: Prisma.TransactionClient,
+  ) {
+    if (!orderGroupId) return;
+    const group = await tx.orderGroup.findUnique({
+      where: { id: orderGroupId },
+      include: { orders: true },
+    });
+    if (!group) return;
+
+    const activeOrders = group.orders.filter((order) => order.status !== OrderStatus.CANCELED);
+    if (!activeOrders.length) {
+      await tx.orderGroup.update({
+        where: { id: group.id },
+        data: {
+          subtotalCents: 0,
+          shippingFeeCents: 0,
+          serviceFeeCents: 0,
+          discountCents: 0,
+          totalCents: 0,
+          status: OrderGroupStatus.CANCELED,
+        },
+      });
+      return;
+    }
+
+    const activeHasShipping = activeOrders.some((order) => (order.shippingFeeCents ?? 0) > 0);
+    if (!activeHasShipping) {
+      const fallbackShippingFee = Math.max(
+        group.shippingFeeCents ?? 0,
+        ...group.orders.map((order) => order.shippingFeeCents ?? 0),
+      );
+      if (fallbackShippingFee > 0) {
+        const target = activeOrders[0];
+        const nextTotalCents = (target.totalCents ?? 0) + fallbackShippingFee;
+        await tx.order.update({
+          where: { id: target.id },
+          data: { shippingFeeCents: fallbackShippingFee, totalCents: nextTotalCents },
+        });
+        activeOrders[0] = {
+          ...target,
+          shippingFeeCents: fallbackShippingFee,
+          totalCents: nextTotalCents,
+        };
+      }
+    }
+
+    const totals = this.computeGroupTotals(activeOrders);
+    await tx.orderGroup.update({
+      where: { id: group.id },
+      data: {
+        subtotalCents: totals.subtotalCents,
+        shippingFeeCents: totals.shippingFeeCents,
+        serviceFeeCents: totals.serviceFeeCents,
+        discountCents: totals.discountCents,
+        totalCents: totals.totalCents,
+      },
+    });
+  }
+
   private async getOrderGroupSummary(userId: string, orderGroupId: string) {
     const group = await this.prisma.orderGroup.findFirst({
       where: { id: orderGroupId, userId },
@@ -1782,6 +2205,7 @@ export class OrdersService {
             totalCents: true,
             subtotalCents: true,
             shippingFeeCents: true,
+            serviceFeeCents: true,
             discountCents: true,
             providerId: true,
             branchId: true,
@@ -1794,12 +2218,14 @@ export class OrdersService {
     if (!group) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order group not found', 404);
     }
-    const serviceFeeCents = this.inferServiceFeeCents({
-      subtotalCents: group.subtotalCents,
-      shippingFeeCents: group.shippingFeeCents,
-      discountCents: group.discountCents,
-      totalCents: group.totalCents,
-    });
+    const serviceFeeCents =
+      group.serviceFeeCents ??
+      this.inferServiceFeeCents({
+        subtotalCents: group.subtotalCents,
+        shippingFeeCents: group.shippingFeeCents,
+        discountCents: group.discountCents,
+        totalCents: group.totalCents,
+      });
     return {
       orderGroupId: group.id,
       code: group.code,
@@ -1816,12 +2242,14 @@ export class OrdersService {
         status: this.toPublicStatus(order.status),
         subtotalCents: order.subtotalCents,
         shippingFeeCents: order.shippingFeeCents,
-        serviceFeeCents: this.inferServiceFeeCents({
-          subtotalCents: order.subtotalCents,
-          shippingFeeCents: order.shippingFeeCents ?? 0,
-          discountCents: order.discountCents ?? 0,
-          totalCents: order.totalCents,
-        }),
+        serviceFeeCents:
+          order.serviceFeeCents ??
+          this.inferServiceFeeCents({
+            subtotalCents: order.subtotalCents,
+            shippingFeeCents: order.shippingFeeCents ?? 0,
+            discountCents: order.discountCents ?? 0,
+            totalCents: order.totalCents,
+          }),
         discountCents: order.discountCents,
         totalCents: order.totalCents,
         providerId: order.providerId,
@@ -1869,6 +2297,15 @@ export class OrdersService {
 
   private calculateServiceFeeCents(groupCount: number) {
     return groupCount > 0 ? groupCount * this.serviceFeeCents : 0;
+  }
+
+  private resolveEffectiveStock(productStock?: number | null, branchStock?: number | null) {
+    const productValue = productStock ?? null;
+    const branchValue = branchStock ?? null;
+    if (productValue === null && branchValue === null) return 0;
+    if (productValue === null) return branchValue ?? 0;
+    if (branchValue === null) return productValue ?? 0;
+    return Math.min(productValue, branchValue);
   }
 
   private resolveCombinedShippingFee(
@@ -1955,7 +2392,13 @@ export class OrdersService {
             `Product unavailable: ${item.productNameSnapshot || item.productId}`,
           );
         }
-        const availableStock = branchProduct?.stock ?? product.stock ?? 0;
+        const availableStock = this.resolveEffectiveStock(product.stock, branchProduct?.stock);
+        if (availableStock <= 0) {
+          throw new DomainError(
+            ErrorCode.CART_PRODUCT_UNAVAILABLE,
+            `Product out of stock: ${product.name}`,
+          );
+        }
         if (availableStock < item.qty) {
           throw new DomainError(
             ErrorCode.CART_PRODUCT_UNAVAILABLE,
@@ -2040,7 +2483,7 @@ export class OrdersService {
       let deliveryRatePerKmCents: number | null = null;
       let deliveryEtaMinutes: number | null = null;
       let estimatedDeliveryTime: string | null = null;
-      let deliveryMode = source.deliveryMode ?? DeliveryMode.PLATFORM;
+      const deliveryMode = source.deliveryMode ?? DeliveryMode.PLATFORM;
       const distancePricingEnabled = this.settings.isDistancePricingEnabled();
       const hasLocation = address.lat !== null && address.lat !== undefined && address.lng !== null && address.lng !== undefined;
       if (branchId && (!distancePricingEnabled || hasLocation)) {
@@ -2072,8 +2515,10 @@ export class OrdersService {
           code,
           status: OrderStatus.PENDING,
           paymentMethod: PaymentMethod.COD,
+          deliveryTermsAccepted: true,
           subtotalCents,
           shippingFeeCents,
+          serviceFeeCents: this.serviceFeeCents,
           discountCents: 0,
           totalCents,
           loyaltyDiscountCents: 0,
@@ -2122,10 +2567,11 @@ export class OrdersService {
       ).catch(() => undefined);
       throw error;
     });
-    await this.automation.enqueueMany(automationEvents);
-    await this.clearCachesForOrder(result.orderId, userId);
-    return this.detail(userId, result.orderId);
-  }
+      await this.automation.enqueueMany(automationEvents);
+      await this.clearCachesForOrder(result.orderId, userId);
+      await this.notifyOrderCreatedWhatsapp(result.orderId);
+      return this.detail(userId, result.orderId);
+    }
 
   async cancelOrder(userId: string, orderId: string) {
     const order = await this.prisma.order.findUnique({
@@ -2146,6 +2592,14 @@ export class OrdersService {
     if (order.status === OrderStatus.CANCELED) {
       await this.clearCachesForOrder(orderId, userId);
       return this.detail(userId, orderId);
+    }
+    const customerCancelable: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED];
+    if (!customerCancelable.includes(order.status)) {
+      throw new DomainError(
+        ErrorCode.ORDER_CANCEL_NOT_ALLOWED,
+        'Orders cannot be canceled after preparation begins',
+        400,
+      );
     }
     this.assertStatusTransition(order.status, OrderStatus.CANCELED, {
       deliveryMode: order.deliveryMode,
@@ -2172,6 +2626,7 @@ export class OrdersService {
         await this.billing.voidCommissionForOrder(orderId, tx);
         await this.refundRedeemedPoints(orderId, tx);
         await this.revokeLoyaltyForOrder(orderId, tx);
+        await this.refreshOrderGroupTotals(order.orderGroupId, tx);
         const payload = await this.buildOrderEventPayload(orderId, tx);
         const event = await this.automation.emit('order.canceled', payload, {
           tx,
@@ -2183,12 +2638,19 @@ export class OrdersService {
       }),
     );
 
-    await this.automation.enqueueMany(automationEvents);
-    await this.clearCachesForOrder(orderId, userId);
-    return this.detail(userId, orderId);
-  }
+      await this.automation.enqueueMany(automationEvents);
+      await this.clearCachesForOrder(orderId, userId);
+      await this.notifyOrderCancelledWhatsapp(orderId, 'Cancelled by customer');
+      return this.detail(userId, orderId);
+    }
 
-  async updateStatus(orderId: string, nextStatus: OrderStatus, actorId?: string, note?: string) {
+  async updateStatus(
+    orderId: string,
+    nextStatus: OrderStatus,
+    actorId?: string,
+    note?: string,
+    context?: { deliveryFailedReason?: DeliveryFailureReason; deliveryFailedNote?: string | null },
+  ) {
     const before = await this.prisma.order.findUnique({
       where: { id: orderId },
       select: { id: true, status: true, userId: true, deliveryMode: true, driverId: true },
@@ -2217,6 +2679,16 @@ export class OrdersService {
         if (nextStatus === OrderStatus.DELIVERED) {
           statusUpdate.deliveredAt = new Date();
         }
+        if (nextStatus === OrderStatus.DELIVERY_FAILED) {
+          statusUpdate.deliveryFailedAt = new Date();
+          statusUpdate.deliveryFailedReason = context?.deliveryFailedReason ?? null;
+          statusUpdate.deliveryFailedNote = context?.deliveryFailedNote ?? null;
+        }
+        if (before.status === OrderStatus.DELIVERY_FAILED && nextStatus !== OrderStatus.DELIVERY_FAILED) {
+          statusUpdate.deliveryFailedAt = null;
+          statusUpdate.deliveryFailedReason = null;
+          statusUpdate.deliveryFailedNote = null;
+        }
         await tx.order.update({ where: { id: orderId }, data: statusUpdate });
         const history = await tx.orderStatusHistory.create({
           data: { orderId, from: before.status as any, to: nextStatus as any, note: note ?? undefined, actorId },
@@ -2237,17 +2709,18 @@ export class OrdersService {
       }),
     );
     await this.automation.enqueueMany(automationEvents);
-    await this.audit.log({
-      action: 'order.status.change',
-      entity: 'order',
-      entityId: orderId,
-      actorId,
-      before: { status: before.status },
-      after: { status: nextStatus, note },
-    });
-    await this.clearCachesForOrder(orderId, before.userId);
-    return { success: true, loyaltyEarned };
-  }
+      await this.audit.log({
+        action: 'order.status.change',
+        entity: 'order',
+        entityId: orderId,
+        actorId,
+        before: { status: before.status },
+        after: { status: nextStatus, note },
+      });
+      await this.clearCachesForOrder(orderId, before.userId);
+      await this.notifyOrderStatusWhatsapp(orderId);
+      return { success: true, loyaltyEarned };
+    }
 
   async adminCancelOrder(orderId: string, actorId?: string, note?: string) {
     const order = await this.prisma.order.findUnique({
@@ -2289,6 +2762,7 @@ export class OrdersService {
         await this.billing.voidCommissionForOrder(orderId, tx);
         await this.refundRedeemedPoints(orderId, tx);
         await this.revokeLoyaltyForOrder(orderId, tx);
+        await this.refreshOrderGroupTotals(order.orderGroupId, tx);
         const payload = await this.buildOrderEventPayload(orderId, tx);
         const event = await this.automation.emit('order.canceled', payload, {
           tx,
@@ -2301,17 +2775,18 @@ export class OrdersService {
     );
 
     await this.automation.enqueueMany(automationEvents);
-    await this.audit.log({
-      action: 'order.cancel',
-      entity: 'order',
-      entityId: orderId,
-      actorId,
-      before: { status: order.status },
-      after: { status: OrderStatus.CANCELED },
-    });
-    await this.clearCachesForOrder(orderId, order.userId);
-    return { success: true };
-  }
+      await this.audit.log({
+        action: 'order.cancel',
+        entity: 'order',
+        entityId: orderId,
+        actorId,
+        before: { status: order.status },
+        after: { status: OrderStatus.CANCELED },
+      });
+      await this.clearCachesForOrder(orderId, order.userId);
+      await this.notifyOrderCancelledWhatsapp(orderId, note ?? 'Cancelled by admin');
+      return { success: true };
+    }
 
   private async restockInventory(
     orderId: string,
@@ -2434,7 +2909,9 @@ export class OrdersService {
         return base;
       }
       case OrderStatus.OUT_FOR_DELIVERY:
-        return [OrderStatus.DELIVERED, OrderStatus.CANCELED];
+        return [OrderStatus.DELIVERED, OrderStatus.DELIVERY_FAILED, OrderStatus.CANCELED];
+      case OrderStatus.DELIVERY_FAILED:
+        return [OrderStatus.PREPARING, OrderStatus.CANCELED];
       default:
         return [];
     }
@@ -2537,6 +3014,8 @@ export class OrdersService {
         return 'order.preparing';
       case OrderStatus.OUT_FOR_DELIVERY:
         return 'order.out_for_delivery';
+      case OrderStatus.DELIVERY_FAILED:
+        return 'order.delivery_failed';
       case OrderStatus.DELIVERED:
         return 'order.delivered';
       case OrderStatus.CANCELED:
@@ -2625,6 +3104,9 @@ export class OrdersService {
       },
       eta_minutes: order.deliveryEtaMinutes ?? null,
       estimated_delivery_time: order.estimatedDeliveryTime ?? null,
+      delivery_failed_at: order.deliveryFailedAt ? order.deliveryFailedAt.toISOString() : null,
+      delivery_failed_reason: order.deliveryFailedReason ?? null,
+      delivery_failed_note: order.deliveryFailedNote ?? null,
       driver: order.driver
         ? {
             id: order.driver.id,
@@ -2662,6 +3144,8 @@ export class OrdersService {
         return 'PREPARING';
       case OrderStatus.OUT_FOR_DELIVERY:
         return 'OUT_FOR_DELIVERY';
+      case OrderStatus.DELIVERY_FAILED:
+        return 'DELIVERY_FAILED';
       case OrderStatus.DELIVERED:
         return 'DELIVERED';
       case OrderStatus.CANCELED:
@@ -2671,15 +3155,233 @@ export class OrdersService {
     }
   }
 
+  private async notifyOrderCreatedWhatsapp(orderId: string) {
+    try {
+      const context = await this.loadOrderWhatsappContext(orderId);
+      if (!context) return;
+      const settings = await this.settings.getSettings();
+      const lang = this.resolveWhatsappLanguage(settings.language);
+      await this.sendCustomerOrderStatusWhatsapp(context, lang, settings);
+      await this.sendProviderNewOrderWhatsapp(context, lang, settings);
+    } catch (err) {
+      this.logger.warn({ msg: 'WhatsApp order created notification failed', orderId, error: (err as Error)?.message });
+    }
+  }
+
+  private async notifyOrderStatusWhatsapp(orderId: string) {
+    try {
+      const context = await this.loadOrderWhatsappContext(orderId);
+      if (!context) return;
+      const settings = await this.settings.getSettings();
+      const lang = this.resolveWhatsappLanguage(settings.language);
+      await this.sendCustomerOrderStatusWhatsapp(context, lang, settings);
+    } catch (err) {
+      this.logger.warn({ msg: 'WhatsApp order status notification failed', orderId, error: (err as Error)?.message });
+    }
+  }
+
+  private async notifyOrderCancelledWhatsapp(orderId: string, reason?: string) {
+    try {
+      const context = await this.loadOrderWhatsappContext(orderId);
+      if (!context) return;
+      const settings = await this.settings.getSettings();
+      const lang = this.resolveWhatsappLanguage(settings.language);
+      await this.sendCustomerOrderStatusWhatsapp(context, lang, settings);
+      await this.sendProviderOrderCancelledWhatsapp(context, lang, reason ?? undefined);
+    } catch (err) {
+      this.logger.warn({ msg: 'WhatsApp order cancel notification failed', orderId, error: (err as Error)?.message });
+    }
+  }
+
+  private async loadOrderWhatsappContext(orderId: string) {
+    return this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        code: true,
+        status: true,
+        deliveryEtaMinutes: true,
+        estimatedDeliveryTime: true,
+        totalCents: true,
+        notes: true,
+        guestPhone: true,
+        user: { select: { phone: true } },
+        providerId: true,
+        provider: { select: { contactPhone: true } },
+        items: { select: { qty: true } },
+      },
+    });
+  }
+
+  private async sendCustomerOrderStatusWhatsapp(
+    order: {
+      id: string;
+      code: string | null;
+      status: OrderStatus;
+      deliveryEtaMinutes: number | null;
+      estimatedDeliveryTime: string | null;
+      guestPhone: string | null;
+      user: { phone: string } | null;
+    },
+    lang: WhatsappTemplateLanguage,
+    settings: { contactPhone?: string | null },
+  ) {
+    const phone = order.user?.phone ?? order.guestPhone;
+    if (!phone) return;
+    const idempotencyKey = `order:${order.id}:status:${order.status}`;
+    const existing = await this.prisma.whatsAppMessageLog.findFirst({
+      where: {
+        direction: 'OUTBOUND',
+        payload: { path: ['metadata', 'idempotencyKey'], equals: idempotencyKey },
+      },
+    });
+    if (existing) return;
+    const eta = this.localizeEta(lang, order.deliveryEtaMinutes ?? undefined) || order.estimatedDeliveryTime || '';
+    const supportHint = this.buildSupportHint(settings, lang);
+    await this.notifications.sendWhatsappTemplate({
+      to: phone,
+      template: 'order_status_update_v1',
+      language: lang,
+      variables: {
+        order_no: order.code ?? order.id,
+        status: this.localizeOrderStatus(order.status, lang),
+        eta,
+        support_hint: supportHint,
+      },
+      metadata: { orderId: order.id, status: order.status, idempotencyKey },
+    });
+  }
+
+  private async sendProviderNewOrderWhatsapp(
+    order: {
+      id: string;
+      code: string | null;
+      notes: string | null;
+      totalCents: number;
+      providerId: string | null;
+      provider: { contactPhone: string | null } | null;
+      items: Array<{ qty: number }>;
+    },
+    lang: WhatsappTemplateLanguage,
+    settings: { currency?: string | null },
+  ) {
+    if (!order.providerId) return;
+    const enabled = await this.isProviderWhatsappEnabled(order.providerId, 'newOrders');
+    if (!enabled) return;
+    const phone = await this.resolveProviderWhatsappPhone(order.providerId, order.provider?.contactPhone ?? null);
+    if (!phone) return;
+    const itemsCount = order.items.reduce((sum, item) => sum + (item.qty ?? 0), 0);
+    const currency = settings.currency ?? 'EGP';
+    const totalAmount = `${currency} ${(order.totalCents / 100).toFixed(2)}`;
+    await this.notifications.sendWhatsappTemplate({
+      to: phone,
+      template: 'provider_new_order_v1',
+      language: lang,
+      variables: {
+        order_no: order.code ?? order.id,
+        items_count: itemsCount,
+        total_amount: totalAmount,
+        notes: order.notes ?? '-',
+      },
+      metadata: { orderId: order.id },
+    });
+  }
+
+  private async sendProviderOrderCancelledWhatsapp(
+    order: {
+      id: string;
+      code: string | null;
+      providerId: string | null;
+      provider: { contactPhone: string | null } | null;
+    },
+    lang: WhatsappTemplateLanguage,
+    reason?: string,
+  ) {
+    if (!order.providerId) return;
+    const enabled = await this.isProviderWhatsappEnabled(order.providerId, 'newOrders');
+    if (!enabled) return;
+    const phone = await this.resolveProviderWhatsappPhone(order.providerId, order.provider?.contactPhone ?? null);
+    if (!phone) return;
+    await this.notifications.sendWhatsappTemplate({
+      to: phone,
+      template: 'provider_order_cancelled_v1',
+      language: lang,
+      variables: {
+        order_no: order.code ?? order.id,
+        reason: reason ?? 'Canceled',
+      },
+      metadata: { orderId: order.id },
+    });
+  }
+
+  private resolveWhatsappLanguage(value?: string | null): WhatsappTemplateLanguage {
+    return normalizeWhatsappLanguage(value ?? undefined);
+  }
+
+  private localizeOrderStatus(status: OrderStatus, lang: WhatsappTemplateLanguage) {
+    const mapping: Record<OrderStatus, { en: string; ar: string }> = {
+      PENDING: { en: 'Pending', ar: '\u0642\u064A\u062F \u0627\u0644\u0627\u0646\u062A\u0638\u0627\u0631' },
+      CONFIRMED: { en: 'Confirmed', ar: '\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u0637\u0644\u0628' },
+      PREPARING: { en: 'Preparing', ar: '\u0642\u064A\u062F \u0627\u0644\u062A\u062D\u0636\u064A\u0631' },
+      OUT_FOR_DELIVERY: { en: 'Out for delivery', ar: '\u0641\u064A \u0627\u0644\u0637\u0631\u064A\u0642' },
+      DELIVERY_FAILED: { en: 'Delivery failed', ar: '\u0641\u0634\u0644 \u0627\u0644\u062A\u0648\u0635\u064A\u0644' },
+      DELIVERED: { en: 'Delivered', ar: '\u062A\u0645 \u0627\u0644\u062A\u0648\u0635\u064A\u0644' },
+      CANCELED: { en: 'Canceled', ar: '\u062A\u0645 \u0627\u0644\u0625\u0644\u063A\u0627\u0621' },
+    };
+    const label = mapping[status] ?? { en: status, ar: status };
+    return lang === 'ar' ? label.ar : label.en;
+  }
+
+  private localizeEta(lang: WhatsappTemplateLanguage, minutes?: number) {
+    if (!minutes || minutes <= 0) return '';
+    if (lang === 'ar') {
+      return `\u0627\u0644\u0648\u0642\u062A \u0627\u0644\u0645\u062A\u0648\u0642\u0639: ${minutes} \u062F\u0642\u064A\u0642\u0629`;
+    }
+    return `ETA: ${minutes} min`;
+  }
+
+  private buildSupportHint(settings: { contactPhone?: string | null }, lang: WhatsappTemplateLanguage) {
+    if (settings.contactPhone) {
+      return lang === 'ar'
+        ? `\u062F\u0639\u0645: ${settings.contactPhone}`
+        : `Support: ${settings.contactPhone}`;
+    }
+    return lang === 'ar'
+      ? '\u0627\u0631\u062F \u0628\u0643\u0644\u0645\u0629 \u0645\u0633\u0627\u0639\u062F\u0629 \u0644\u0644\u062F\u0639\u0645'
+      : 'Reply HELP for support';
+  }
+
+  private async resolveProviderWhatsappPhone(providerId: string, fallback?: string | null) {
+    if (fallback) return fallback;
+    const owner = await this.prisma.providerUser.findFirst({
+      where: { providerId, role: { in: ['OWNER', 'MANAGER'] } },
+      orderBy: { createdAt: 'asc' },
+      select: { user: { select: { phone: true } } },
+    });
+    return owner?.user?.phone ?? null;
+  }
+
+  private async isProviderWhatsappEnabled(providerId: string, key: 'newOrders' | 'invoiceUpdates') {
+    const preference = await this.prisma.providerNotificationPreference.findUnique({ where: { providerId } });
+    const payload = preference?.preferences as Record<string, any> | undefined;
+    const channel = payload?.[key];
+    if (channel && typeof channel === 'object' && 'whatsapp' in channel) {
+      return Boolean(channel.whatsapp);
+    }
+    return true;
+  }
+
   private toOrderDetail(order: OrderWithRelations, zone?: any) {
     const guestAddress = (order as any).guestAddress as Record<string, any> | null | undefined;
-    const serviceFeeCents = this.inferServiceFeeCents({
-      subtotalCents: order.subtotalCents,
-      shippingFeeCents: order.shippingFeeCents ?? 0,
-      discountCents: order.discountCents ?? 0,
-      loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
-      totalCents: order.totalCents ?? 0,
-    });
+    const serviceFeeCents =
+      order.serviceFeeCents ??
+      this.inferServiceFeeCents({
+        subtotalCents: order.subtotalCents,
+        shippingFeeCents: order.shippingFeeCents ?? 0,
+        discountCents: order.discountCents ?? 0,
+        loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
+        totalCents: order.totalCents ?? 0,
+      });
     return {
       id: order.id,
       code: order.code ?? order.id,
@@ -2700,6 +3402,9 @@ export class OrdersService {
       deliveryEtaMinutes: order.deliveryEtaMinutes ?? undefined,
       deliveryZoneId: order.deliveryZoneId ?? undefined,
       deliveryZoneName: order.deliveryZoneName ?? undefined,
+      deliveryFailedAt: order.deliveryFailedAt ?? undefined,
+      deliveryFailedReason: order.deliveryFailedReason ?? undefined,
+      deliveryFailedNote: order.deliveryFailedNote ?? undefined,
       providerId: order.providerId ?? undefined,
       branchId: order.branchId ?? undefined,
       deliveryMode: order.deliveryMode ?? undefined,

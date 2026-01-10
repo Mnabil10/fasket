@@ -83,7 +83,7 @@ export class PublicProductFeedDto extends PaginationDto {
   @ApiPropertyOptional({ enum: ['qty'], description: 'Sort field for feed', default: 'qty' })
   @IsOptional()
   @IsIn(['qty'])
-  orderBy?: 'qty' = 'qty';
+  orderBy = 'qty' as const;
 
   @ApiPropertyOptional({ enum: ['desc', 'asc'], default: 'desc' })
   @IsOptional()

@@ -1,5 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsInt, IsOptional, IsString, Length, Min } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Length, Min } from 'class-validator';
 
 export enum PaymentMethodDto {
   COD = 'COD',
@@ -39,4 +40,10 @@ export class CreateOrderDto {
   @IsOptional()
   @IsEnum(OrderSplitFailurePolicyDto)
   splitFailurePolicy?: OrderSplitFailurePolicyDto = OrderSplitFailurePolicyDto.PARTIAL;
+
+  @ApiPropertyOptional({ description: 'Whether the customer accepted the delivery terms' })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  deliveryTermsAccepted?: boolean;
 }

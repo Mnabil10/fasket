@@ -10,22 +10,30 @@ import { RequestContextService } from '../common/context/request-context.service
 jest.mock('axios');
 
 class MemoryCache {
-  private store = new Map<string, any>();
+  private store = new Map<string, { value: any; expiresAt?: number }>();
   async get<T>(key: string): Promise<T | undefined> {
-    return this.store.get(key);
+    const entry = this.store.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt && entry.expiresAt <= Date.now()) {
+      this.store.delete(key);
+      return undefined;
+    }
+    return entry.value as T;
   }
-  async set<T>(key: string, value: T): Promise<void>;
-  async set<T>(key: string, value: T, _ttl: number): Promise<void>;
-  async set<T>(key: string, value: T): Promise<void> {
-    this.store.set(key, value);
+  async set<T>(key: string, value: T, ttl?: number): Promise<void> {
+    const expiresAt = ttl && ttl > 0 ? Date.now() + ttl : undefined;
+    this.store.set(key, { value, expiresAt });
   }
   async del(key: string) {
     this.store.delete(key);
   }
+  clear() {
+    this.store.clear();
+  }
 }
 
 describe('OtpService', () => {
-  const cache = new MemoryCache() as any;
+  const cache = new MemoryCache();
   const prisma = {
     user: { findUnique: jest.fn() },
   } as unknown as PrismaService;
@@ -37,8 +45,12 @@ describe('OtpService', () => {
   const config = { get: (k: string) => process.env[k] } as any;
   const telegram = {
     getActiveLinkForUser: jest.fn(),
+    getActiveLinkByPhone: jest.fn(),
     sendOtp: jest.fn(),
   } as unknown as TelegramService;
+  const notifications = {
+    sendWhatsappTemplate: jest.fn(),
+  } as any;
   const context = { get: jest.fn() } as unknown as RequestContextService;
 
   beforeAll(() => {
@@ -52,16 +64,46 @@ describe('OtpService', () => {
       lastOtpAttempts: 0,
       lastOtpSentAt: null,
     } as any);
+    telegram.getActiveLinkByPhone = jest.fn().mockResolvedValue({
+      id: 1,
+      telegramChatId: BigInt(123),
+      lastOtpAttempts: 0,
+      lastOtpSentAt: null,
+    } as any);
     telegram.sendOtp = jest.fn().mockResolvedValue({ ok: true, blocked: false });
     context.get = jest.fn().mockReturnValue(undefined);
   });
 
   beforeEach(() => {
+    cache.clear();
     (axios.post as jest.Mock).mockReset();
+    telegram.getActiveLinkForUser = jest.fn().mockResolvedValue({
+      id: 1,
+      telegramChatId: BigInt(123),
+      lastOtpAttempts: 0,
+      lastOtpSentAt: null,
+    } as any);
+    telegram.getActiveLinkByPhone = jest.fn().mockResolvedValue({
+      id: 1,
+      telegramChatId: BigInt(123),
+      lastOtpAttempts: 0,
+      lastOtpSentAt: null,
+    } as any);
+    telegram.sendOtp = jest.fn().mockResolvedValue({ ok: true, blocked: false });
   });
 
   it('locks after max failed attempts', async () => {
-    const service = new OtpService(cache, prisma, automation, config, auth, audit, telegram, context);
+    const service = new OtpService(
+      cache as any,
+      prisma,
+      automation,
+      config,
+      auth,
+      audit,
+      telegram,
+      notifications,
+      context,
+    );
     (service as any).generateOtp = jest.fn().mockReturnValue('123456');
 
     const req = await service.requestOtp('+201234567890', 'LOGIN');
@@ -77,10 +119,22 @@ describe('OtpService', () => {
     process.env.AUTOMATION_WEBHOOK_SECRET = 'static-secret';
     prisma.user.findUnique = jest.fn().mockResolvedValue({ id: 'user-1' } as any);
     telegram.getActiveLinkForUser = jest.fn().mockResolvedValue(null);
+    telegram.getActiveLinkByPhone = jest.fn().mockResolvedValue(null);
     telegram.sendOtp = jest.fn().mockResolvedValue({ ok: false, blocked: false });
+    notifications.sendWhatsappTemplate = jest.fn().mockRejectedValue(new Error('whatsapp_failed'));
     (axios.post as jest.Mock).mockResolvedValue({ status: 200 });
 
-    const service = new OtpService(cache, prisma, automation, config, auth, audit, telegram, context);
+    const service = new OtpService(
+      cache as any,
+      prisma,
+      automation,
+      config,
+      auth,
+      audit,
+      telegram,
+      notifications,
+      context,
+    );
     (service as any).generateOtp = jest.fn().mockReturnValue('654321');
 
     const result = await service.requestOtp('+201555555555', 'LOGIN');
@@ -88,5 +142,73 @@ describe('OtpService', () => {
     expect(axios.post).toHaveBeenCalledTimes(1);
     const headers = (axios.post as jest.Mock).mock.calls[0][2].headers;
     expect(headers['x-fasket-secret']).toBe('static-secret');
+  });
+
+  it('accepts valid OTPs for login', async () => {
+    const service = new OtpService(
+      cache as any,
+      prisma,
+      automation,
+      config,
+      auth,
+      audit,
+      telegram,
+      notifications,
+      context,
+    );
+    (service as any).generateOtp = jest.fn().mockReturnValue('123456');
+    auth.issueTokensForUserId = jest.fn().mockResolvedValue({ accessToken: 'access', refreshToken: 'refresh' });
+
+    const req = await service.requestOtp('+201234567891', 'LOGIN');
+    const result = await service.verifyOtp('+201234567891', 'LOGIN', req.otpId, '123456');
+
+    expect(result).toEqual({ success: true, tokens: { accessToken: 'access', refreshToken: 'refresh' } });
+  });
+
+  it('returns invalid OTP while the record is active', async () => {
+    const service = new OtpService(
+      cache as any,
+      prisma,
+      automation,
+      config,
+      auth,
+      audit,
+      telegram,
+      notifications,
+      context,
+    );
+    (service as any).generateOtp = jest.fn().mockReturnValue('123456');
+
+    const req = await service.requestOtp('+201234567892', 'LOGIN');
+    await expect(service.verifyOtp('+201234567892', 'LOGIN', req.otpId, '000000')).rejects.toThrow('Invalid OTP');
+  });
+
+  it('returns expired OTP after TTL elapses', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2025-01-01T00:00:00.000Z'));
+    process.env.OTP_TTL_SECONDS_TEST = '1';
+
+    const service = new OtpService(
+      cache as any,
+      prisma,
+      automation,
+      config,
+      auth,
+      audit,
+      telegram,
+      notifications,
+      context,
+    );
+    (service as any).generateOtp = jest.fn().mockReturnValue('123456');
+
+    const req = await service.requestOtp('+201234567893', 'LOGIN');
+    jest.setSystemTime(new Date(Date.now() + 2000));
+
+    await expect(service.verifyOtp('+201234567893', 'LOGIN', req.otpId, '123456')).rejects.toThrow(
+      'Invalid or expired OTP',
+    );
+
+    delete process.env.OTP_TTL_SECONDS_TEST;
+    jest.useRealTimers();
   });
 });

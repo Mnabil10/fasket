@@ -33,7 +33,11 @@ export class AdminOrdersController {
   ) {}
 
   @Get()
-  @ApiQuery({ name: 'status', required: false, enum: ['PENDING','CONFIRMED','PREPARING','OUT_FOR_DELIVERY','DELIVERED','CANCELED'] })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['PENDING', 'CONFIRMED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERY_FAILED', 'DELIVERED', 'CANCELED'],
+  })
   @ApiQuery({ name: 'from', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'to', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'customer', required: false })
@@ -41,6 +45,7 @@ export class AdminOrdersController {
   @ApiQuery({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'driverId', required: false })
   @ApiQuery({ name: 'hasDriver', required: false, type: Boolean })
+  @ApiQuery({ name: 'orderGroupId', required: false })
   @ApiOkResponse({ description: 'Paginated orders with filters' })
   async list(@CurrentUser() user: CurrentUserPayload, @Query() query: AdminOrderListDto) {
     const providerScope = await this.resolveProviderScope(user);
@@ -73,6 +78,9 @@ export class AdminOrdersController {
       where.providerId = providerScope;
     } else if (query.providerId) {
       where.providerId = query.providerId;
+    }
+    if (query.orderGroupId) {
+      where.orderGroupId = query.orderGroupId;
     }
 
     const [items, total] = await this.svc.prisma.$transaction([

@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { PasswordResetController } from './password-reset.controller';
+import { PasswordResetPublicController } from './password-reset-public.controller';
 import { PasswordResetService } from './password-reset.service';
 import { OtpModule } from '../otp/otp.module';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -8,7 +9,7 @@ import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [forwardRef(() => OtpModule), PrismaModule, AutomationModule, CommonModule],
-  controllers: [PasswordResetController],
+  controllers: [PasswordResetController, PasswordResetPublicController],
   providers: [PasswordResetService],
   exports: [PasswordResetService],
 })

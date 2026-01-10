@@ -149,7 +149,12 @@ async function bootstrap() {
   const uploadsDir = configService.get<string>('UPLOADS_DIR') ?? 'uploads';
   app.use('/uploads', express.static(path.resolve(process.cwd(), uploadsDir)));
 
-  const enforceHttps = (configService.get<string>('ENFORCE_HTTPS') ?? 'false') === 'true';
+  const nodeEnv = (configService.get<string>('NODE_ENV') ?? '').toLowerCase();
+  const enforceHttpsEnv = configService.get<string>('ENFORCE_HTTPS');
+  const enforceHttps = enforceHttpsEnv ? enforceHttpsEnv === 'true' : nodeEnv === 'production';
+  if (nodeEnv === 'production' && enforceHttpsEnv === 'false') {
+    logger.warn('ENFORCE_HTTPS=false ignored in production; HTTPS enforcement is required.');
+  }
   if (enforceHttps) {
     app.enable('trust proxy');
     app.use((req: Request, res: Response, next: NextFunction) => {

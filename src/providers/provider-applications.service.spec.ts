@@ -36,7 +36,7 @@ describe('ProviderApplicationsService', () => {
       phone: '0100',
       email: 'a@b.com',
       deliveryMode: DeliveryMode.PLATFORM,
-      notes: null,
+      notes: undefined,
       status: ProviderApplicationStatus.PENDING,
       providerId: null,
       rejectionReason: null,
@@ -56,7 +56,7 @@ describe('ProviderApplicationsService', () => {
       phone: '0100',
       email: 'a@b.com',
       deliveryMode: DeliveryMode.PLATFORM,
-      notes: null,
+      notes: undefined,
     });
 
     expect(result).toEqual(created);
@@ -80,7 +80,7 @@ describe('ProviderApplicationsService', () => {
       phone: '0100',
       email: 'a@b.com',
       deliveryMode: DeliveryMode.MERCHANT,
-      notes: null,
+      notes: undefined,
       status: ProviderApplicationStatus.PENDING,
       providerId: null,
       rejectionReason: null,
@@ -145,7 +145,7 @@ describe('ProviderApplicationsService', () => {
       phone: '0100',
       email: 'a@b.com',
       deliveryMode: DeliveryMode.PLATFORM,
-      notes: null,
+      notes: undefined,
       status: ProviderApplicationStatus.PENDING,
       providerId: null,
       rejectionReason: null,

@@ -26,12 +26,17 @@ export class ProviderOrdersController {
   ) {}
 
   @Get()
-  @ApiQuery({ name: 'status', required: false, enum: ['PENDING','CONFIRMED','PREPARING','OUT_FOR_DELIVERY','DELIVERED','CANCELED'] })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['PENDING', 'CONFIRMED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERY_FAILED', 'DELIVERED', 'CANCELED'],
+  })
   @ApiQuery({ name: 'from', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'to', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'customer', required: false })
   @ApiQuery({ name: 'minTotalCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } })
+  @ApiQuery({ name: 'orderGroupId', required: false })
   @ApiOkResponse({ description: 'Paginated orders with filters' })
   async list(@CurrentUser() user: CurrentUserPayload, @Query() query: AdminOrderListDto) {
     const providerId = await this.resolveProviderScope(user);
@@ -54,6 +59,9 @@ export class ProviderOrdersController {
       where.totalCents = {};
       if (query.minTotalCents !== undefined) (where.totalCents as Prisma.IntFilter).gte = query.minTotalCents;
       if (query.maxTotalCents !== undefined) (where.totalCents as Prisma.IntFilter).lte = query.maxTotalCents;
+    }
+    if (query.orderGroupId) {
+      where.orderGroupId = query.orderGroupId;
     }
 
     const [items, total] = await this.prisma.$transaction([

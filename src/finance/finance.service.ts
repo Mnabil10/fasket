@@ -22,6 +22,7 @@ type LineItem = {
 export type CalculatedFinancials = {
   subtotalCents: number;
   deliveryFeeCents: number;
+  serviceFeeCents: number;
   discountCents: number;
   loyaltyDiscountCents: number;
   taxCents: number;
@@ -42,6 +43,7 @@ type SettlementInput = {
   order: {
     subtotalCents: number;
     shippingFeeCents: number;
+    serviceFeeCents: number;
     discountCents: number;
     loyaltyDiscountCents: number;
     totalCents: number;
@@ -98,6 +100,7 @@ export function calculateOrderFinancials(input: SettlementInput): CalculatedFina
   const { order, items, planRateBps, baseConfig, categoryOverrides } = input;
   const subtotalCents = order.subtotalCents ?? 0;
   const deliveryFeeCents = order.shippingFeeCents ?? 0;
+  const serviceFeeCents = order.serviceFeeCents ?? 0;
   const discountCents = order.discountCents ?? 0;
   const loyaltyDiscountCents = order.loyaltyDiscountCents ?? 0;
   const totalDiscount = discountCents + loyaltyDiscountCents;
@@ -158,6 +161,7 @@ export function calculateOrderFinancials(input: SettlementInput): CalculatedFina
   if (vendorNetCents < 0) vendorNetCents = 0;
 
   let platformRevenueCents = commissionCents;
+  platformRevenueCents += serviceFeeCents;
   if (baseConfig.deliveryFeeRecipient === FeeRecipient.PLATFORM) {
     platformRevenueCents += deliveryFeeCents;
   }
@@ -168,6 +172,7 @@ export function calculateOrderFinancials(input: SettlementInput): CalculatedFina
   return {
     subtotalCents,
     deliveryFeeCents,
+    serviceFeeCents,
     discountCents,
     loyaltyDiscountCents,
     taxCents: 0,
@@ -207,6 +212,7 @@ export class FinanceService {
         status: true,
         subtotalCents: true,
         shippingFeeCents: true,
+        serviceFeeCents: true,
         discountCents: true,
         loyaltyDiscountCents: true,
         totalCents: true,
@@ -252,6 +258,7 @@ export class FinanceService {
       order: {
         subtotalCents: order.subtotalCents ?? 0,
         shippingFeeCents: order.shippingFeeCents ?? 0,
+        serviceFeeCents: order.serviceFeeCents ?? 0,
         discountCents: order.discountCents ?? 0,
         loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
         totalCents: order.totalCents ?? 0,
@@ -276,6 +283,7 @@ export class FinanceService {
           currency: subscription?.plan?.currency ?? 'EGP',
           subtotalCents: calculated.subtotalCents,
           deliveryFeeCents: calculated.deliveryFeeCents,
+          serviceFeeCents: calculated.serviceFeeCents,
           discountCents: calculated.discountCents,
           loyaltyDiscountCents: calculated.loyaltyDiscountCents,
           taxCents: calculated.taxCents,
@@ -324,6 +332,7 @@ export class FinanceService {
           metadata: {
             commissionRateBps: calculated.commissionRateBps,
             commissionCents: calculated.commissionCents,
+            serviceFeeCents: calculated.serviceFeeCents,
             platformRevenueCents: calculated.platformRevenueCents,
             deliveryFeeRecipient: calculated.deliveryFeeRecipient,
             gatewayFeeRecipient: calculated.gatewayFeeRecipient,

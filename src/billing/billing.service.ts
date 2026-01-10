@@ -1,10 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { BillingInterval, InvoiceItemType, InvoiceStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class BillingService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(BillingService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async recordCommissionForOrder(orderId: string, tx?: Prisma.TransactionClient) {
     const client = tx ?? this.prisma;
@@ -151,6 +157,10 @@ export class BillingService {
       },
     });
 
+    await this.notifyProviderInvoiceWhatsapp(created).catch((err) => {
+      this.logger.warn({ msg: 'Invoice WhatsApp notification failed', invoiceId: created.id, error: (err as Error)?.message });
+    });
+
     const inTrial = params.trialEndsAt ? params.trialEndsAt > params.now : false;
     if (params.plan.amountCents > 0 && !inTrial) {
       await this.addInvoiceItem({
@@ -196,5 +206,38 @@ export class BillingService {
     const periodStart = new Date(Date.UTC(year, month, 1, 0, 0, 0));
     const periodEnd = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0));
     return { periodStart, periodEnd };
+  }
+
+  private async notifyProviderInvoiceWhatsapp(invoice: { id: string; providerId: string; number: string; amountDueCents: number; dueAt: Date | null; currency: string }) {
+    const preference = await this.prisma.providerNotificationPreference.findUnique({ where: { providerId: invoice.providerId } });
+    const payload = preference?.preferences as Record<string, any> | undefined;
+    const channel = payload?.invoiceUpdates;
+    if (channel && typeof channel === 'object' && 'whatsapp' in channel && !channel.whatsapp) {
+      return;
+    }
+    const provider = await this.prisma.provider.findUnique({ where: { id: invoice.providerId }, select: { contactPhone: true } });
+    let phone = provider?.contactPhone ?? null;
+    if (!phone) {
+      const owner = await this.prisma.providerUser.findFirst({
+        where: { providerId: invoice.providerId, role: { in: ['OWNER', 'MANAGER'] } },
+        orderBy: { createdAt: 'asc' },
+        select: { user: { select: { phone: true } } },
+      });
+      phone = owner?.user?.phone ?? null;
+    }
+    if (!phone) return;
+
+    const dueDate = invoice.dueAt ? invoice.dueAt.toISOString().slice(0, 10) : '';
+    const amount = `${invoice.currency ?? 'EGP'} ${(invoice.amountDueCents / 100).toFixed(2)}`;
+    await this.notifications.sendWhatsappTemplate({
+      to: phone,
+      template: 'provider_invoice_ready_v1',
+      variables: {
+        invoice_no: invoice.number,
+        amount_due: amount,
+        due_date: dueDate,
+      },
+      metadata: { invoiceId: invoice.id },
+    });
   }
 }

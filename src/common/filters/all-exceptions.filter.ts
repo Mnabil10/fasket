@@ -91,6 +91,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     response.status(status).json({
       success: false,
       code: code || ErrorCode.INTERNAL_ERROR,
+      errorCode: code || ErrorCode.INTERNAL_ERROR,
       message,
       details,
       correlationId,

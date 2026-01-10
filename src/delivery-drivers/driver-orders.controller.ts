@@ -9,7 +9,12 @@ import { CurrentUserPayload } from '../common/types/current-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersService } from '../orders/orders.service';
 import { DriverLocationDto } from './dto/driver-location.dto';
-import { DriverOrderActionDto, DriverOrderListDto, DriverOrderStatusDto } from './dto/driver-orders.dto';
+import {
+  DriverOrderActionDto,
+  DriverOrderFailureDto,
+  DriverOrderListDto,
+  DriverOrderStatusDto,
+} from './dto/driver-orders.dto';
 import { DeliveryDriversService } from './delivery-drivers.service';
 import { DomainError, ErrorCode } from '../common/errors';
 
@@ -26,14 +31,18 @@ export class DriverOrdersController {
   ) {}
 
   @Get()
-  @ApiQuery({ name: 'status', required: false, enum: ['PENDING','CONFIRMED','PREPARING','OUT_FOR_DELIVERY','DELIVERED','CANCELED'] })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['PENDING', 'CONFIRMED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERY_FAILED', 'DELIVERED', 'CANCELED'],
+  })
   async list(@CurrentUser() user: CurrentUserPayload, @Query() query: DriverOrderListDto) {
     const driver = await this.getDriverProfile(user.userId);
     const where: Prisma.OrderWhereInput = { driverId: driver.id };
     if (query.status) {
       where.status = query.status;
     } else {
-      where.status = { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELED] };
+      where.status = { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELED, OrderStatus.DELIVERY_FAILED] };
     }
 
     const [items, total] = await this.prisma.$transaction([
@@ -111,6 +120,21 @@ export class DriverOrdersController {
     const driver = await this.getDriverProfile(user.userId);
     await this.getAssignedOrder(id, driver.id);
     return this.orders.updateStatus(id, OrderStatus.DELIVERED, user.userId, dto.note);
+  }
+
+  @Post(':id/fail')
+  async failDelivery(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() dto: DriverOrderFailureDto,
+  ) {
+    const driver = await this.getDriverProfile(user.userId);
+    await this.getAssignedOrder(id, driver.id);
+    const note = dto.note ?? dto.reason;
+    return this.orders.updateStatus(id, OrderStatus.DELIVERY_FAILED, user.userId, note, {
+      deliveryFailedReason: dto.reason,
+      deliveryFailedNote: dto.note ?? null,
+    });
   }
 
   @Post(':id/location')

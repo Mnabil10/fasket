@@ -11,5 +11,6 @@ import { AutomationHmacGuard } from '../automation/automation-hmac.guard';
   imports: [PrismaModule, SettingsModule, AutomationModule, CommonModule],
   controllers: [AutomationSupportController],
   providers: [AutomationSupportService, AutomationHmacGuard],
+  exports: [AutomationSupportService],
 })
 export class AutomationSupportModule {}

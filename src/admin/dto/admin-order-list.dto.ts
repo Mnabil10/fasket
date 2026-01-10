@@ -63,4 +63,9 @@ export class AdminOrderListDto extends PaginationDto {
   @IsOptional()
   @IsString()
   providerId?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by order group id' })
+  @IsOptional()
+  @IsString()
+  orderGroupId?: string;
 }

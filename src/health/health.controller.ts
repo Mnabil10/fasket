@@ -59,11 +59,40 @@ export class HealthController {
     }
   }
 
+  private async whatsappQueueCheck(): Promise<HealthIndicatorResult> {
+    if (!this.redisEnabled()) return { whatsappQueue: { status: 'down', message: 'disabled' } };
+    const redisUrl = this.config.get<string>('REDIS_URL');
+    if (!redisUrl) return { whatsappQueue: { status: 'down', message: 'REDIS_URL missing' } };
+    const queue = new Queue('whatsapp.send', { connection: { url: redisUrl } });
+    try {
+      await queue.getJobs(['active'], 0, 0);
+      return { whatsappQueue: { status: 'up' } };
+    } finally {
+      await queue.close();
+    }
+  }
+
   private async queueMetrics() {
     if (!this.redisEnabled()) return { enabled: false };
     const redisUrl = this.config.get<string>('REDIS_URL');
     if (!redisUrl) return { enabled: false, error: 'REDIS_URL missing' };
     const queue = new Queue('notifications', { connection: { url: redisUrl } });
+    try {
+      const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed');
+      const waitingJobs = await queue.getJobs(['waiting'], 0, 0);
+      const oldest = waitingJobs[0];
+      const queueLagMs = oldest?.timestamp ? Date.now() - oldest.timestamp : 0;
+      return { enabled: true, counts, queueLagMs };
+    } finally {
+      await queue.close();
+    }
+  }
+
+  private async whatsappQueueMetrics() {
+    if (!this.redisEnabled()) return { enabled: false };
+    const redisUrl = this.config.get<string>('REDIS_URL');
+    if (!redisUrl) return { enabled: false, error: 'REDIS_URL missing' };
+    const queue = new Queue('whatsapp.send', { connection: { url: redisUrl } });
     try {
       const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed');
       const waitingJobs = await queue.getJobs(['waiting'], 0, 0);
@@ -82,6 +111,7 @@ export class HealthController {
       () => this.prismaCheck(),
       () => this.redisCheck(),
       () => this.queueCheck(),
+      () => this.whatsappQueueCheck(),
       async () => {
         const uploadHealth = await this.uploads.checkHealth();
         return { uploads: { status: uploadHealth?.ok ? 'up' : 'down' } };
@@ -121,6 +151,7 @@ export class HealthController {
         uploads: 'enabled',
       },
       queue: await this.queueMetrics(),
+      whatsappQueue: await this.whatsappQueueMetrics(),
       cache: this.cache.stats(),
       orders: {
         lastHour: await this.prisma.order.count({

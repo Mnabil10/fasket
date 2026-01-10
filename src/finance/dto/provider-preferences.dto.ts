@@ -17,6 +17,11 @@ export class NotificationChannelDto {
   @IsOptional()
   @IsBoolean()
   push?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  whatsapp?: boolean;
 }
 
 export class ProviderNotificationPreferencesDto {
@@ -37,4 +42,10 @@ export class ProviderNotificationPreferencesDto {
   @ValidateNested()
   @Type(() => NotificationChannelDto)
   subscriptionExpiry?: NotificationChannelDto;
+
+  @ApiPropertyOptional({ type: NotificationChannelDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NotificationChannelDto)
+  invoiceUpdates?: NotificationChannelDto;
 }

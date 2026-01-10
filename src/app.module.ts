@@ -17,6 +17,7 @@ import { CartModule } from './cart/cart.module';
 import { OrdersModule } from './orders/orders.module';
 import { AdminModule } from './admin/admin.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { AppController } from './app.controller';
 import { HealthController } from './health/health.controller';
 import { CommonModule } from './common/common.module';
@@ -108,6 +109,7 @@ import { FinanceModule } from './finance/finance.module';
         { name: 'uploadsAdmin', ttl: 60, limit: 30 },
         { name: 'supportBot', ttl: 600, limit: 5 },
         { name: 'supportBotSearch', ttl: 600, limit: 10 },
+        { name: 'whatsappWebhook', ttl: 60, limit: 60 },
         { name: 'otpRequest', ttl: 600, limit: 10 },
         { name: 'otpVerify', ttl: 600, limit: 20 },
         { name: 'passwordResetRequest', ttl: 600, limit: 5 },
@@ -124,6 +126,7 @@ import { FinanceModule } from './finance/finance.module';
     OrdersModule,
     AdminModule,
     NotificationsModule,
+    WhatsappModule,
     AutomationModule,
     OtpModule,
     PasswordResetModule,

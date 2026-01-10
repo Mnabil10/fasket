@@ -100,6 +100,7 @@ describe('Signup session flow (telegram)', () => {
   const cache = new MemoryCache() as any;
   const otp = {} as any;
   const telegram = {} as any;
+  const slugs = {} as any;
 
   let prisma: FakePrisma;
   let automationEmit: jest.Mock;
@@ -118,6 +119,7 @@ describe('Signup session flow (telegram)', () => {
       cache,
       telegram as any,
       automation,
+      slugs,
     );
   });
 
@@ -126,14 +128,18 @@ describe('Signup session flow (telegram)', () => {
       { phone: '+201234567890', country: 'EG', fullName: 'Test User' },
       {},
     );
+    if (!start.success) {
+      throw new Error('signupStartSession failed');
+    }
+    const signupSessionId = (start as any).signupSessionId;
 
     const first = await service.signupConfirmLinkToken(
       undefined,
       { chatId: BigInt(555), telegramUserId: BigInt(777), telegramUsername: 'tester' },
-      { signupSessionId: start.signupSessionId },
+      { signupSessionId },
     );
     expect(first.success).toBe(true);
-    const stored = prisma.getSession(start.signupSessionId);
+    const stored = prisma.getSession(signupSessionId);
     expect(stored.telegramChatId).toBe(BigInt(555));
     expect(stored.telegramUserId).toBe(BigInt(777));
     expect(stored.telegramUsername).toBe('tester');
@@ -142,7 +148,7 @@ describe('Signup session flow (telegram)', () => {
     const second = await service.signupConfirmLinkToken(
       undefined,
       { chatId: BigInt(555) },
-      { signupSessionId: start.signupSessionId },
+      { signupSessionId },
     );
     expect(second.success).toBe(true);
     expect((prisma.signupSession.updateMany as jest.Mock).mock.calls.length).toBe(1);
@@ -153,8 +159,12 @@ describe('Signup session flow (telegram)', () => {
       { phone: '+201000000000', country: 'EG', fullName: 'Test User' },
       {},
     );
+    if (!start.success) {
+      throw new Error('signupStartSession failed');
+    }
+    const signupSessionId = (start as any).signupSessionId;
 
-    await expect(service.signupRequestOtp({ signupSessionId: start.signupSessionId }, {})).rejects.toMatchObject({
+    await expect(service.signupRequestOtp({ signupSessionId }, {})).rejects.toMatchObject({
       response: expect.objectContaining({ error: 'TELEGRAM_NOT_LINKED', message: 'TELEGRAM_NOT_LINKED' }),
     });
   });
@@ -164,17 +174,24 @@ describe('Signup session flow (telegram)', () => {
       { phone: '+201111111111', country: 'EG', fullName: 'Test User' },
       {},
     );
-    await service.signupConfirmLinkToken(undefined, { chatId: BigInt(123456789) }, { signupSessionId: start.signupSessionId });
+    if (!start.success) {
+      throw new Error('signupStartSession failed');
+    }
+    const signupSessionId = (start as any).signupSessionId;
+    await service.signupConfirmLinkToken(undefined, { chatId: BigInt(123456789) }, { signupSessionId });
 
-    const otpRequest = await service.signupRequestOtp({ signupSessionId: start.signupSessionId }, {});
+    const otpRequest = await service.signupRequestOtp({ signupSessionId }, {});
+    if (!otpRequest.success) {
+      throw new Error('signupRequestOtp failed');
+    }
 
     expect(otpRequest.success).toBe(true);
-    expect(otpRequest.expiresInSeconds).toBe(configValues.OTP_TTL_SECONDS);
+    expect((otpRequest as any).expiresInSeconds).toBe(configValues.OTP_TTL_SECONDS);
     expect(automationEmit).toHaveBeenCalledTimes(1);
     const [eventType, payload, options] = automationEmit.mock.calls[0];
     expect(eventType).toBe('auth.otp.requested');
     expect(payload.telegramChatId).toBe(123456789);
-    expect(payload.otpId).toBe(otpRequest.requestId);
-    expect(options?.id).toBe(otpRequest.requestId);
+    expect(payload.otpId).toBe((otpRequest as any).requestId);
+    expect(options?.id).toBe((otpRequest as any).requestId);
   });
 });

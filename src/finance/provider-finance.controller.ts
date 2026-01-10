@@ -21,9 +21,10 @@ import { FinanceLedgerListDto } from './dto/finance.dto';
 import { ProviderNotificationPreferencesDto } from './dto/provider-preferences.dto';
 
 const DEFAULT_PREFS = {
-  newOrders: { email: true, sms: true, push: true },
-  payoutSuccess: { email: true, sms: false, push: true },
-  subscriptionExpiry: { email: true, sms: false, push: true },
+  newOrders: { email: true, sms: true, push: true, whatsapp: true },
+  payoutSuccess: { email: true, sms: false, push: true, whatsapp: false },
+  subscriptionExpiry: { email: true, sms: false, push: true, whatsapp: false },
+  invoiceUpdates: { email: true, sms: false, push: true, whatsapp: true },
 };
 
 @ApiTags('Provider/Finance')
@@ -158,6 +159,7 @@ export class ProviderFinanceController {
         email: channel.email ?? data[key].email,
         sms: channel.sms ?? data[key].sms,
         push: channel.push ?? data[key].push,
+        whatsapp: channel.whatsapp ?? data[key].whatsapp,
       };
     }
     return data;
