@@ -35,6 +35,13 @@ enum OrderStatus {
 enum PaymentMethod {
   COD
   CARD
+  WALLET
+}
+
+enum WalletProvider {
+  VODAFONE_CASH
+  ORANGE_MONEY
+  ETISALAT_CASH
 }
 
 enum ProviderType {
@@ -260,6 +267,7 @@ model User {
   twoFaEnabled Boolean @default(false)
   twoFaSecret  String?
   addresses  Address[]
+  paymentMethods SavedPaymentMethod[]
   cart       Cart?
   orders     Order[]
   loyaltyTransactions LoyaltyTransaction[]
@@ -302,6 +310,31 @@ model Address {
   orderGroups OrderGroup[]
 
   @@index([zoneId])
+}
+
+model SavedPaymentMethod {
+  id             String         @id @default(cuid())
+  userId         String
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           PaymentMethod
+  provider       String?
+  token          String
+  last4          String?
+  brand          String?
+  expMonth       Int?
+  expYear        Int?
+  walletProvider WalletProvider?
+  walletPhone    String?
+  isDefault      Boolean        @default(false)
+  metadata       Json?
+  orderGroups    OrderGroup[]
+  orders         Order[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([userId, isDefault])
+  @@index([type])
 }
 
 model Provider {
@@ -539,6 +572,8 @@ model OrderGroup {
   status             OrderGroupStatus       @default(PENDING)
   splitFailurePolicy OrderSplitFailurePolicy @default(PARTIAL)
   paymentMethod      PaymentMethod          @default(COD)
+  paymentMethodId    String?
+  paymentMethodRef   SavedPaymentMethod?    @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
   deliveryTermsAccepted Boolean?
   couponCode         String?
   subtotalCents      Int
@@ -603,6 +638,8 @@ model Order {
   deliveryFailedReason DeliveryFailureReason?
   deliveryFailedNote String?
   paymentMethod    PaymentMethod        @default(COD)
+  paymentMethodId  String?
+  paymentMethodRef SavedPaymentMethod?  @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
   driverId         String?
   driver           DeliveryDriver?      @relation(fields: [driverId], references: [id], onDelete: SetNull)
   driverAssignedAt DateTime?

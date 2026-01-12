@@ -1,7 +1,8 @@
 import { ApiProperty, ApiPropertyOptional, IntersectionType, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsEmail, IsEnum, IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
 import { cleanNullableString, cleanString } from '../../common/utils/sanitize.util';
+import { normalizePhoneToE164OrNull } from '../../common/utils/phone.util';
 import { PaginationDto } from './pagination.dto';
 
 export enum ProviderTypeDto {
@@ -83,9 +84,10 @@ export class CreateProviderDto {
   contactEmail?: string;
 
   @ApiPropertyOptional()
-  @Transform(({ value }) => cleanNullableString(value))
+  @Transform(({ value }) => normalizePhoneToE164OrNull(cleanNullableString(value)))
   @IsOptional()
   @IsString()
+  @Matches(/^\+[1-9]\d{7,14}$/)
   contactPhone?: string;
 
   @ApiPropertyOptional()

@@ -1,8 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsEnum, IsOptional, IsPhoneNumber, IsString, Matches } from 'class-validator';
+import { IsEmail, IsEnum, IsOptional, IsString, Matches } from 'class-validator';
 import { ProviderType } from '@prisma/client';
 import { cleanNullableString, cleanString } from '../common/utils/sanitize.util';
+import { normalizePhoneToE164 } from '../common/utils/phone.util';
 
 const passwordPolicy = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-={}\[\]:;"'`|<>,.?/]{8,}$/;
 
@@ -13,8 +14,8 @@ export class RegisterDto {
   name!: string;
 
   @ApiProperty()
-  @Transform(({ value }) => cleanString(value))
-  @IsPhoneNumber('EG')
+  @Transform(({ value }) => normalizePhoneToE164(cleanString(value)))
+  @Matches(/^\+[1-9]\d{7,14}$/)
   phone!: string;
 
   @ApiProperty({ required: false })
@@ -130,8 +131,9 @@ export class LoginDto {
 
 export class LoginOtpDto {
   @ApiProperty({ description: 'Phone number for OTP login', example: '+201234567890' })
-  @Transform(({ value }) => cleanString(value))
+  @Transform(({ value }) => normalizePhoneToE164(cleanString(value)))
   @IsString()
+  @Matches(/^\+[1-9]\d{7,14}$/)
   phone!: string;
 
   @ApiProperty({ description: 'OTP code', example: '123456' })
@@ -189,8 +191,8 @@ export class SignupVerifyDto {
 // --- New signup session (Telegram-first) DTOs ---
 export class SignupSessionStartDto {
   @ApiProperty()
-  @Transform(({ value }) => cleanString(value))
-  @IsPhoneNumber('EG')
+  @Transform(({ value }) => normalizePhoneToE164(cleanString(value)))
+  @Matches(/^\+[1-9]\d{7,14}$/)
   phone!: string;
 
   @ApiProperty()

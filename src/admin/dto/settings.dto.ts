@@ -16,6 +16,7 @@ import {
 import { Type } from 'class-transformer';
 import { Transform } from 'class-transformer';
 import { cleanNullableString } from '../../common/utils/sanitize.util';
+import { normalizePhoneToE164OrNull } from '../../common/utils/phone.util';
 
 export class DayHoursDto {
   @ApiPropertyOptional()
@@ -164,6 +165,24 @@ export class DigitalWalletsDto {
   @ValidateNested()
   @Type(() => WalletConfigDto)
   googlePay?: WalletConfigDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WalletConfigDto)
+  vodafoneCash?: WalletConfigDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WalletConfigDto)
+  orangeMoney?: WalletConfigDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WalletConfigDto)
+  etisalatCash?: WalletConfigDto;
 }
 
 export class StripeDto {
@@ -312,7 +331,9 @@ export class GeneralSettingsDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @Transform(({ value }) => normalizePhoneToE164OrNull(cleanNullableString(value)))
   @IsString()
+  @Matches(/^\+[1-9]\d{7,14}$/)
   contactPhone?: string;
 
   @ApiPropertyOptional()

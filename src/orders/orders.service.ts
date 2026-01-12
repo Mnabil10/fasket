@@ -22,6 +22,8 @@ import { BillingService } from '../billing/billing.service';
 import { FinanceService } from '../finance/finance.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { normalizeWhatsappLanguage, WhatsappTemplateLanguage } from '../whatsapp/templates/whatsapp.templates';
+import { OtpService } from '../otp/otp.service';
+import { normalizePhoneToE164 } from '../common/utils/phone.util';
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
@@ -96,6 +98,7 @@ export class OrdersService {
     private readonly billing: BillingService,
     private readonly finance: FinanceService,
     private readonly notifications: NotificationsService,
+    private readonly otp: OtpService,
   ) {}
 
   async list(userId: string) {
@@ -490,7 +493,12 @@ export class OrdersService {
     const splitPolicy =
       (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
     const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
-    await this.assertPaymentMethodEnabled(paymentMethod, { userId, idempotencyKey });
+    const savedPaymentMethod = await this.resolveSavedPaymentMethod(userId, paymentMethod, payload.paymentMethodId);
+    await this.assertPaymentMethodEnabled(paymentMethod, {
+      userId,
+      idempotencyKey,
+      walletProvider: savedPaymentMethod?.walletProvider ?? null,
+    });
     const automationEvents: AutomationEventRef[] = [];
 
     if (idempotencyKey) {
@@ -827,6 +835,7 @@ export class OrdersService {
             status: 'PENDING',
             splitFailurePolicy: splitPolicy,
             paymentMethod: paymentMethod as PaymentMethod,
+            paymentMethodId: savedPaymentMethod?.id ?? null,
             deliveryTermsAccepted: true,
             couponCode,
             subtotalCents: subtotalCentsTotal,
@@ -861,6 +870,7 @@ export class OrdersService {
               code,
               status: OrderStatus.PENDING,
               paymentMethod: paymentMethod as PaymentMethod,
+              paymentMethodId: savedPaymentMethod?.id ?? null,
               deliveryTermsAccepted: true,
               subtotalCents: group.subtotalCents,
               shippingFeeCents,
@@ -1166,7 +1176,7 @@ export class OrdersService {
     const splitPolicy =
       (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
     const idempotencyKey = payload.idempotencyKey?.trim() || null;
-    const guestPhone = payload.phone?.trim();
+    const guestPhone = normalizePhoneToE164(payload.phone?.trim() ?? '');
     const guestName = payload.name?.trim();
     const address = payload.address as GuestAddressInput;
     const distancePricingEnabled = this.settings.isDistancePricingEnabled();
@@ -1175,6 +1185,12 @@ export class OrdersService {
     }
     const paymentMethod = payload.paymentMethod ?? PaymentMethodDto.COD;
     await this.assertPaymentMethodEnabled(paymentMethod, { guestPhone, idempotencyKey });
+    if (paymentMethod !== PaymentMethodDto.COD) {
+      throw new DomainError(
+        ErrorCode.PAYMENT_METHOD_INVALID,
+        'Guest checkout currently supports cash on delivery only',
+      );
+    }
     if (
       distancePricingEnabled &&
       (!Number.isFinite(address.lat) || !Number.isFinite(address.lng))
@@ -1455,13 +1471,36 @@ export class OrdersService {
     }
   }
 
+  async requestGuestTrackingOtp(phone: string, ip?: string) {
+    const normalized = normalizePhoneToE164(phone);
+    return this.otp.requestOtp(normalized, 'ORDER_TRACKING', ip);
+  }
+
+  async trackGuestOrdersWithOtp(
+    phone: string,
+    otp: string,
+    otpId?: string,
+    code?: string,
+    ip?: string,
+  ) {
+    const normalized = normalizePhoneToE164(phone);
+    if (otpId) {
+      await this.otp.verifyOtp(normalized, 'ORDER_TRACKING', otpId, otp, ip);
+    } else {
+      await this.otp.verifyOtpLegacy(normalized, 'ORDER_TRACKING', otp, ip);
+    }
+    return this.trackGuestOrders(normalized, code);
+  }
+
   async trackGuestOrders(phone: string, code?: string) {
     const cleanPhone = phone?.trim();
     if (!cleanPhone) {
       throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Phone number is required');
     }
+    const normalizedPhone = normalizePhoneToE164(cleanPhone);
+    const phoneCandidates = Array.from(new Set([cleanPhone, normalizedPhone]));
     const where: Prisma.OrderGroupWhereInput = {
-      guestPhone: cleanPhone,
+      guestPhone: { in: phoneCandidates },
       userId: null,
     };
     if (code) {
@@ -2943,14 +2982,64 @@ export class OrdersService {
     return status.replace(/_/g, ' ');
   }
 
+  private async resolveSavedPaymentMethod(
+    userId: string,
+    paymentMethod: PaymentMethodDto,
+    paymentMethodId?: string | null,
+  ) {
+    if (paymentMethod === PaymentMethodDto.COD) return null;
+    const desiredType = paymentMethod as PaymentMethod;
+    const method = paymentMethodId
+      ? await this.prisma.savedPaymentMethod.findFirst({
+          where: { id: paymentMethodId, userId },
+        })
+      : await this.prisma.savedPaymentMethod.findFirst({
+          where: { userId, isDefault: true, type: desiredType },
+        }) ??
+        (await this.prisma.savedPaymentMethod.findFirst({
+          where: { userId, type: desiredType },
+          orderBy: { createdAt: 'desc' },
+        }));
+    if (!method) {
+      throw new DomainError(ErrorCode.PAYMENT_METHOD_REQUIRED, 'A saved payment method is required');
+    }
+    if (method.type !== desiredType) {
+      throw new DomainError(
+        ErrorCode.PAYMENT_METHOD_MISMATCH,
+        'Saved payment method does not match the selected payment type',
+      );
+    }
+    return method;
+  }
+
+  private resolveWalletConfig(payment: Record<string, any>, walletProvider?: string | null) {
+    if (!walletProvider) return null;
+    const providerKey = String(walletProvider).toUpperCase();
+    const map: Record<string, string> = {
+      VODAFONE_CASH: 'vodafoneCash',
+      ORANGE_MONEY: 'orangeMoney',
+      ETISALAT_CASH: 'etisalatCash',
+    };
+    const settingsKey = map[providerKey];
+    if (!settingsKey) return null;
+    return payment?.digitalWallets?.[settingsKey] ?? null;
+  }
+
   private async assertPaymentMethodEnabled(
     paymentMethod: PaymentMethodDto,
-    context: { userId?: string | null; guestPhone?: string | null; idempotencyKey?: string | null } = {},
+    context: {
+      userId?: string | null;
+      guestPhone?: string | null;
+      idempotencyKey?: string | null;
+      walletProvider?: string | null;
+    } = {},
   ) {
     const settings = await this.settings.getSettings();
     const payment = (settings.payment ?? {}) as Record<string, any>;
     const codEnabled = payment?.cashOnDelivery?.enabled !== false;
     const cardEnabled = payment?.creditCards?.enabled === true;
+    const walletConfig = this.resolveWalletConfig(payment, context.walletProvider);
+    const walletEnabled = walletConfig?.enabled === true;
 
     if (paymentMethod === PaymentMethodDto.COD && !codEnabled) {
       this.logger.warn({ msg: 'Payment method disabled', paymentMethod, ...context });
@@ -2959,6 +3048,15 @@ export class OrdersService {
     if (paymentMethod === PaymentMethodDto.CARD && !cardEnabled) {
       this.logger.warn({ msg: 'Payment method disabled', paymentMethod, ...context });
       throw new DomainError(ErrorCode.PAYMENT_METHOD_DISABLED, 'Card payments are currently disabled');
+    }
+    if (paymentMethod === PaymentMethodDto.WALLET) {
+      if (!context.walletProvider) {
+        throw new DomainError(ErrorCode.PAYMENT_METHOD_INVALID, 'Wallet provider is required');
+      }
+      if (!walletEnabled) {
+        this.logger.warn({ msg: 'Payment method disabled', paymentMethod, ...context });
+        throw new DomainError(ErrorCode.PAYMENT_METHOD_DISABLED, 'Wallet payments are currently disabled');
+      }
     }
   }
 

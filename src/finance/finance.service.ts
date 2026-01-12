@@ -89,7 +89,7 @@ function computeGatewayFee(
   totalCents: number,
   config: CommissionConfig,
 ) {
-  if (paymentMethod !== PaymentMethod.CARD) return 0;
+  if (paymentMethod !== PaymentMethod.CARD && paymentMethod !== PaymentMethod.WALLET) return 0;
   const rate = config.gatewayFeeRateBps ?? 0;
   const flat = config.gatewayFeeFlatCents ?? 0;
   const percentFee = Math.round((totalCents * rate) / 10000);

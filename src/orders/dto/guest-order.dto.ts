@@ -13,6 +13,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { cleanNullableString, cleanString } from '../../common/utils/sanitize.util';
+import { normalizePhoneToE164 } from '../../common/utils/phone.util';
 import { OrderSplitFailurePolicyDto, PaymentMethodDto } from '../dto';
 
 export class GuestOrderItemDto {
@@ -116,7 +117,7 @@ export class CreateGuestOrderDto extends GuestOrderQuoteDto {
   name!: string;
 
   @ApiProperty()
-  @Transform(({ value }) => cleanString(value))
+  @Transform(({ value }) => normalizePhoneToE164(cleanString(value)))
   @IsString()
   @IsNotEmpty()
   phone!: string;
@@ -143,4 +144,37 @@ export class CreateGuestOrderDto extends GuestOrderQuoteDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   deliveryTermsAccepted?: boolean;
+}
+
+export class GuestOrderTrackOtpRequestDto {
+  @ApiProperty()
+  @Transform(({ value }) => normalizePhoneToE164(cleanString(value)))
+  @IsString()
+  @IsNotEmpty()
+  phone!: string;
+}
+
+export class GuestOrderTrackOtpVerifyDto {
+  @ApiProperty()
+  @Transform(({ value }) => normalizePhoneToE164(cleanString(value)))
+  @IsString()
+  @IsNotEmpty()
+  phone!: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  otpId?: string;
+
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  otp!: string;
+
+  @ApiPropertyOptional({ description: 'Optional order code to narrow down results' })
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  code?: string;
 }

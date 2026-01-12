@@ -35,6 +35,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { ProvidersModule } from './providers/providers.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { FinanceModule } from './finance/finance.module';
+import { PaymentMethodsModule } from './payment-methods/payment-methods.module';
 
 @Module({
   imports: [
@@ -141,6 +142,7 @@ import { FinanceModule } from './finance/finance.module';
     ProvidersModule,
     ReviewsModule,
     FinanceModule,
+    PaymentMethodsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

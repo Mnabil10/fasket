@@ -1,7 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsOptional, IsPhoneNumber, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 import { cleanNullableString } from '../../common/utils/sanitize.util';
+import { normalizePhoneToE164OrNull } from '../../common/utils/phone.util';
 
 export class UpdateProfileDto {
   @ApiPropertyOptional({ example: 'Jane Doe' })
@@ -12,9 +13,9 @@ export class UpdateProfileDto {
   name?: string;
 
   @ApiPropertyOptional({ example: '+201234567890' })
-  @Transform(({ value }) => cleanNullableString(value))
+  @Transform(({ value }) => normalizePhoneToE164OrNull(cleanNullableString(value)))
   @IsOptional()
-  @IsPhoneNumber('EG')
+  @Matches(/^\+[1-9]\d{7,14}$/)
   phone?: string;
 
   @ApiPropertyOptional({ example: 'jane@example.com' })

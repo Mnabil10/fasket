@@ -5,6 +5,7 @@ import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Length, Min } from 'cla
 export enum PaymentMethodDto {
   COD = 'COD',
   CARD = 'CARD',
+  WALLET = 'WALLET',
 }
 
 export enum OrderSplitFailurePolicyDto {
@@ -17,6 +18,10 @@ export class CreateOrderDto {
   @ApiProperty({ enum: PaymentMethodDto, default: PaymentMethodDto.COD })
   @IsEnum(PaymentMethodDto)
   paymentMethod!: PaymentMethodDto;
+  @ApiPropertyOptional({ description: 'Saved payment method id for card or wallet payments' })
+  @IsOptional()
+  @IsString()
+  paymentMethodId?: string;
   @ApiProperty({ required: false }) @IsOptional() @IsString() note?: string;
   @ApiProperty({ required: false }) @IsOptional() @IsString() couponCode?: string;
   @ApiProperty({ required: false, description: 'Number of loyalty points to redeem for this order' })

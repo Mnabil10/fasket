@@ -57,6 +57,10 @@ export class AdminOrdersController {
     if (query.customer) {
       const term = query.customer;
       where.OR = [
+        { id: { contains: term, mode: 'insensitive' } },
+        { code: { contains: term, mode: 'insensitive' } },
+        { orderGroupId: { contains: term, mode: 'insensitive' } },
+        { orderGroup: { is: { code: { contains: term, mode: 'insensitive' } } } },
         { user: { name: { contains: term, mode: 'insensitive' } } },
         { user: { phone: { contains: term, mode: 'insensitive' } } },
         { user: { email: { contains: term, mode: 'insensitive' } } },

@@ -15,7 +15,7 @@ import { normalizePhoneToE164 } from '../common/utils/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ErrorCode } from '../common/errors';
 
-export type OtpPurpose = 'LOGIN' | 'PASSWORD_RESET' | 'SIGNUP';
+export type OtpPurpose = 'LOGIN' | 'PASSWORD_RESET' | 'SIGNUP' | 'ORDER_TRACKING';
 
 interface OtpRecord {
   otpHash: string;
@@ -98,7 +98,7 @@ export class OtpService {
       where: { phone: normalizedPhone },
       select: { id: true },
     });
-    if (!existingUser && purpose !== 'SIGNUP') {
+    if (!existingUser && !['SIGNUP', 'ORDER_TRACKING'].includes(purpose)) {
       throw new BadRequestException('Account not found');
     }
 
@@ -449,7 +449,7 @@ export class OtpService {
   }
 
   private ensurePurpose(purpose: OtpPurpose) {
-    if (!['LOGIN', 'PASSWORD_RESET', 'SIGNUP'].includes(purpose)) {
+    if (!['LOGIN', 'PASSWORD_RESET', 'SIGNUP', 'ORDER_TRACKING'].includes(purpose)) {
       throw new BadRequestException('Invalid OTP purpose');
     }
   }

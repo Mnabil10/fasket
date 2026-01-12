@@ -1,8 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DeliveryMode, ProviderType } from '@prisma/client';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsEnum, IsOptional, IsString, Matches } from 'class-validator';
 import { cleanNullableString, cleanString } from '../../common/utils/sanitize.util';
+import { normalizePhoneToE164 } from '../../common/utils/phone.util';
 
 export class CreateProviderApplicationDto {
   @ApiProperty()
@@ -32,8 +33,9 @@ export class CreateProviderApplicationDto {
   ownerName!: string;
 
   @ApiProperty()
-  @Transform(({ value }) => cleanString(value))
+  @Transform(({ value }) => normalizePhoneToE164(cleanString(value)))
   @IsString()
+  @Matches(/^\+[1-9]\d{7,14}$/)
   phone!: string;
 
   @ApiPropertyOptional()

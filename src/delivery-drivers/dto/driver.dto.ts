@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsOptional, IsString, Matches, MinLength, ValidateNested } from 'class-validator';
+import { normalizePhoneToE164 } from '../../common/utils/phone.util';
 
 const toBoolean = (value: unknown) => {
   if (value === undefined || value === null) return undefined;
@@ -37,8 +38,9 @@ export class CreateDriverDto {
   fullName!: string;
 
   @ApiProperty({ description: 'E.164 phone format' })
+  @Transform(({ value }) => normalizePhoneToE164(String(value)))
   @IsString()
-  @Matches(/^\+?[0-9]{7,15}$/)
+  @Matches(/^\+[1-9]\d{7,14}$/)
   phone!: string;
 
   @ApiProperty({ description: 'Government-issued ID' })

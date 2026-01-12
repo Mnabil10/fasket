@@ -11,9 +11,10 @@ import { OrdersStuckWatcher } from './orders-stuck.watcher';
 import { BillingModule } from '../billing/billing.module';
 import { FinanceModule } from '../finance/finance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { OtpModule } from '../otp/otp.module';
 
 @Module({
-  imports: [AutomationModule, PrismaModule, BillingModule, FinanceModule, NotificationsModule],
+  imports: [AutomationModule, PrismaModule, BillingModule, FinanceModule, NotificationsModule, OtpModule],
   controllers: [OrdersController, OrderGroupsController, GuestOrdersController, ProviderOrdersController],
   providers: [OrdersService, ReceiptService, OrdersStuckWatcher],
   exports: [OrdersService, ReceiptService, OrdersStuckWatcher],
