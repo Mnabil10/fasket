@@ -74,8 +74,10 @@ export class ProviderDeliveryZonePricingController {
     return { ok: true };
   }
 
-  private async resolveProviderScope(user?: CurrentUserPayload) {
-    if (!user || user.role !== UserRole.PROVIDER) return null;
+  private async resolveProviderScope(user?: CurrentUserPayload): Promise<string> {
+    if (!user || user.role !== UserRole.PROVIDER) {
+      throw new BadRequestException('Provider account is not linked');
+    }
     const membership = await this.prisma.providerUser.findFirst({
       where: { userId: user.userId },
       include: { provider: { select: { status: true } } },
