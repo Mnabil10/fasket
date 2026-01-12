@@ -208,7 +208,10 @@ export class AuthService {
     const identifier = input.identifier?.trim();
     if (!identifier) {
       this.logger.warn({ msg: 'Login failed - empty identifier', ip: metadata.ip });
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException({
+        code: ErrorCode.AUTH_INVALID_CREDENTIALS,
+        message: 'Invalid credentials',
+      });
     }
     await this.rateLimiter.ensureCanAttempt(identifier, metadata.ip);
     const normalizedEmail = this.normalizeEmail(identifier);
@@ -231,13 +234,19 @@ export class AuthService {
     if (!user) {
       await this.rateLimiter.trackFailure(identifier, metadata.ip);
       this.logger.warn({ msg: 'Login failed - user not found', identifier, ip: metadata.ip });
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException({
+        code: ErrorCode.AUTH_INVALID_CREDENTIALS,
+        message: 'Invalid credentials',
+      });
     }
     const ok = await bcrypt.compare(input.password, user.password);
     if (!ok) {
       await this.rateLimiter.trackFailure(identifier, metadata.ip);
       this.logger.warn({ msg: 'Login failed - bad password', userId: user.id, ip: metadata.ip });
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException({
+        code: ErrorCode.AUTH_INVALID_CREDENTIALS,
+        message: 'Invalid credentials',
+      });
     }
 
     const requireAdmin2fa = (this.config.get<string>('AUTH_REQUIRE_ADMIN_2FA') ?? 'false') === 'true';
@@ -312,7 +321,10 @@ export class AuthService {
       where: { phone: normalizedPhone },
     });
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException({
+        code: ErrorCode.AUTH_INVALID_CREDENTIALS,
+        message: 'Invalid credentials',
+      });
     }
 
     const requireAdmin2fa = (this.config.get<string>('AUTH_REQUIRE_ADMIN_2FA') ?? 'false') === 'true';
@@ -323,7 +335,10 @@ export class AuthService {
     const result = await this.otp.verifyOtpLegacy(normalizedPhone, 'LOGIN', otp, metadata.ip);
     const tokens = (result as any)?.tokens;
     if (!tokens?.accessToken) {
-      throw new UnauthorizedException('Invalid OTP');
+      throw new UnauthorizedException({
+        code: ErrorCode.OTP_INVALID,
+        message: 'Invalid OTP',
+      });
     }
 
     const safeUser = { id: user.id, name: user.name, phone: user.phone, email: user.email, role: user.role };

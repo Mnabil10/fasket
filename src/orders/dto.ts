@@ -51,4 +51,14 @@ export class CreateOrderDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   deliveryTermsAccepted?: boolean;
+
+  @ApiPropertyOptional({ description: 'Selected delivery window id (optional for ASAP)' })
+  @IsOptional()
+  @IsString()
+  deliveryWindowId?: string;
+
+  @ApiPropertyOptional({ description: 'ISO timestamp for the selected delivery window start' })
+  @IsOptional()
+  @IsString()
+  scheduledAt?: string;
 }

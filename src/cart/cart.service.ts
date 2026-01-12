@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Address, Cart, Coupon, Prisma, ProductStatus } from '@prisma/client';
+import { Address, Cart, Coupon, Prisma, ProductStatus, ProductOptionGroupType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
 import { localize } from 'src/common/utils/localize.util';
@@ -37,6 +37,31 @@ type CartItemWithProduct = Prisma.CartItemGetPayload<{
         };
       };
     };
+    options: {
+      include: {
+        option: {
+          select: {
+            id: true;
+            name: true;
+            nameAr: true;
+            priceCents: true;
+            maxQtyPerOption: true;
+            isActive: true;
+            group: {
+              select: {
+                id: true;
+                name: true;
+                nameAr: true;
+                type: true;
+                minSelected: true;
+                maxSelected: true;
+                isActive: true;
+              };
+            };
+          };
+        };
+      };
+    };
   };
 }>;
 
@@ -51,6 +76,7 @@ type CartItemResponse = {
   branchId?: string | null;
   qty: number;
   priceCents: number;
+  options: CartItemOptionResponse[];
   product: {
     id: string;
     name: string;
@@ -59,6 +85,17 @@ type CartItemResponse = {
     priceCents: number;
     salePriceCents?: number | null;
   };
+};
+
+type CartItemOptionResponse = {
+  id: string;
+  name: string;
+  nameAr?: string | null;
+  priceCents: number;
+  qty: number;
+  groupId: string;
+  groupName: string;
+  groupNameAr?: string | null;
 };
 
 type CartSnapshot = {
@@ -129,7 +166,12 @@ export class CartService {
     return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
   }
 
-  async add(userId: string, dto: { productId: string; qty: number; branchId?: string }, lang?: Lang, addressId?: string) {
+  async add(
+    userId: string,
+    dto: { productId: string; qty: number; branchId?: string; options?: { optionId: string; qty?: number }[] },
+    lang?: Lang,
+    addressId?: string,
+  ) {
     if (dto.qty < 1) {
       throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Quantity must be at least 1');
     }
@@ -145,6 +187,27 @@ export class CartService {
     if (branch.provider && branch.provider.status !== 'ACTIVE') {
       throw new DomainError(ErrorCode.CART_PROVIDER_UNAVAILABLE, 'Provider unavailable');
     }
+    const existingScope = await this.prisma.cartItem.findFirst({
+      where: { cartId: cart.id },
+      include: {
+        branch: { select: { id: true, providerId: true } },
+        product: { select: { providerId: true } },
+      },
+    });
+    if (existingScope) {
+      const existingProviderId =
+        existingScope.branch?.providerId ??
+        existingScope.product?.providerId ??
+        this.defaultProviderId;
+      const nextProviderId = branch.providerId ?? this.defaultProviderId;
+      if (existingProviderId && nextProviderId && existingProviderId !== nextProviderId) {
+        throw new DomainError(ErrorCode.CART_PROVIDER_MISMATCH, 'Cart contains items from another provider');
+      }
+      const existingBranchId = existingScope.branchId ?? existingScope.branch?.id ?? null;
+      if (existingBranchId && existingBranchId !== branch.id) {
+        throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from another branch');
+      }
+    }
     const branchProduct = await this.prisma.branchProduct.findUnique({
       where: { branchId_productId: { branchId: branch.id, productId: product.id } },
     });
@@ -158,33 +221,69 @@ export class CartService {
     if (stock < dto.qty) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
+    const normalizedOptions = this.normalizeOptionInputs(dto.options);
+    const optionSelection = await this.resolveOptionSelections(product.id, normalizedOptions);
     const existing = await this.prisma.cartItem.findUnique({
-      where: { cartId_productId_branchId: { cartId: cart.id, productId: dto.productId, branchId: branch.id } },
+      where: {
+        cartId_productId_branchId_optionsHash: {
+          cartId: cart.id,
+          productId: dto.productId,
+          branchId: branch.id,
+          optionsHash: optionSelection.optionsHash,
+        },
+      },
     });
     const desiredQty = (existing?.qty ?? 0) + dto.qty;
     if (desiredQty > stock) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
-    const price =
+    const basePrice =
       branchProduct.salePriceCents ??
       branchProduct.priceCents ??
       product.salePriceCents ??
       product.priceCents;
+    const price = basePrice + optionSelection.optionsTotalCents;
     const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
-    await this.prisma.cartItem.upsert({
-      where: { cartId_productId_branchId: { cartId: cart.id, productId: dto.productId, branchId: branch.id } },
-      update: { qty: { increment: dto.qty }, priceCents: price },
-      create: { cartId: cart.id, productId: dto.productId, branchId: branch.id, qty: dto.qty, priceCents: price },
+    const cartItem = await this.prisma.cartItem.upsert({
+      where: {
+        cartId_productId_branchId_optionsHash: {
+          cartId: cart.id,
+          productId: dto.productId,
+          branchId: branch.id,
+          optionsHash: optionSelection.optionsHash,
+        },
+      },
+      update: { qty: { increment: dto.qty }, priceCents: price, optionsHash: optionSelection.optionsHash },
+      create: {
+        cartId: cart.id,
+        productId: dto.productId,
+        branchId: branch.id,
+        qty: dto.qty,
+        priceCents: price,
+        optionsHash: optionSelection.optionsHash,
+      },
     });
+    await this.syncCartItemOptions(cartItem.id, normalizedOptions);
     return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
   }
 
-  async updateQty(userId: string, id: string, qty: number, lang?: Lang, addressId?: string) {
+  async updateQty(
+    userId: string,
+    id: string,
+    qty: number,
+    lang?: Lang,
+    addressId?: string,
+    options?: { optionId: string; qty?: number }[],
+  ) {
     if (qty < 0) qty = 0;
     const cart = await this.ensureCart(userId);
     const item = await this.prisma.cartItem.findFirst({
       where: { id, cartId: cart.id },
-      include: { product: true, branch: { include: { provider: { select: { status: true } } } } },
+      include: {
+        product: true,
+        branch: { include: { provider: { select: { status: true } } } },
+        options: true,
+      },
     });
     if (!item) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Item not found in cart');
@@ -218,19 +317,48 @@ export class CartService {
       await this.prisma.cartItem.delete({ where: { id: item.id } });
       throw new DomainError(ErrorCode.CART_PRODUCT_OUT_OF_STOCK, 'Product out of stock');
     }
-    if (qty > availableStock) {
-      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
-    }
-    const price =
+    const normalizedOptions = this.normalizeOptionInputs(
+      options ?? item.options.map((entry) => ({ optionId: entry.optionId, qty: entry.qty })),
+    );
+    const optionSelection = await this.resolveOptionSelections(item.product.id, normalizedOptions);
+    const basePrice =
       branchProduct.salePriceCents ??
       branchProduct.priceCents ??
       item.product.salePriceCents ??
       item.product.priceCents ??
       item.priceCents;
-    await this.prisma.cartItem.update({
-      where: { id: item.id },
-      data: { qty, priceCents: price },
+    const price = basePrice + optionSelection.optionsTotalCents;
+    if (qty > availableStock) {
+      throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
+    }
+    const target = await this.prisma.cartItem.findUnique({
+      where: {
+        cartId_productId_branchId_optionsHash: {
+          cartId: cart.id,
+          productId: item.productId,
+          branchId: item.branchId ?? item.branch.id,
+          optionsHash: optionSelection.optionsHash,
+        },
+      },
     });
+    if (target && target.id !== item.id) {
+      const mergedQty = target.qty + qty;
+      if (mergedQty > availableStock) {
+        throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
+      }
+      await this.prisma.cartItem.update({
+        where: { id: target.id },
+        data: { qty: mergedQty, priceCents: price, optionsHash: optionSelection.optionsHash },
+      });
+      await this.syncCartItemOptions(target.id, normalizedOptions);
+      await this.prisma.cartItem.delete({ where: { id: item.id } });
+    } else {
+      await this.prisma.cartItem.update({
+        where: { id: item.id },
+        data: { qty, priceCents: price, optionsHash: optionSelection.optionsHash },
+      });
+      await this.syncCartItemOptions(item.id, normalizedOptions);
+    }
     return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
   }
 

@@ -70,6 +70,11 @@ enum DeliveryMode {
   MERCHANT
 }
 
+enum ProductOptionGroupType {
+  SINGLE
+  MULTI
+}
+
 enum DeliveryFailureReason {
   NO_ANSWER
   WRONG_ADDRESS
@@ -374,6 +379,8 @@ model Provider {
   transactionLedger TransactionLedger[]
   notificationPreference ProviderNotificationPreference?
   deliveryZones   DeliveryZone[]
+  deliveryWindows DeliveryWindow[]
+  deliveryZonePricings ProviderDeliveryZonePricing[]
   reviews         Review[]
   applications    ProviderApplication[]
 }
@@ -421,6 +428,8 @@ model Branch {
   deliveryRatePerKmCents Int?
   minDeliveryFeeCents Int?
   maxDeliveryFeeCents Int?
+  schedulingEnabled Boolean     @default(false)
+  schedulingAllowAsap Boolean   @default(true)
   serviceArea     Json?        // GeoJSON or polygon payload
   isDefault       Boolean      @default(false)
   createdAt       DateTime     @default(now())
@@ -430,6 +439,7 @@ model Branch {
   orders          Order[]
   coupons         Coupon[]
   deliveryZones   DeliveryZone[]
+  deliveryWindows DeliveryWindow[]
   cartItems       CartItem[]
 
   @@index([providerId])
@@ -496,6 +506,7 @@ model Product {
   images         String[]
   cartItems      CartItem[]
   orderItems     OrderItem[]
+  optionGroups   ProductOptionGroup[]
   stockLogs      ProductStockLog[]
   branchProducts BranchProduct[]
   deletedAt      DateTime?
@@ -508,6 +519,45 @@ model Product {
   @@index([isHotOffer, status, createdAt])
   @@index([status, createdAt])
   @@index([providerId])
+}
+
+model ProductOptionGroup {
+  id          String               @id @default(cuid())
+  productId   String
+  product     Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name        String
+  nameAr      String?
+  type        ProductOptionGroupType
+  minSelected Int                  @default(0)
+  maxSelected Int?
+  sortOrder   Int                  @default(0)
+  isActive    Boolean              @default(true)
+  options     ProductOption[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@index([productId])
+  @@index([isActive, sortOrder])
+}
+
+model ProductOption {
+  id              String              @id @default(cuid())
+  groupId         String
+  group           ProductOptionGroup  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name            String
+  nameAr          String?
+  priceCents      Int                 @default(0)
+  maxQtyPerOption Int?
+  sortOrder       Int                 @default(0)
+  isActive        Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  cartItemOptions  CartItemOption[]
+  orderItemOptions OrderItemOption[]
+
+  @@index([groupId])
+  @@index([isActive, sortOrder])
 }
 
 model BranchProduct {
@@ -547,13 +597,30 @@ model CartItem {
   branchId   String?
   qty        Int    @default(1)
   priceCents Int
+  optionsHash String @default("")
 
   cart    Cart    @relation(fields: [cartId], references: [id])
   product Product @relation(fields: [productId], references: [id])
   branch  Branch? @relation(fields: [branchId], references: [id])
+  options CartItemOption[]
 
-  @@unique([cartId, productId, branchId])
+  @@unique([cartId, productId, branchId, optionsHash])
   @@index([branchId])
+}
+
+model CartItemOption {
+  id         String   @id @default(cuid())
+  cartItemId String
+  optionId   String
+  qty        Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  cartItem CartItem      @relation(fields: [cartItemId], references: [id], onDelete: Cascade)
+  option   ProductOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@unique([cartItemId, optionId])
+  @@index([cartItemId])
 }
 
 model OrderGroup {
@@ -575,6 +642,9 @@ model OrderGroup {
   paymentMethodId    String?
   paymentMethodRef   SavedPaymentMethod?    @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
   deliveryTermsAccepted Boolean?
+  deliveryWindowId   String?
+  deliveryWindow     DeliveryWindow?        @relation(fields: [deliveryWindowId], references: [id])
+  scheduledAt        DateTime?
   couponCode         String?
   subtotalCents      Int
   shippingFeeCents   Int                    @default(0)
@@ -640,6 +710,9 @@ model Order {
   paymentMethod    PaymentMethod        @default(COD)
   paymentMethodId  String?
   paymentMethodRef SavedPaymentMethod?  @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  deliveryWindowId String?
+  deliveryWindow   DeliveryWindow?      @relation(fields: [deliveryWindowId], references: [id])
+  scheduledAt      DateTime?
   driverId         String?
   driver           DeliveryDriver?      @relation(fields: [driverId], references: [id], onDelete: SetNull)
   driverAssignedAt DateTime?
@@ -680,9 +753,27 @@ model OrderItem {
 
   order   Order   @relation(fields: [orderId], references: [id])
   product Product @relation(fields: [productId], references: [id])
+  options OrderItemOption[]
 
   @@index([productId])
   @@index([orderId])
+}
+
+model OrderItemOption {
+  id                 String   @id @default(cuid())
+  orderItemId        String
+  optionId           String?
+  optionNameSnapshot String
+  optionNameArSnapshot String?
+  priceSnapshotCents Int
+  qty                Int      @default(1)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  orderItem OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  option   ProductOption? @relation(fields: [optionId], references: [id], onDelete: SetNull)
+
+  @@index([orderItemId])
 }
 
 model Review {
@@ -868,6 +959,32 @@ model DeliveryDriverLocation {
   @@index([orderId, recordedAt])
 }
 
+model DeliveryWindow {
+  id                  String   @id @default(cuid())
+  providerId          String
+  branchId            String?
+  name                String
+  nameAr              String?
+  startMinutes        Int
+  endMinutes          Int
+  daysOfWeek          Int[]
+  minLeadMinutes      Int?
+  minOrderAmountCents Int?
+  isActive            Boolean  @default(true)
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  branch     Branch?  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  orders     Order[]
+  orderGroups OrderGroup[]
+
+  @@index([providerId])
+  @@index([branchId])
+  @@index([isActive, sortOrder])
+}
+
 model DeliveryZone {
   id                         String   @id @default(cuid())
   providerId                 String?
@@ -886,6 +1003,7 @@ model DeliveryZone {
 
   provider                   Provider? @relation(fields: [providerId], references: [id])
   branch                     Branch?   @relation(fields: [branchId], references: [id])
+  providerPricings           ProviderDeliveryZonePricing[]
 
   @@index([isActive, nameEn])
   @@index([city])
@@ -893,6 +1011,23 @@ model DeliveryZone {
   @@index([isActive, city, region])
   @@index([providerId])
   @@index([branchId])
+}
+
+model ProviderDeliveryZonePricing {
+  id        String   @id @default(cuid())
+  providerId String
+  zoneId    String
+  feeCents  Int
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  provider Provider    @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  zone     DeliveryZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, zoneId])
+  @@index([providerId])
+  @@index([zoneId])
 }
 
 model LoyaltyCycle {
