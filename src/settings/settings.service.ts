@@ -284,6 +284,32 @@ export class SettingsService {
     };
   }
 
+  async listDeliveryWindows(params: {
+    providerId?: string;
+    branchId?: string;
+    isActive?: boolean;
+    day?: number;
+  }) {
+    const where: Prisma.DeliveryWindowWhereInput = {};
+    if (params.providerId) where.providerId = params.providerId;
+    if (params.branchId) where.branchId = params.branchId;
+    if (params.isActive !== undefined) where.isActive = params.isActive;
+    const windows = await this.prisma.deliveryWindow.findMany({
+      where,
+      orderBy: [{ sortOrder: 'asc' }, { startMinutes: 'asc' }],
+    });
+    if (params.day === undefined || params.day === null || !Number.isFinite(params.day)) {
+      return windows;
+    }
+    const day = Math.floor(params.day);
+    return windows.filter((window) => {
+      if (!Array.isArray(window.daysOfWeek) || window.daysOfWeek.length === 0) {
+        return true;
+      }
+      return window.daysOfWeek.includes(day);
+    });
+  }
+
   async computeDeliveryQuote(params: { subtotalCents: number; zoneId?: string | null }): Promise<DeliveryQuote> {
     const config = await this.getDeliveryConfig();
     if (params.subtotalCents <= 0) {

@@ -91,9 +91,10 @@ export class ProviderOrdersController {
     const order = await this.prisma.order.findFirst({
       where: { id, providerId },
       include: {
-        items: true,
+        items: { include: { options: true } },
         address: true,
         user: true,
+        deliveryWindow: true,
         statusHistory: true,
         driver: {
           select: {

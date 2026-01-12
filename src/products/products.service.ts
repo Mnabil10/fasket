@@ -16,6 +16,12 @@ const categorySelect = {
 type ProductWithCategory = Prisma.ProductGetPayload<{
   include: { category: { select: typeof categorySelect } };
 }>;
+type ProductDetailWithOptions = Prisma.ProductGetPayload<{
+  include: {
+    category: { select: typeof categorySelect };
+    optionGroups: { include: { options: true } };
+  };
+}>;
 
 @Injectable()
 export class ProductsService {
@@ -100,7 +106,16 @@ export class ProductsService {
         deletedAt: null,
         status: ProductStatus.ACTIVE,
       },
-      include: { category: { select: categorySelect } },
+      include: {
+        category: { select: categorySelect },
+        optionGroups: {
+          where: { isActive: true },
+          orderBy: { sortOrder: 'asc' },
+          include: {
+            options: { where: { isActive: true }, orderBy: { sortOrder: 'asc' } },
+          },
+        },
+      },
     });
     if (!product) return null;
     return this.toProductDetail(product, lang);
@@ -216,7 +231,7 @@ export class ProductsService {
     };
   }
 
-  private async toProductDetail(product: ProductWithCategory, lang?: Lang) {
+  private async toProductDetail(product: ProductDetailWithOptions, lang?: Lang) {
     return {
       id: product.id,
       name: this.localize(product.name, product.nameAr, lang) ?? product.name,
@@ -240,6 +255,25 @@ export class ProductsService {
             slug: product.category.slug,
           }
         : null,
+      optionGroups: (product.optionGroups ?? []).map((group) => ({
+        id: group.id,
+        name: this.localize(group.name, group.nameAr, lang) ?? group.name,
+        nameAr: group.nameAr,
+        type: group.type,
+        minSelected: group.minSelected,
+        maxSelected: group.maxSelected,
+        sortOrder: group.sortOrder,
+        isActive: group.isActive,
+        options: (group.options ?? []).map((option) => ({
+          id: option.id,
+          name: this.localize(option.name, option.nameAr, lang) ?? option.name,
+          nameAr: option.nameAr,
+          priceCents: option.priceCents,
+          maxQtyPerOption: option.maxQtyPerOption,
+          sortOrder: option.sortOrder,
+          isActive: option.isActive,
+        })),
+      })),
     };
   }
 

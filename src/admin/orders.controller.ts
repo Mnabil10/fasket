@@ -110,9 +110,10 @@ export class AdminOrdersController {
     const order = await this.svc.prisma.order.findFirst({
       where: { id, ...(providerScope ? { providerId: providerScope } : {}) },
       include: {
-        items: true,
+        items: { include: { options: true } },
         address: true,
         user: true,
+        deliveryWindow: true,
         statusHistory: true,
         driver: {
           select: {

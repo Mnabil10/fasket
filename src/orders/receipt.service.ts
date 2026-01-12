@@ -23,6 +23,7 @@ export class ReceiptService {
           include: {
             user: { select: { id: true, name: true, phone: true } },
             address: true,
+            deliveryWindow: true,
             driver: {
               select: {
                 id: true,
@@ -37,6 +38,7 @@ export class ReceiptService {
                 productNameSnapshot: true,
                 priceSnapshotCents: true,
                 qty: true,
+                options: true,
               },
               orderBy: { id: 'asc' },
             },
@@ -60,6 +62,7 @@ export class ReceiptService {
           include: {
             user: { select: { id: true, name: true, phone: true } },
             address: true,
+            deliveryWindow: true,
             driver: {
               select: {
                 id: true,
@@ -74,6 +77,7 @@ export class ReceiptService {
                 productNameSnapshot: true,
                 priceSnapshotCents: true,
                 qty: true,
+                options: true,
               },
               orderBy: { id: 'asc' },
             },
@@ -99,6 +103,13 @@ export class ReceiptService {
       quantity: item.qty,
       unitPriceCents: item.priceSnapshotCents,
       lineTotalCents: item.priceSnapshotCents * item.qty,
+      options: (item.options ?? []).map((option: any) => ({
+        optionId: option.optionId,
+        name: option.optionNameSnapshot,
+        nameAr: option.optionNameArSnapshot ?? null,
+        priceSnapshotCents: option.priceSnapshotCents,
+        qty: option.qty,
+      })),
     }));
     const deliveryZone = zone
       ? {
@@ -164,6 +175,19 @@ export class ReceiptService {
       totalCents: order.totalCents,
       loyaltyPointsEarned: order.loyaltyPointsEarned ?? 0,
       loyaltyPointsRedeemed: order.loyaltyPointsUsed ?? 0,
+      scheduledAt: order.scheduledAt ?? null,
+      deliveryWindow: order.deliveryWindow
+        ? {
+            id: order.deliveryWindow.id,
+            name: order.deliveryWindow.name,
+            nameAr: order.deliveryWindow.nameAr ?? null,
+            startMinutes: order.deliveryWindow.startMinutes,
+            endMinutes: order.deliveryWindow.endMinutes,
+            daysOfWeek: order.deliveryWindow.daysOfWeek,
+            minLeadMinutes: order.deliveryWindow.minLeadMinutes ?? null,
+            minOrderAmountCents: order.deliveryWindow.minOrderAmountCents ?? null,
+          }
+        : null,
       currency: settings.currency,
     };
   }

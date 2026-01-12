@@ -31,6 +31,9 @@ import { AdminReviewsController } from './reviews.controller';
 import { ReviewsModule } from '../reviews/reviews.module';
 import { AdminProviderApplicationsController } from './provider-applications.controller';
 import { ProvidersModule } from '../providers/providers.module';
+import { AdminProductOptionsController } from './product-options.controller';
+import { AdminDeliveryWindowsController } from './delivery-windows.controller';
+import { AdminProviderDeliveryZonePricingController } from './provider-delivery-zone-pricing.controller';
 
 @Module({
   controllers: [
@@ -57,6 +60,9 @@ import { ProvidersModule } from '../providers/providers.module';
     AdminCampaignsController,
     AdminReviewsController,
     AdminProviderApplicationsController,
+    AdminProductOptionsController,
+    AdminDeliveryWindowsController,
+    AdminProviderDeliveryZonePricingController,
   ],
   imports: [
     // Additional modules can be wired here when needed

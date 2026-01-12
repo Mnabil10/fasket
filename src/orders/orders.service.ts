@@ -36,6 +36,7 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
         phone: true;
       };
     };
+    deliveryWindow: true;
     items: {
       select: {
         id: true;
@@ -43,6 +44,7 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
         productNameSnapshot: true;
         priceSnapshotCents: true;
         qty: true;
+        options: true;
       };
     };
   };
@@ -217,6 +219,7 @@ export class OrdersService {
         orders: {
           include: {
             provider: { select: { id: true, name: true, nameAr: true } },
+            deliveryWindow: true,
             items: {
               select: {
                 id: true,
@@ -224,6 +227,7 @@ export class OrdersService {
                 productNameSnapshot: true,
                 priceSnapshotCents: true,
                 qty: true,
+                options: true,
               },
             },
           },
@@ -235,37 +239,59 @@ export class OrdersService {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order group not found', 404);
     }
     const totals = this.computeGroupTotals(group.orders);
-    const providerOrders = group.orders.map((order) => ({
-      id: order.id,
-      code: order.code ?? order.id,
-      providerId: order.providerId,
-      providerName: order.provider?.name ?? null,
-      providerNameAr: order.provider?.nameAr ?? null,
-      status: this.toPublicStatus(order.status),
-      subtotalCents: order.subtotalCents,
-      shippingFeeCents: order.shippingFeeCents ?? 0,
-      serviceFeeCents:
-        order.serviceFeeCents ??
-        this.inferServiceFeeCents({
-          subtotalCents: order.subtotalCents,
-          shippingFeeCents: order.shippingFeeCents ?? 0,
-          discountCents: order.discountCents ?? 0,
-          totalCents: order.totalCents,
-        }),
-      discountCents: order.discountCents ?? 0,
-      totalCents: order.totalCents,
-      createdAt: order.createdAt,
-      deliveryFailedAt: order.deliveryFailedAt ?? null,
-      deliveryFailedReason: order.deliveryFailedReason ?? null,
-      deliveryFailedNote: order.deliveryFailedNote ?? null,
-      items: (order.items || []).map((item) => ({
-        id: item.id,
-        productId: item.productId,
-        productNameSnapshot: item.productNameSnapshot,
-        priceSnapshotCents: item.priceSnapshotCents,
-        qty: item.qty,
-      })),
-    }));
+      const providerOrders = group.orders.map((order) => ({
+        id: order.id,
+        code: order.code ?? order.id,
+        providerId: order.providerId,
+        providerName: order.provider?.name ?? null,
+        providerNameAr: order.provider?.nameAr ?? null,
+        status: this.toPublicStatus(order.status),
+        subtotalCents: order.subtotalCents,
+        shippingFeeCents: order.shippingFeeCents ?? 0,
+        serviceFeeCents:
+          order.serviceFeeCents ??
+          this.inferServiceFeeCents({
+            subtotalCents: order.subtotalCents,
+            shippingFeeCents: order.shippingFeeCents ?? 0,
+            discountCents: order.discountCents ?? 0,
+            totalCents: order.totalCents,
+          }),
+        discountCents: order.discountCents ?? 0,
+        totalCents: order.totalCents,
+        createdAt: order.createdAt,
+        deliveryWindowId: order.deliveryWindowId ?? undefined,
+        scheduledAt: order.scheduledAt ?? undefined,
+        deliveryWindow: order.deliveryWindow
+          ? {
+              id: order.deliveryWindow.id,
+              name: order.deliveryWindow.name,
+              nameAr: order.deliveryWindow.nameAr,
+              startMinutes: order.deliveryWindow.startMinutes,
+              endMinutes: order.deliveryWindow.endMinutes,
+              daysOfWeek: order.deliveryWindow.daysOfWeek,
+              minLeadMinutes: order.deliveryWindow.minLeadMinutes,
+              minOrderAmountCents: order.deliveryWindow.minOrderAmountCents,
+            }
+          : undefined,
+        deliveryFailedAt: order.deliveryFailedAt ?? null,
+        deliveryFailedReason: order.deliveryFailedReason ?? null,
+        deliveryFailedNote: order.deliveryFailedNote ?? null,
+        items: (order.items || []).map((item) => ({
+          id: item.id,
+          productId: item.productId,
+          productNameSnapshot: item.productNameSnapshot,
+          priceSnapshotCents: item.priceSnapshotCents,
+          qty: item.qty,
+          options: (item.options ?? []).map((option) => ({
+            id: option.id,
+            optionId: option.optionId,
+            optionNameSnapshot: option.optionNameSnapshot,
+            optionNameArSnapshot: option.optionNameArSnapshot,
+            priceSnapshotCents: option.priceSnapshotCents,
+            qty: option.qty,
+          })),
+        })),
+      }));
     return {
       orderGroupId: group.id,
       code: group.code,
@@ -362,25 +388,27 @@ export class OrdersService {
     const order = await this.cache.wrap(
       cacheKey,
       () =>
-        this.prisma.order.findFirst({
-          where: { id, userId },
-          include: {
-            address: true,
-            driver: {
-              select: { id: true, fullName: true, phone: true },
-            },
-            items: {
-              select: {
-                id: true,
-                productId: true,
-                productNameSnapshot: true,
-                priceSnapshotCents: true,
-                qty: true,
+          this.prisma.order.findFirst({
+            where: { id, userId },
+            include: {
+              address: true,
+              deliveryWindow: true,
+              driver: {
+                select: { id: true, fullName: true, phone: true },
               },
-              orderBy: { id: 'asc' },
+              items: {
+                select: {
+                  id: true,
+                  productId: true,
+                  productNameSnapshot: true,
+                  priceSnapshotCents: true,
+                  qty: true,
+                  options: true,
+                },
+                orderBy: { id: 'asc' },
+              },
             },
-          },
-        }),
+          }),
       this.listTtl,
     );
     if (!order) {
@@ -1966,6 +1994,7 @@ export class OrdersService {
       where: { id: orderId },
       include: {
         address: true,
+        deliveryWindow: true,
         driver: { select: { id: true, fullName: true, phone: true } },
         items: {
           select: {
@@ -1974,6 +2003,7 @@ export class OrdersService {
             productNameSnapshot: true,
             priceSnapshotCents: true,
             qty: true,
+            options: true,
           },
           orderBy: { id: 'asc' },
         },
@@ -3891,11 +3921,25 @@ export class OrdersService {
       note: order.notes ?? undefined,
       estimatedDeliveryTime: order.estimatedDeliveryTime ?? undefined,
       deliveryEtaMinutes: order.deliveryEtaMinutes ?? undefined,
-      deliveryZoneId: order.deliveryZoneId ?? undefined,
-      deliveryZoneName: order.deliveryZoneName ?? undefined,
-      deliveryFailedAt: order.deliveryFailedAt ?? undefined,
-      deliveryFailedReason: order.deliveryFailedReason ?? undefined,
-      deliveryFailedNote: order.deliveryFailedNote ?? undefined,
+        deliveryZoneId: order.deliveryZoneId ?? undefined,
+        deliveryZoneName: order.deliveryZoneName ?? undefined,
+        deliveryWindowId: order.deliveryWindowId ?? undefined,
+        scheduledAt: order.scheduledAt ?? undefined,
+        deliveryWindow: order.deliveryWindow
+          ? {
+              id: order.deliveryWindow.id,
+              name: order.deliveryWindow.name,
+              nameAr: order.deliveryWindow.nameAr,
+              startMinutes: order.deliveryWindow.startMinutes,
+              endMinutes: order.deliveryWindow.endMinutes,
+              daysOfWeek: order.deliveryWindow.daysOfWeek,
+              minLeadMinutes: order.deliveryWindow.minLeadMinutes,
+              minOrderAmountCents: order.deliveryWindow.minOrderAmountCents,
+            }
+          : undefined,
+        deliveryFailedAt: order.deliveryFailedAt ?? undefined,
+        deliveryFailedReason: order.deliveryFailedReason ?? undefined,
+        deliveryFailedNote: order.deliveryFailedNote ?? undefined,
       providerId: order.providerId ?? undefined,
       branchId: order.branchId ?? undefined,
       deliveryMode: order.deliveryMode ?? undefined,
@@ -3948,14 +3992,22 @@ export class OrdersService {
             phone: order.driver.phone,
           }
         : null,
-      items: order.items.map((item) => ({
-        id: item.id,
-        productId: item.productId,
-        productNameSnapshot: item.productNameSnapshot,
-        priceSnapshotCents: item.priceSnapshotCents,
-        qty: item.qty,
-      })),
-      etag: order.updatedAt ? `${order.id}-${order.updatedAt.getTime()}` : order.id,
-    };
+        items: order.items.map((item) => ({
+          id: item.id,
+          productId: item.productId,
+          productNameSnapshot: item.productNameSnapshot,
+          priceSnapshotCents: item.priceSnapshotCents,
+          qty: item.qty,
+          options: (item.options ?? []).map((option) => ({
+            id: option.id,
+            optionId: option.optionId,
+            optionNameSnapshot: option.optionNameSnapshot,
+            optionNameArSnapshot: option.optionNameArSnapshot,
+            priceSnapshotCents: option.priceSnapshotCents,
+            qty: option.qty,
+          })),
+        })),
+        etag: order.updatedAt ? `${order.id}-${order.updatedAt.getTime()}` : order.id,
+      };
   }
 }

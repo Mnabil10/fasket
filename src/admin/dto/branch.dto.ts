@@ -110,6 +110,32 @@ export class CreateBranchDto {
   @IsOptional()
   @IsBoolean()
   isDefault?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'boolean') return value;
+    const normalized = String(value).toLowerCase();
+    if (['true', '1', 'yes'].includes(normalized)) return true;
+    if (['false', '0', 'no'].includes(normalized)) return false;
+    return value;
+  })
+  schedulingEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'boolean') return value;
+    const normalized = String(value).toLowerCase();
+    if (['true', '1', 'yes'].includes(normalized)) return true;
+    if (['false', '0', 'no'].includes(normalized)) return false;
+    return value;
+  })
+  schedulingAllowAsap?: boolean;
 }
 
 export class UpdateBranchDto extends PartialType(CreateBranchDto) {}

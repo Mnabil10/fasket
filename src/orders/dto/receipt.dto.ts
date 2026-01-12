@@ -39,7 +39,25 @@ export class OrderReceiptDto {
     quantity: number;
     unitPriceCents: number;
     lineTotalCents: number;
+    options?: {
+      optionId?: string | null;
+      name: string;
+      nameAr?: string | null;
+      priceSnapshotCents: number;
+      qty: number;
+    }[];
   }[];
+  scheduledAt?: Date | null;
+  deliveryWindow?: {
+    id: string;
+    name: string;
+    nameAr?: string | null;
+    startMinutes: number;
+    endMinutes: number;
+    daysOfWeek: number[];
+    minLeadMinutes?: number | null;
+    minOrderAmountCents?: number | null;
+  } | null;
   subtotalCents!: number;
   couponDiscountCents!: number;
   loyaltyDiscountCents!: number;

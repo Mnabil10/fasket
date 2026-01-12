@@ -1,5 +1,5 @@
-import { Controller, Get } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Query } from '@nestjs/common';
+import { ApiQuery, ApiTags } from '@nestjs/swagger';
 import { SettingsService } from './settings.service';
 
 @ApiTags('Settings')
@@ -11,6 +11,27 @@ export class SettingsController {
   async getActiveDeliveryZones() {
     const zones = await this.settings.getActiveDeliveryZones();
     return zones;
+  }
+
+  @Get('delivery-windows')
+  @ApiQuery({ name: 'providerId', required: false })
+  @ApiQuery({ name: 'branchId', required: false })
+  @ApiQuery({ name: 'day', required: false, description: 'Day of week (0=Sunday ... 6=Saturday)' })
+  async getDeliveryWindows(
+    @Query('providerId') providerId?: string,
+    @Query('branchId') branchId?: string,
+    @Query('day') day?: string,
+  ) {
+    const provider = providerId?.trim() || undefined;
+    const branch = branchId?.trim() || undefined;
+    if (!provider && !branch) return [];
+    const dayValue = day !== undefined ? Number(day) : undefined;
+    return this.settings.listDeliveryWindows({
+      providerId: provider,
+      branchId: branch,
+      isActive: true,
+      day: Number.isFinite(dayValue) ? dayValue : undefined,
+    });
   }
 
   @Get('app')
