@@ -16,6 +16,20 @@ import { cleanNullableString, cleanString } from '../../common/utils/sanitize.ut
 import { normalizePhoneToE164 } from '../../common/utils/phone.util';
 import { OrderSplitFailurePolicyDto, PaymentMethodDto } from '../dto';
 
+export class GuestOrderItemOptionDto {
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  optionId!: string;
+
+  @ApiPropertyOptional({ minimum: 1 })
+  @Transform(({ value }) => (value === undefined || value === null ? undefined : Number(value)))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  qty?: number;
+}
+
 export class GuestOrderItemDto {
   @ApiProperty()
   @Transform(({ value }) => cleanString(value))
@@ -33,6 +47,13 @@ export class GuestOrderItemDto {
   @IsOptional()
   @IsString()
   branchId?: string;
+
+  @ApiPropertyOptional({ type: [GuestOrderItemOptionDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GuestOrderItemOptionDto)
+  options?: GuestOrderItemOptionDto[];
 }
 
 export class GuestAddressDto {
@@ -78,6 +99,12 @@ export class GuestAddressDto {
   @IsString()
   notes?: string;
 
+  @ApiPropertyOptional({ description: 'Delivery zone id (optional)' })
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  zoneId?: string;
+
   @ApiPropertyOptional()
   @Transform(({ value }) => (value === undefined || value === null ? value : Number(value)))
   @IsOptional()
@@ -107,6 +134,18 @@ export class GuestOrderQuoteDto {
   @IsOptional()
   @IsEnum(OrderSplitFailurePolicyDto)
   splitFailurePolicy?: OrderSplitFailurePolicyDto = OrderSplitFailurePolicyDto.PARTIAL;
+
+  @ApiPropertyOptional({ description: 'Selected delivery window id (optional for ASAP)' })
+  @IsOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsString()
+  deliveryWindowId?: string;
+
+  @ApiPropertyOptional({ description: 'ISO timestamp for the selected delivery window start' })
+  @IsOptional()
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsString()
+  scheduledAt?: string;
 }
 
 export class CreateGuestOrderDto extends GuestOrderQuoteDto {

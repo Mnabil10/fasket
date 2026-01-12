@@ -8,6 +8,7 @@ import {
   PaymentMethod,
   Prisma,
   ProductStatus,
+  ProductOptionGroupType,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto, OrderSplitFailurePolicyDto, PaymentMethodDto } from './dto';
@@ -65,6 +66,7 @@ type GuestOrderItemInput = {
   productId: string;
   qty: number;
   branchId?: string | null;
+  options?: { optionId: string; qty?: number }[];
 };
 
 type GuestAddressInput = {
@@ -75,6 +77,7 @@ type GuestAddressInput = {
   building?: string;
   apartment?: string;
   notes?: string;
+  zoneId?: string;
   lat?: number | null;
   lng?: number | null;
 };
@@ -515,7 +518,7 @@ export class OrdersService {
       const result = await this.prisma.$transaction(async (tx) => {
         const cart = await tx.cart.findUnique({
           where: { userId },
-          include: { items: true },
+          include: { items: { include: { options: true } } },
         });
         if (!cart || cart.items.length === 0) {
           throw new DomainError(ErrorCode.CART_EMPTY, 'Cart is empty');
@@ -533,6 +536,10 @@ export class OrdersService {
             salePriceCents: true,
             costPriceCents: true,
             providerId: true,
+            optionGroups: {
+              where: { isActive: true },
+              include: { options: { where: { isActive: true } } },
+            },
           },
         });
         if (products.length !== productIds.length) {
@@ -605,6 +612,21 @@ export class OrdersService {
             salePriceCents: number | null;
             costPriceCents: number | null;
             providerId: string | null;
+            optionGroups: {
+              id: string;
+              type: ProductOptionGroupType;
+              minSelected: number;
+              maxSelected: number | null;
+              isActive: boolean;
+              options: {
+                id: string;
+                name: string;
+                nameAr: string | null;
+                priceCents: number;
+                maxQtyPerOption: number | null;
+                isActive: boolean;
+              }[];
+            }[];
           };
           branch: {
             id: string;
@@ -614,6 +636,7 @@ export class OrdersService {
             provider?: { id: string; deliveryMode: DeliveryMode; status: string } | null;
           };
           qty: number;
+          options: { optionId: string; qty: number }[];
         }> = [];
 
         for (const item of cart.items) {
@@ -646,6 +669,9 @@ export class OrdersService {
             product,
             branch,
             qty: item.qty,
+            options: this.normalizeOptionInputs(
+              item.options?.map((entry) => ({ optionId: entry.optionId, qty: entry.qty })) ?? [],
+            ),
           });
         }
 
@@ -671,6 +697,7 @@ export class OrdersService {
           qty: number;
           priceCents: number;
           costCents: number;
+          options: Array<{ optionId: string; name: string; nameAr: string | null; priceCents: number; qty: number }>;
           branch: {
             id: string;
             providerId: string;
@@ -697,11 +724,22 @@ export class OrdersService {
           if (!item.product.costPriceCents || item.product.costPriceCents <= 0) {
             this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: item.product.id });
           }
-          const priceCents =
+          const basePrice =
             branchProduct.salePriceCents ??
             branchProduct.priceCents ??
             item.product.salePriceCents ??
             item.product.priceCents;
+          let optionSelection: {
+            optionsTotalCents: number;
+            options: Array<{ optionId: string; name: string; nameAr: string | null; priceCents: number; qty: number }>;
+          };
+          try {
+            optionSelection = this.resolveOptionSelectionsFromProduct(item.product, item.options);
+          } catch (error: any) {
+            branchErrors.set(item.branch.id, error?.userMessage ?? error?.message ?? 'Invalid product options');
+            continue;
+          }
+          const priceCents = basePrice + optionSelection.optionsTotalCents;
           validItems.push({
             cartItemId: item.cartItemId,
             branchId: item.branch.id,
@@ -711,6 +749,7 @@ export class OrdersService {
             qty: item.qty,
             priceCents,
             costCents: item.product.costPriceCents ?? 0,
+            options: optionSelection.options,
             branch: item.branch,
           });
         }
@@ -742,6 +781,15 @@ export class OrdersService {
             existing.items.push(item);
             existing.subtotalCents += item.priceCents * item.qty;
           }
+        }
+
+        const groupEntries = Array.from(grouped.entries());
+        const providerIds = new Set(groupEntries.map(([, group]) => group.providerId));
+        if (providerIds.size > 1) {
+          throw new DomainError(ErrorCode.CART_PROVIDER_MISMATCH, 'Cart contains items from multiple providers');
+        }
+        if (groupEntries.length > 1) {
+          throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from multiple branches');
         }
 
         if (payload.loyaltyPointsToRedeem && payload.loyaltyPointsToRedeem > 0 && grouped.size > 1) {
@@ -798,18 +846,28 @@ export class OrdersService {
           discountCents = Math.max(0, Math.round(discountCents));
         }
 
-        const groupEntries = Array.from(grouped.entries());
-        const discountByBranch = this.allocateDiscounts(discountCents, groupEntries);
+        const discountEntries = groupEntries;
+        const discountByBranch = this.allocateDiscounts(discountCents, discountEntries);
 
         const shippingByBranch = new Map<
           string,
-          { fee: number; distanceKm: number | null; ratePerKmCents: number | null; etaMinutes?: number | null; estimatedDeliveryTime?: string | null }
+          {
+            fee: number;
+            distanceKm: number | null;
+            ratePerKmCents: number | null;
+            etaMinutes?: number | null;
+            estimatedDeliveryTime?: string | null;
+            deliveryZoneId?: string | null;
+            deliveryZoneName?: string | null;
+          }
         >();
         for (const [branchId] of groupEntries) {
           const quote = await this.settings.computeBranchDeliveryQuote({
             branchId,
             addressLat: address.lat ?? null,
             addressLng: address.lng ?? null,
+            zoneId: address.zoneId ?? null,
+            subtotalCents: grouped.get(branchId)?.subtotalCents ?? 0,
           });
           shippingByBranch.set(branchId, {
             fee: quote.shippingFeeCents,
@@ -817,6 +875,8 @@ export class OrdersService {
             ratePerKmCents: distancePricingEnabled ? quote.ratePerKmCents : null,
             etaMinutes: quote.etaMinutes ?? null,
             estimatedDeliveryTime: quote.estimatedDeliveryTime ?? null,
+            deliveryZoneId: quote.deliveryZoneId ?? null,
+            deliveryZoneName: quote.deliveryZoneName ?? null,
           });
         }
 
@@ -826,6 +886,13 @@ export class OrdersService {
           shippingByBranch,
         );
         const serviceFeeCentsTotal = this.calculateServiceFeeCents(groupEntries.length);
+
+        const scheduling = await this.resolveDeliveryWindowSelection({
+          branch: groupEntries[0][1].branch,
+          subtotalCents: groupEntries[0][1].subtotalCents,
+          deliveryWindowId: payload.deliveryWindowId,
+          scheduledAt: payload.scheduledAt,
+        });
 
         const orderGroup = await tx.orderGroup.create({
           data: {
@@ -837,6 +904,8 @@ export class OrdersService {
             paymentMethod: paymentMethod as PaymentMethod,
             paymentMethodId: savedPaymentMethod?.id ?? null,
             deliveryTermsAccepted: true,
+            deliveryWindowId: scheduling.deliveryWindowId ?? null,
+            scheduledAt: scheduling.scheduledAt ?? null,
             couponCode,
             subtotalCents: subtotalCentsTotal,
             shippingFeeCents: shippingFeeCentsTotal,
@@ -872,6 +941,8 @@ export class OrdersService {
               paymentMethod: paymentMethod as PaymentMethod,
               paymentMethodId: savedPaymentMethod?.id ?? null,
               deliveryTermsAccepted: true,
+              deliveryWindowId: scheduling.deliveryWindowId ?? null,
+              scheduledAt: scheduling.scheduledAt ?? null,
               subtotalCents: group.subtotalCents,
               shippingFeeCents,
               serviceFeeCents: this.serviceFeeCents,
@@ -892,16 +963,26 @@ export class OrdersService {
               deliveryEtaMinutes,
               estimatedDeliveryTime,
               items: {
-                create: group.items.map((item) => ({
-                  productId: item.productId,
-                  productNameSnapshot: item.productName,
-                  priceSnapshotCents: item.priceCents,
-                  unitPriceCents: item.priceCents,
-                  unitCostCents: item.costCents ?? 0,
-                  lineTotalCents: item.priceCents * item.qty,
-                  lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
-                  qty: item.qty,
-                })),
+                create: group.items.map((item) => {
+                  const optionCreates = item.options.map((option) => ({
+                    optionId: option.optionId,
+                    optionNameSnapshot: option.name,
+                    optionNameArSnapshot: option.nameAr ?? null,
+                    priceSnapshotCents: option.priceCents,
+                    qty: option.qty,
+                  }));
+                  return {
+                    productId: item.productId,
+                    productNameSnapshot: item.productName,
+                    priceSnapshotCents: item.priceCents,
+                    unitPriceCents: item.priceCents,
+                    unitCostCents: item.costCents ?? 0,
+                    lineTotalCents: item.priceCents * item.qty,
+                    lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
+                    qty: item.qty,
+                    options: optionCreates.length ? { create: optionCreates } : undefined,
+                  };
+                }),
               },
             },
             select: { id: true },
@@ -1082,7 +1163,18 @@ export class OrdersService {
         throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
       }
 
-      const shippingByBranch = new Map<string, { fee: number; distanceKm: number | null; ratePerKmCents: number | null }>();
+      const shippingByBranch = new Map<
+        string,
+        {
+          fee: number;
+          distanceKm: number | null;
+          ratePerKmCents: number | null;
+          etaMinutes?: number | null;
+          estimatedDeliveryTime?: string | null;
+          deliveryZoneId?: string | null;
+          deliveryZoneName?: string | null;
+        }
+      >();
       const shippingErrors = new Map<string, string>();
       for (const [branchId] of groupEntries) {
         try {
@@ -1090,11 +1182,17 @@ export class OrdersService {
             branchId,
             addressLat: address.lat ?? null,
             addressLng: address.lng ?? null,
+            zoneId: address.zoneId ?? null,
+            subtotalCents: grouped.get(branchId)?.subtotalCents ?? 0,
           });
           shippingByBranch.set(branchId, {
             fee: quote.shippingFeeCents,
             distanceKm: distancePricingEnabled ? quote.distanceKm : null,
             ratePerKmCents: distancePricingEnabled ? quote.ratePerKmCents : null,
+            etaMinutes: quote.etaMinutes ?? null,
+            estimatedDeliveryTime: quote.estimatedDeliveryTime ?? null,
+            deliveryZoneId: quote.deliveryZoneId ?? null,
+            deliveryZoneName: quote.deliveryZoneName ?? null,
           });
         } catch (error: any) {
           shippingErrors.set(branchId, error?.message ?? 'Delivery unavailable');
@@ -1114,6 +1212,23 @@ export class OrdersService {
 
       if (!groupEntries.length) {
         throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
+      }
+
+      const providerIds = new Set(groupEntries.map(([, group]) => group.providerId));
+      if (providerIds.size > 1) {
+        throw new DomainError(ErrorCode.CART_PROVIDER_MISMATCH, 'Cart contains items from multiple providers');
+      }
+      if (groupEntries.length > 1) {
+        throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from multiple branches');
+      }
+
+      if (payload.deliveryWindowId || payload.scheduledAt) {
+        await this.resolveDeliveryWindowSelection({
+          branch: groupEntries[0][1].branch,
+          subtotalCents: groupEntries[0][1].subtotalCents,
+          deliveryWindowId: payload.deliveryWindowId,
+          scheduledAt: payload.scheduledAt,
+        });
       }
 
       const groups = groupEntries.map(([branchId, group]) => {
@@ -1225,7 +1340,15 @@ export class OrdersService {
 
         const shippingByBranch = new Map<
           string,
-          { fee: number; distanceKm: number | null; ratePerKmCents: number | null; etaMinutes?: number | null; estimatedDeliveryTime?: string | null }
+          {
+            fee: number;
+            distanceKm: number | null;
+            ratePerKmCents: number | null;
+            etaMinutes?: number | null;
+            estimatedDeliveryTime?: string | null;
+            deliveryZoneId?: string | null;
+            deliveryZoneName?: string | null;
+          }
         >();
         const shippingErrors = new Map<string, string>();
         for (const [branchId] of groupEntries) {
@@ -1234,6 +1357,8 @@ export class OrdersService {
               branchId,
               addressLat: address.lat ?? null,
               addressLng: address.lng ?? null,
+              zoneId: address.zoneId ?? null,
+              subtotalCents: grouped.get(branchId)?.subtotalCents ?? 0,
             });
             shippingByBranch.set(branchId, {
               fee: quote.shippingFeeCents,
@@ -1241,6 +1366,8 @@ export class OrdersService {
               ratePerKmCents: distancePricingEnabled ? quote.ratePerKmCents : null,
               etaMinutes: quote.etaMinutes ?? null,
               estimatedDeliveryTime: quote.estimatedDeliveryTime ?? null,
+              deliveryZoneId: quote.deliveryZoneId ?? null,
+              deliveryZoneName: quote.deliveryZoneName ?? null,
             });
           } catch (error: any) {
             shippingErrors.set(branchId, error?.message ?? 'Delivery unavailable');
@@ -1261,6 +1388,21 @@ export class OrdersService {
         if (!groupEntries.length) {
           throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'No items available to order');
         }
+
+        const providerIds = new Set(groupEntries.map(([, group]) => group.providerId));
+        if (providerIds.size > 1) {
+          throw new DomainError(ErrorCode.CART_PROVIDER_MISMATCH, 'Cart contains items from multiple providers');
+        }
+        if (groupEntries.length > 1) {
+          throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from multiple branches');
+        }
+
+        const scheduling = await this.resolveDeliveryWindowSelection({
+          branch: groupEntries[0][1].branch,
+          subtotalCents: groupEntries[0][1].subtotalCents,
+          deliveryWindowId: payload.deliveryWindowId,
+          scheduledAt: payload.scheduledAt,
+        });
 
         const subtotalCentsTotal = groupEntries.reduce(
           (sum, [, group]) => sum + group.subtotalCents,
@@ -1288,6 +1430,8 @@ export class OrdersService {
             splitFailurePolicy: splitPolicy,
             paymentMethod: paymentMethod as PaymentMethod,
             deliveryTermsAccepted: true,
+            deliveryWindowId: scheduling.deliveryWindowId ?? null,
+            scheduledAt: scheduling.scheduledAt ?? null,
             subtotalCents: subtotalCentsTotal,
             shippingFeeCents: shippingFeeCentsTotal,
             serviceFeeCents: serviceFeeCentsTotal,
@@ -1319,6 +1463,8 @@ export class OrdersService {
               status: OrderStatus.PENDING,
               paymentMethod: paymentMethod as PaymentMethod,
               deliveryTermsAccepted: true,
+              deliveryWindowId: scheduling.deliveryWindowId ?? null,
+              scheduledAt: scheduling.scheduledAt ?? null,
               subtotalCents: group.subtotalCents,
               shippingFeeCents,
               serviceFeeCents: this.serviceFeeCents,
@@ -1344,16 +1490,26 @@ export class OrdersService {
               guestLat: address.lat ?? null,
               guestLng: address.lng ?? null,
               items: {
-                create: group.items.map((item) => ({
-                  productId: item.productId,
-                  productNameSnapshot: item.productName,
-                  priceSnapshotCents: item.priceCents,
-                  unitPriceCents: item.priceCents,
-                  unitCostCents: item.costCents ?? 0,
-                  lineTotalCents: item.priceCents * item.qty,
-                  lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
-                  qty: item.qty,
-                })),
+                create: group.items.map((item) => {
+                  const optionCreates = item.options.map((option) => ({
+                    optionId: option.optionId,
+                    optionNameSnapshot: option.name,
+                    optionNameArSnapshot: option.nameAr ?? null,
+                    priceSnapshotCents: option.priceCents,
+                    qty: option.qty,
+                  }));
+                  return {
+                    productId: item.productId,
+                    productNameSnapshot: item.productName,
+                    priceSnapshotCents: item.priceCents,
+                    unitPriceCents: item.priceCents,
+                    unitCostCents: item.costCents ?? 0,
+                    lineTotalCents: item.priceCents * item.qty,
+                    lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
+                    qty: item.qty,
+                    options: optionCreates.length ? { create: optionCreates } : undefined,
+                  };
+                }),
               },
             },
             select: { id: true },
@@ -1583,6 +1739,7 @@ export class OrdersService {
       building: address.building ?? null,
       apartment: address.apartment ?? null,
       notes: address.notes ?? null,
+      zoneId: address.zoneId ?? null,
     };
   }
 
@@ -1606,6 +1763,10 @@ export class OrdersService {
         salePriceCents: true,
         costPriceCents: true,
         providerId: true,
+        optionGroups: {
+          where: { isActive: true },
+          include: { options: { where: { isActive: true } } },
+        },
       },
     });
     if (products.length !== uniqueProductIds.length) {
@@ -1658,6 +1819,7 @@ export class OrdersService {
       product: (typeof products)[number];
       branch: (typeof explicitBranches)[number] | (typeof providerBranches)[number];
       qty: number;
+      options: { optionId: string; qty: number }[];
     }> = [];
 
     for (const item of items) {
@@ -1686,6 +1848,7 @@ export class OrdersService {
         product,
         branch,
         qty: item.qty,
+        options: this.normalizeOptionInputs(item.options ?? []),
       });
     }
 
@@ -1710,6 +1873,7 @@ export class OrdersService {
       qty: number;
       priceCents: number;
       costCents: number;
+      options: Array<{ optionId: string; name: string; nameAr: string | null; priceCents: number; qty: number }>;
       branch: (typeof resolvedItems)[number]['branch'];
     }> = [];
 
@@ -1731,11 +1895,22 @@ export class OrdersService {
       if (!item.product.costPriceCents || item.product.costPriceCents <= 0) {
         this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: item.product.id });
       }
-      const priceCents =
+      const basePrice =
         branchProduct.salePriceCents ??
         branchProduct.priceCents ??
         item.product.salePriceCents ??
         item.product.priceCents;
+      let optionSelection: {
+        optionsTotalCents: number;
+        options: Array<{ optionId: string; name: string; nameAr: string | null; priceCents: number; qty: number }>;
+      };
+      try {
+        optionSelection = this.resolveOptionSelectionsFromProduct(item.product, item.options);
+      } catch (error: any) {
+        branchErrors.set(item.branch.id, error?.userMessage ?? error?.message ?? 'Invalid product options');
+        continue;
+      }
+      const priceCents = basePrice + optionSelection.optionsTotalCents;
       validItems.push({
         branchId: item.branch.id,
         providerId: item.branch.providerId,
@@ -1744,6 +1919,7 @@ export class OrdersService {
         qty: item.qty,
         priceCents,
         costCents: item.product.costPriceCents ?? 0,
+        options: optionSelection.options,
         branch: item.branch,
       });
     }
@@ -2347,6 +2523,112 @@ export class OrdersService {
     return Math.min(productValue, branchValue);
   }
 
+  private normalizeOptionInputs(options?: { optionId: string; qty?: number }[]) {
+    if (!options || options.length === 0) return [];
+    const map = new Map<string, number>();
+    for (const entry of options) {
+      const optionId = String(entry.optionId ?? '').trim();
+      if (!optionId) continue;
+      const rawQty = entry.qty ?? 1;
+      const qty = Math.floor(Number(rawQty));
+      if (!Number.isFinite(qty) || qty < 1) continue;
+      map.set(optionId, (map.get(optionId) ?? 0) + qty);
+    }
+    return Array.from(map.entries())
+      .map(([optionId, qty]) => ({ optionId, qty }))
+      .sort((a, b) => a.optionId.localeCompare(b.optionId));
+  }
+
+  private resolveOptionSelectionsFromProduct(
+    product: {
+      id: string;
+      name: string;
+      optionGroups?: Array<{
+        id: string;
+        type: ProductOptionGroupType;
+        minSelected: number;
+        maxSelected: number | null;
+        isActive: boolean;
+        options: Array<{
+          id: string;
+          name: string;
+          nameAr: string | null;
+          priceCents: number;
+          maxQtyPerOption: number | null;
+          isActive: boolean;
+        }>;
+      }>;
+    },
+    selections: { optionId: string; qty: number }[],
+  ) {
+    const groups = product.optionGroups ?? [];
+    if (!groups.length && selections.length > 0) {
+      throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Options are not available for this product');
+    }
+
+    const optionMap = new Map<
+      string,
+      {
+        option: { id: string; name: string; nameAr: string | null; priceCents: number; maxQtyPerOption: number | null };
+        group: { id: string; type: ProductOptionGroupType; minSelected: number; maxSelected: number | null };
+      }
+    >();
+    for (const group of groups) {
+      if (!group.isActive) continue;
+      for (const option of group.options) {
+        if (!option.isActive) continue;
+        optionMap.set(option.id, { option, group });
+      }
+    }
+
+    const selectedCounts = new Map<string, number>();
+    let optionsTotalCents = 0;
+    const resolvedOptions: Array<{
+      optionId: string;
+      name: string;
+      nameAr: string | null;
+      priceCents: number;
+      qty: number;
+    }> = [];
+    for (const selection of selections) {
+      const entry = optionMap.get(selection.optionId);
+      if (!entry) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Invalid product option selected');
+      }
+      if (entry.option.maxQtyPerOption && selection.qty > entry.option.maxQtyPerOption) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Option quantity exceeds limit');
+      }
+      optionsTotalCents += entry.option.priceCents * selection.qty;
+      resolvedOptions.push({
+        optionId: entry.option.id,
+        name: entry.option.name,
+        nameAr: entry.option.nameAr ?? null,
+        priceCents: entry.option.priceCents,
+        qty: selection.qty,
+      });
+      selectedCounts.set(entry.group.id, (selectedCounts.get(entry.group.id) ?? 0) + 1);
+    }
+
+    for (const group of groups) {
+      if (!group.isActive) continue;
+      const selected = selectedCounts.get(group.id) ?? 0;
+      const minSelected = group.minSelected ?? 0;
+      const maxSelected = group.maxSelected ?? (group.type === ProductOptionGroupType.SINGLE ? 1 : null);
+      if (selected < minSelected) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Required options are missing');
+      }
+      if (maxSelected !== null && maxSelected !== undefined && selected > maxSelected) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Too many options selected');
+      }
+      if (group.type === ProductOptionGroupType.SINGLE && selected > 1) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Only one option can be selected');
+      }
+    }
+
+    resolvedOptions.sort((a, b) => a.optionId.localeCompare(b.optionId));
+    return { optionsTotalCents, options: resolvedOptions };
+  }
+
   private resolveCombinedShippingFee(
     branchIds: string[],
     shippingByBranch: Map<string, { fee: number }>,
@@ -2368,6 +2650,83 @@ export class OrdersService {
     return { totalFeeCents: sum, primaryBranchId };
   }
 
+  private async resolveDeliveryWindowSelection(params: {
+    branch: { id: string; providerId: string; schedulingEnabled?: boolean | null; schedulingAllowAsap?: boolean | null };
+    subtotalCents: number;
+    deliveryWindowId?: string | null;
+    scheduledAt?: string | null;
+  }) {
+    const schedulingEnabled = params.branch.schedulingEnabled === true;
+    const allowAsap = params.branch.schedulingAllowAsap !== false;
+    const windowId = params.deliveryWindowId ?? null;
+    const scheduledAtRaw = params.scheduledAt ?? null;
+
+    if (!schedulingEnabled) {
+      return { deliveryWindowId: null, scheduledAt: null };
+    }
+
+    if (!windowId) {
+      if (scheduledAtRaw) {
+        throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Delivery window is required for scheduled orders');
+      }
+      if (allowAsap) {
+        return { deliveryWindowId: null, scheduledAt: null };
+      }
+      throw new DomainError(ErrorCode.DELIVERY_WINDOW_REQUIRED, 'Delivery window is required');
+    }
+
+    if (!scheduledAtRaw) {
+      throw new DomainError(ErrorCode.DELIVERY_WINDOW_REQUIRED, 'Scheduled time is required');
+    }
+
+    const scheduledAt = new Date(scheduledAtRaw);
+    if (!Number.isFinite(scheduledAt.getTime())) {
+      throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Invalid scheduled time');
+    }
+
+    const window = await this.prisma.deliveryWindow.findFirst({
+      where: { id: windowId, isActive: true },
+    });
+    if (!window) {
+      throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Delivery window is not available');
+    }
+    if (window.providerId !== params.branch.providerId) {
+      throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Delivery window does not match provider');
+    }
+    if (window.branchId && window.branchId !== params.branch.id) {
+      throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Delivery window does not match branch');
+    }
+
+    const day = scheduledAt.getDay();
+    if (Array.isArray(window.daysOfWeek) && window.daysOfWeek.length > 0 && !window.daysOfWeek.includes(day)) {
+      throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Delivery window is not available on this day');
+    }
+    const minutes = scheduledAt.getHours() * 60 + scheduledAt.getMinutes();
+    if (window.startMinutes >= window.endMinutes) {
+      throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Delivery window configuration is invalid');
+    }
+    if (minutes < window.startMinutes || minutes >= window.endMinutes) {
+      throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Scheduled time is outside the delivery window');
+    }
+
+    const minLeadMinutes = window.minLeadMinutes ?? 0;
+    if (minLeadMinutes > 0) {
+      const earliest = Date.now() + minLeadMinutes * 60 * 1000;
+      if (scheduledAt.getTime() < earliest) {
+        throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Scheduled time is too soon');
+      }
+    }
+
+    if (window.minOrderAmountCents && params.subtotalCents < window.minOrderAmountCents) {
+      throw new DomainError(
+        ErrorCode.DELIVERY_WINDOW_INVALID,
+        'Order does not meet the minimum required for scheduled delivery',
+      );
+    }
+
+    return { deliveryWindowId: window.id, scheduledAt };
+  }
+
   private inferServiceFeeCents(params: {
     subtotalCents: number;
     shippingFeeCents: number;
@@ -2387,7 +2746,7 @@ export class OrdersService {
     const source = await this.prisma.order.findFirst({
       where: { id: fromOrderId, userId },
       include: {
-        items: true,
+        items: { include: { options: true } },
         address: true,
       },
     });
@@ -2403,7 +2762,18 @@ export class OrdersService {
       const productIds = Array.from(new Set(source.items.map((i) => i.productId)));
       const products = await tx.product.findMany({
         where: { id: { in: productIds }, status: ProductStatus.ACTIVE, deletedAt: null },
-        select: { id: true, name: true, stock: true, priceCents: true, salePriceCents: true, costPriceCents: true },
+        select: {
+          id: true,
+          name: true,
+          stock: true,
+          priceCents: true,
+          salePriceCents: true,
+          costPriceCents: true,
+          optionGroups: {
+            where: { isActive: true },
+            include: { options: { where: { isActive: true } } },
+          },
+        },
       });
       const productMap = new Map(products.map((p) => [p.id, p]));
       const branchId = source.branchId ?? undefined;
@@ -2444,11 +2814,21 @@ export class OrdersService {
             `Insufficient stock for ${product.name}`,
           );
         }
-        const priceCents =
+        const basePrice =
           branchProduct?.salePriceCents ??
           branchProduct?.priceCents ??
           product.salePriceCents ??
           product.priceCents;
+        const optionSelection = this.resolveOptionSelectionsFromProduct(
+          product,
+          this.normalizeOptionInputs(
+            item.options?.map((option) => ({
+              optionId: option.optionId ?? '',
+              qty: option.qty,
+            })) ?? [],
+          ),
+        );
+        const priceCents = basePrice + optionSelection.optionsTotalCents;
         const costCents = product.costPriceCents ?? 0;
         if (!costCents || costCents <= 0) {
           this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: product.id });
@@ -2459,6 +2839,7 @@ export class OrdersService {
           qty: item.qty,
           priceCents,
           costCents,
+          options: optionSelection.options,
         };
       });
 
@@ -2530,6 +2911,8 @@ export class OrdersService {
           branchId,
           addressLat: hasLocation ? address.lat : null,
           addressLng: hasLocation ? address.lng : null,
+          zoneId: address.zoneId ?? null,
+          subtotalCents,
         });
         shippingFeeCents = quote.shippingFeeCents;
         deliveryDistanceKm = distancePricingEnabled ? quote.distanceKm : null;
@@ -2574,16 +2957,26 @@ export class OrdersService {
           deliveryEtaMinutes,
           estimatedDeliveryTime,
           items: {
-            create: orderItems.map((item) => ({
-              productId: item.productId,
-              productNameSnapshot: item.productName,
-              priceSnapshotCents: item.priceCents,
-              unitPriceCents: item.priceCents,
-              unitCostCents: item.costCents ?? 0,
-              lineTotalCents: item.priceCents * item.qty,
-              lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
-              qty: item.qty,
-            })),
+            create: orderItems.map((item) => {
+              const optionCreates = item.options.map((option) => ({
+                optionId: option.optionId,
+                optionNameSnapshot: option.name,
+                optionNameArSnapshot: option.nameAr ?? null,
+                priceSnapshotCents: option.priceCents,
+                qty: option.qty,
+              }));
+              return {
+                productId: item.productId,
+                productNameSnapshot: item.productName,
+                priceSnapshotCents: item.priceCents,
+                unitPriceCents: item.priceCents,
+                unitCostCents: item.costCents ?? 0,
+                lineTotalCents: item.priceCents * item.qty,
+                lineProfitCents: (item.priceCents - (item.costCents ?? 0)) * item.qty,
+                qty: item.qty,
+                options: optionCreates.length ? { create: optionCreates } : undefined,
+              };
+            }),
           },
         },
       });

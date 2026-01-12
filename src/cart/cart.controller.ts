@@ -59,7 +59,7 @@ export class CartController {
     @Query('lang', LangNormalizePipe) lang?: 'en' | 'ar',
     @Query('addressId') addressId?: string,
   ) {
-    return this.service.updateQty(user.userId, id, dto.qty, lang, addressId);
+    return this.service.updateQty(user.userId, id, dto.qty, lang, addressId, dto.options);
   }
 
   @Delete('items/:id')

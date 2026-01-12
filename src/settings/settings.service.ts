@@ -334,6 +334,8 @@ export class SettingsService {
     branchId: string;
     addressLat?: number | null;
     addressLng?: number | null;
+    zoneId?: string | null;
+    subtotalCents?: number | null;
   }): Promise<DistanceDeliveryQuote> {
     const branch = await this.prisma.branch.findUnique({
       where: { id: params.branchId },
@@ -367,7 +369,75 @@ export class SettingsService {
       settings.maxDeliveryFeeCents ??
       null;
 
+    const subtotalCents =
+      typeof params.subtotalCents === 'number' && Number.isFinite(params.subtotalCents)
+        ? Math.max(0, Math.floor(params.subtotalCents))
+        : null;
+    const zoneId = params.zoneId ?? null;
+    if (zoneId) {
+      const zone = await this.getZoneById(zoneId);
+      if (!zone) {
+        throw new DomainError(ErrorCode.DELIVERY_ZONE_NOT_FOUND, 'Selected delivery zone is not available');
+      }
+      const providerPricing = await this.prisma.providerDeliveryZonePricing.findFirst({
+        where: { providerId: branch.providerId, zoneId, isActive: true },
+      });
+      if (providerPricing) {
+        const normalizedSubtotal = subtotalCents ?? 0;
+        if (zone.minOrderAmountCents && subtotalCents !== null && normalizedSubtotal < zone.minOrderAmountCents) {
+          throw new DomainError(
+            ErrorCode.ADDRESS_INVALID_ZONE,
+            'Order subtotal does not meet the minimum for this delivery zone',
+          );
+        }
+        let shippingFeeCents = providerPricing.feeCents;
+        if (
+          zone.freeDeliveryThresholdCents &&
+          subtotalCents !== null &&
+          normalizedSubtotal >= zone.freeDeliveryThresholdCents
+        ) {
+          shippingFeeCents = 0;
+        }
+        if (deliveryMode === DeliveryMode.MERCHANT) {
+          shippingFeeCents = 0;
+        }
+        return {
+          shippingFeeCents,
+          deliveryZoneId: zone.id,
+          deliveryZoneName: zone.nameEn,
+          distanceKm: null,
+          ratePerKmCents: null,
+          minDeliveryFeeCents: minFee,
+          maxDeliveryFeeCents: maxFee,
+          etaMinutes: zone.etaMinutes ?? undefined,
+          estimatedDeliveryTime: this.formatEta(zone.etaMinutes) ?? settings.estimatedDeliveryTime ?? null,
+        };
+      }
+    }
+
     if (!this.distancePricingEnabled) {
+      if (zoneId && subtotalCents !== null) {
+        const quote = await this.computeDeliveryQuote({
+          subtotalCents,
+          zoneId,
+        });
+        let shippingFeeCents = quote.shippingFeeCents;
+        if (deliveryMode === DeliveryMode.MERCHANT) {
+          shippingFeeCents = 0;
+        }
+        return {
+          shippingFeeCents,
+          deliveryZoneId: quote.deliveryZoneId,
+          deliveryZoneName: quote.deliveryZoneName,
+          distanceKm: null,
+          ratePerKmCents: null,
+          minDeliveryFeeCents: minFee,
+          maxDeliveryFeeCents: maxFee,
+          etaMinutes: quote.etaMinutes ?? undefined,
+          estimatedDeliveryTime: quote.estimatedDeliveryTime ?? settings.estimatedDeliveryTime ?? null,
+        };
+      }
+
       let shippingFeeCents = settings.deliveryFeeCents ?? 0;
       if (minFee !== null && minFee !== undefined) {
         shippingFeeCents = Math.max(shippingFeeCents, minFee);

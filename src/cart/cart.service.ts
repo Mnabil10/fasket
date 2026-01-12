@@ -426,6 +426,31 @@ export class CartService {
             provider: { select: { status: true } },
           },
         },
+        options: {
+          include: {
+            option: {
+              select: {
+                id: true,
+                name: true,
+                nameAr: true,
+                priceCents: true,
+                maxQtyPerOption: true,
+                isActive: true,
+                group: {
+                  select: {
+                    id: true,
+                    name: true,
+                    nameAr: true,
+                    type: true,
+                    minSelected: true,
+                    maxSelected: true,
+                    isActive: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       orderBy: { id: 'asc' },
     });
@@ -477,11 +502,37 @@ export class CartService {
           unavailableIds.push(item.id);
           return null;
         }
+        const optionResponses: CartItemOptionResponse[] = [];
+        let optionsTotalCents = 0;
+        for (const selection of item.options ?? []) {
+          const option = selection.option;
+          const group = option?.group;
+          if (!option || !group || !option.isActive || !group.isActive) {
+            unavailableIds.push(item.id);
+            return null;
+          }
+          const optionQty = selection.qty ?? 1;
+          optionsTotalCents += option.priceCents * optionQty;
+          optionResponses.push({
+            id: option.id,
+            name: localize(option.name, option.nameAr, lang),
+            nameAr: option.nameAr ?? null,
+            priceCents: option.priceCents,
+            qty: optionQty,
+            groupId: group.id,
+            groupName: localize(group.name, group.nameAr, lang),
+            groupNameAr: group.nameAr ?? null,
+          });
+        }
+        optionResponses.sort(
+          (a, b) => a.groupId.localeCompare(b.groupId) || a.id.localeCompare(b.id),
+        );
         const effectivePrice =
           branchProduct.salePriceCents ??
           branchProduct.priceCents ??
           product.salePriceCents ??
           product.priceCents;
+        const unitPriceCents = effectivePrice + optionsTotalCents;
         const localizedName = localize(product.name, product.nameAr, lang);
         const imageUrl = (await toPublicImageUrl(product.imageUrl)) ?? null;
         return {
@@ -490,7 +541,8 @@ export class CartService {
           productId: item.productId,
           branchId: item.branchId,
           qty: item.qty,
-          priceCents: effectivePrice,
+          priceCents: unitPriceCents,
+          options: optionResponses,
           product: {
             id: product.id,
             name: localizedName,
@@ -595,6 +647,8 @@ export class CartService {
               branchId,
               addressLat: hasLocation ? addressLat : null,
               addressLng: hasLocation ? addressLng : null,
+              zoneId: effectiveAddress?.zoneId ?? null,
+              subtotalCents,
             });
             shippingFeeCents = quote.shippingFeeCents;
             distanceKm = distancePricingEnabled ? quote.distanceKm : null;
@@ -720,6 +774,100 @@ export class CartService {
       throw new DomainError(ErrorCode.CART_PROVIDER_UNAVAILABLE, 'Provider unavailable');
     }
     return branch;
+  }
+
+  private normalizeOptionInputs(options?: { optionId: string; qty?: number }[]) {
+    if (!options || options.length === 0) return [];
+    const map = new Map<string, number>();
+    for (const entry of options) {
+      const optionId = String(entry.optionId ?? '').trim();
+      if (!optionId) continue;
+      const rawQty = entry.qty ?? 1;
+      const qty = Math.floor(Number(rawQty));
+      if (!Number.isFinite(qty) || qty < 1) continue;
+      map.set(optionId, (map.get(optionId) ?? 0) + qty);
+    }
+    return Array.from(map.entries())
+      .map(([optionId, qty]) => ({ optionId, qty }))
+      .sort((a, b) => a.optionId.localeCompare(b.optionId));
+  }
+
+  private buildOptionsHash(options: { optionId: string; qty: number }[]) {
+    if (!options.length) return '';
+    return options.map((entry) => `${entry.optionId}:${entry.qty}`).join('|');
+  }
+
+  private async resolveOptionSelections(
+    productId: string,
+    selections: { optionId: string; qty: number }[],
+  ) {
+    const groups = await this.prisma.productOptionGroup.findMany({
+      where: { productId, isActive: true },
+      include: { options: { where: { isActive: true } } },
+    });
+    if (!groups.length && selections.length > 0) {
+      throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Options are not available for this product');
+    }
+
+    const optionMap = new Map<
+      string,
+      { option: { id: string; priceCents: number; maxQtyPerOption: number | null }; group: { id: string; type: ProductOptionGroupType; minSelected: number; maxSelected: number | null } }
+    >();
+    for (const group of groups) {
+      for (const option of group.options) {
+        optionMap.set(option.id, { option, group });
+      }
+    }
+
+    const selectedCounts = new Map<string, number>();
+    let optionsTotalCents = 0;
+    for (const selection of selections) {
+      const entry = optionMap.get(selection.optionId);
+      if (!entry) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Invalid product option selected');
+      }
+      if (entry.option.maxQtyPerOption && selection.qty > entry.option.maxQtyPerOption) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Option quantity exceeds limit');
+      }
+      optionsTotalCents += entry.option.priceCents * selection.qty;
+      selectedCounts.set(entry.group.id, (selectedCounts.get(entry.group.id) ?? 0) + 1);
+    }
+
+    for (const group of groups) {
+      const selected = selectedCounts.get(group.id) ?? 0;
+      const minSelected = group.minSelected ?? 0;
+      const maxSelected =
+        group.maxSelected ?? (group.type === ProductOptionGroupType.SINGLE ? 1 : null);
+      if (selected < minSelected) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Required options are missing');
+      }
+      if (maxSelected !== null && maxSelected !== undefined && selected > maxSelected) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Too many options selected');
+      }
+      if (group.type === ProductOptionGroupType.SINGLE && selected > 1) {
+        throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Only one option can be selected');
+      }
+    }
+
+    return {
+      optionsTotalCents,
+      optionsHash: this.buildOptionsHash(selections),
+    };
+  }
+
+  private async syncCartItemOptions(
+    cartItemId: string,
+    selections: { optionId: string; qty: number }[],
+  ) {
+    await this.prisma.cartItemOption.deleteMany({ where: { cartItemId } });
+    if (!selections.length) return;
+    await this.prisma.cartItemOption.createMany({
+      data: selections.map((entry) => ({
+        cartItemId,
+        optionId: entry.optionId,
+        qty: entry.qty,
+      })),
+    });
   }
 
   private async resolveCouponDiscount(
