@@ -29,7 +29,6 @@ import { AutomationModule } from './automation/automation.module';
 import { OtpModule } from './otp/otp.module';
 import { PasswordResetModule } from './password-reset/password-reset.module';
 import { AutomationSupportModule } from './automation-support/automation-support.module';
-import { TelegramModule } from './telegram/telegram.module';
 import { BillingModule } from './billing/billing.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ProvidersModule } from './providers/providers.module';
@@ -136,7 +135,6 @@ import { PaymentMethodsModule } from './payment-methods/payment-methods.module';
     LoyaltyModule,
     CommonModule,
     UploadsModule,
-    TelegramModule,
     BillingModule,
     AnalyticsModule,
     ProvidersModule,

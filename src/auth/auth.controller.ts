@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards, Req, Get, Query } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Req } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
@@ -13,16 +13,10 @@ import {
   SignupStartDto,
   SignupVerifyDto,
   VerifyTwoFaDto,
-  SignupSessionStartDto,
-  SignupLinkTokenDto,
-  SignupSessionTokenDto,
-  SignupVerifySessionDto,
 } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { InternalSecretGuard } from '../common/guards/internal-secret.guard';
-import { SignupDebugController } from './signup-debug.controller';
 
 @ApiTags('Auth')
 @Controller({ path: 'auth', version: ['1', '2'] })
@@ -50,45 +44,6 @@ export class AuthController {
     });
   }
 
-  // New session-based signup flow (Telegram first)
-  @Post('signup/start-session')
-  @Throttle({ authRegister: {} })
-  signupStartSession(@Body() dto: SignupSessionStartDto, @Req() req: Request) {
-    return this.service.signupStartSession(dto, {
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-      correlationId: req.headers['x-correlation-id'] as string | undefined,
-    });
-  }
-
-  @Post('signup/telegram/link-token')
-  signupTelegramLink(@Body() dto: SignupLinkTokenDto, @Req() req: Request) {
-    return this.service.signupCreateLinkToken(
-      { signupSessionId: dto.signupSessionId, signupSessionToken: dto.signupSessionToken },
-      req.headers['x-correlation-id'] as string | undefined,
-    );
-  }
-
-  @Get('signup/telegram/link-status')
-  signupLinkStatus(@Query() query: SignupSessionTokenDto, @Req() req: Request) {
-    return this.service.signupLinkStatus(
-      { signupSessionId: query.signupSessionId, signupSessionToken: query.signupSessionToken },
-      req.headers['x-correlation-id'] as string | undefined,
-    );
-  }
-
-  @Post('signup/request-otp')
-  @Throttle({ otpSignup: {} })
-  signupRequestOtp(@Body() dto: SignupSessionTokenDto, @Req() req: Request) {
-    return this.service.signupRequestOtp(
-      { signupSessionId: dto.signupSessionId, signupSessionToken: dto.signupSessionToken },
-      {
-        ip: req.ip,
-        correlationId: req.headers['x-correlation-id'] as string | undefined,
-      },
-    );
-  }
-
   @Post('signup/verify')
   @Throttle({ otpVerify: {} })
   signupVerify(@Body() dto: SignupVerifyDto, @Req() req: Request) {
@@ -96,19 +51,6 @@ export class AuthController {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });
-  }
-
-  @Post('signup/verify-session')
-  @Throttle({ otpVerify: {} })
-  signupVerifySession(@Body() dto: SignupVerifySessionDto, @Req() req: Request) {
-    return this.service.signupVerifySession(
-      { signupSessionId: dto.signupSessionId, signupSessionToken: dto.signupSessionToken, otp: dto.otp },
-      {
-        ip: req.ip,
-        userAgent: req.headers['user-agent'],
-        correlationId: req.headers['x-correlation-id'] as string | undefined,
-      },
-    );
   }
 
   @Post('login')

@@ -1,16 +1,12 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { BadRequestException, HttpException, HttpStatus, Inject, Injectable, Logger, UnauthorizedException, forwardRef } from '@nestjs/common';
 import type { Cache } from 'cache-manager';
-import { randomUUID, createHash, createHmac } from 'crypto';
-import axios from 'axios';
-import { TelegramLink } from '@prisma/client';
+import { randomUUID, createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AutomationEventsService } from '../automation/automation-events.service';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth/auth.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
-import { TelegramService } from '../telegram/telegram.service';
-import { RequestContextService } from '../common/context/request-context.service';
 import { normalizePhoneToE164 } from '../common/utils/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ErrorCode } from '../common/errors';
@@ -37,15 +33,14 @@ interface OtpDispatchInput {
 
 interface OtpDispatchResult {
   delivered: boolean;
-  channel: 'whatsapp' | 'telegram' | 'fallback' | 'sms_required';
-  blocked?: boolean;
+  channel: 'whatsapp';
   error?: string;
 }
 
 interface CachedDispatchPayload {
   otpId: string;
   expiresInSeconds: number;
-  channel: 'whatsapp' | 'telegram' | 'fallback' | 'sms_required';
+  channel: 'whatsapp';
   requestId: string;
   resendAfterSeconds: number;
 }
@@ -59,9 +54,6 @@ export class OtpService {
   private readonly otpRateLimitSeconds: number;
   private readonly otpDailyLimit: number;
   private readonly otpPerIpLimit: number;
-  private readonly automationWebhookUrl?: string;
-  private readonly automationHmacSecret?: string;
-  private readonly automationWebhookSecret?: string;
   private readonly secret: string;
   private readonly requestIdTtlSeconds: number;
 
@@ -72,9 +64,7 @@ export class OtpService {
     private readonly config: ConfigService,
     @Inject(forwardRef(() => AuthService)) private readonly auth: AuthService,
     private readonly audit: AuditLogService,
-    private readonly telegram: TelegramService,
     private readonly notifications: NotificationsService,
-    private readonly context: RequestContextService,
   ) {
     this.otpTtlSec = this.resolveOtpTtlSeconds();
     this.maxAttempts = Number(this.config.get('OTP_MAX_ATTEMPTS') ?? 5);
@@ -82,9 +72,6 @@ export class OtpService {
     this.otpRateLimitSeconds = Number(this.config.get('OTP_RATE_LIMIT_SECONDS') ?? 60);
     this.otpDailyLimit = Number(this.config.get('OTP_MAX_PER_DAY') ?? this.config.get('OTP_DAILY_LIMIT') ?? 10);
     this.otpPerIpLimit = Number(this.config.get('OTP_PER_IP_LIMIT') ?? 20);
-    this.automationWebhookUrl = this.config.get('AUTOMATION_WEBHOOK_URL') ?? undefined;
-    this.automationHmacSecret = this.config.get('AUTOMATION_HMAC_SECRET') ?? undefined;
-    this.automationWebhookSecret = this.config.get('AUTOMATION_WEBHOOK_SECRET') ?? undefined;
     this.requestIdTtlSeconds = Math.max(this.otpTtlSec, this.otpRateLimitSeconds);
     this.secret = this.config.get('OTP_SECRET') ?? this.config.get('JWT_ACCESS_SECRET') ?? 'otp-secret';
     this.ensureSecretStrength();
@@ -134,16 +121,6 @@ export class OtpService {
         before: null,
         after: { purpose, phone: this.maskPhone(normalizedPhone), channel: dispatch.channel, reason: dispatch.error },
       });
-      if (dispatch.channel === 'sms_required') {
-        return {
-          otpId,
-          expiresInSeconds: this.otpTtlSec,
-          expires: Math.ceil(this.otpTtlSec / 60),
-          channel: 'sms_required',
-          requestId,
-          resendAfterSeconds: this.otpRateLimitSeconds,
-        };
-      }
       throw new BadRequestException('Unable to send OTP at this time. Please try again later.');
     }
 
@@ -295,35 +272,11 @@ export class OtpService {
   }
 
   private async dispatchOtp(params: OtpDispatchInput): Promise<OtpDispatchResult> {
-    let blocked = false;
-    const userId = params.userId ?? (await this.prisma.user.findUnique({ where: { phone: params.phone }, select: { id: true } }))?.id;
-
     const whatsapp = await this.tryWhatsapp(params);
     if (whatsapp.delivered) {
       return { delivered: true, channel: 'whatsapp' };
     }
-
-    const link = await this.telegram.getActiveLinkByPhone(params.phone);
-    if (link && userId) {
-      const result = await this.tryTelegram(link, params, userId);
-      if (result.delivered) {
-        return { delivered: true, channel: 'telegram' };
-      }
-      blocked = result.blocked ?? false;
-    }
-
-    const fallback = await this.sendFallbackOtp(params);
-    if (fallback.delivered) {
-      await this.cacheDispatch(params.requestId, {
-        otpId: params.otpId,
-        expiresInSeconds: params.expiresInSeconds,
-        channel: 'fallback',
-        requestId: params.requestId,
-        resendAfterSeconds: this.otpRateLimitSeconds,
-      });
-      return { delivered: true, channel: 'fallback', blocked };
-    }
-    return { delivered: false, channel: 'sms_required', blocked, error: fallback.error };
+    return { delivered: false, channel: 'whatsapp', error: whatsapp.error };
   }
 
   private async tryWhatsapp(params: OtpDispatchInput) {
@@ -343,96 +296,6 @@ export class OtpService {
     }
   }
 
-  private async tryTelegram(link: TelegramLink, params: OtpDispatchInput, userId: string) {
-    const first = await this.telegram.sendOtp({
-      link,
-      otp: params.otp,
-      expiresInSeconds: params.expiresInSeconds,
-      userId,
-      purpose: params.purpose,
-      requestId: params.requestId,
-      phone: params.phone,
-    });
-    if (first.ok) {
-      return { delivered: true, blocked: false };
-    }
-    if (first.blocked) {
-      return { delivered: false, blocked: true, error: first.error };
-    }
-
-    const second = await this.telegram.sendOtp({
-      link,
-      otp: params.otp,
-      expiresInSeconds: params.expiresInSeconds,
-      userId,
-      purpose: params.purpose,
-      requestId: params.requestId,
-      phone: params.phone,
-    });
-    if (second.ok) {
-      return { delivered: true, blocked: false };
-    }
-    return { delivered: false, blocked: second.blocked, error: second.error ?? first.error };
-  }
-
-  private async sendFallbackOtp(params: OtpDispatchInput) {
-    if (!this.automationWebhookUrl || !this.automationHmacSecret) {
-      this.logger.warn('Fallback OTP webhook not configured');
-      return { delivered: false, error: 'fallback_unavailable' };
-    }
-    const timestamp = Math.floor(Date.now() / 1000);
-    const payload = {
-      event_id: params.requestId,
-      event_type: 'auth.otp.requested',
-      occurred_at: new Date().toISOString(),
-      correlation_id: this.context.get('correlationId'),
-      version: '1.0',
-      dedupe_key: this.authDedupeKey(params.phone, params.purpose, params.otpId),
-      attempt: 1,
-      data: {
-        phone: params.phone,
-        otpId: params.otpId,
-        purpose: params.purpose,
-        otp: params.otp,
-        expiresInSeconds: params.expiresInSeconds,
-        channel: 'fallback',
-      },
-    };
-    const body = JSON.stringify(payload);
-    const signature = createHmac('sha256', this.automationHmacSecret).update(`${timestamp}.${body}`).digest('hex');
-    try {
-      const response = await axios.post(this.automationWebhookUrl, body, {
-        headers: {
-          'content-type': 'application/json',
-          ...(this.automationWebhookSecret ? { 'x-fasket-secret': this.automationWebhookSecret } : {}),
-          'x-fasket-event': payload.event_type,
-          'x-fasket-id': payload.event_id,
-          'x-fasket-timestamp': String(timestamp),
-          'x-fasket-signature': signature,
-          'x-fasket-attempt': '1',
-          'x-fasket-spec-version': '1.0',
-        },
-        timeout: 5000,
-        validateStatus: () => true,
-      });
-      if ((response.status >= 200 && response.status < 300) || response.status === 409) {
-        await this.cacheDispatch(params.requestId, {
-          otpId: params.otpId,
-          expiresInSeconds: params.expiresInSeconds,
-          channel: 'fallback',
-          requestId: params.requestId,
-          resendAfterSeconds: this.otpRateLimitSeconds,
-        });
-        return { delivered: true };
-      }
-      this.logger.warn({ msg: 'Fallback OTP webhook failed', status: response.status });
-      return { delivered: false, error: `status_${response.status}` };
-    } catch (err) {
-      const message = (err as Error).message;
-      this.logger.warn({ msg: 'Fallback OTP webhook error', error: message });
-      return { delivered: false, error: message };
-    }
-  }
 
   private ensureSecretStrength() {
     const env = (this.config.get<string>('NODE_ENV') || '').toLowerCase();
@@ -572,7 +435,7 @@ export class OtpService {
     return {
       otpId: cached.otpId,
       expiresInSeconds: cached.expiresInSeconds,
-      channel: cached.channel as 'whatsapp' | 'telegram' | 'fallback' | 'sms_required',
+      channel: cached.channel as 'whatsapp',
       requestId: cached.requestId,
       resendAfterSeconds: cached.resendAfterSeconds,
     };

@@ -1,13 +1,8 @@
-import axios from 'axios';
 import { OtpService } from './otp.service';
 import { AutomationEventsService } from '../automation/automation-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
-import { TelegramService } from '../telegram/telegram.service';
-import { RequestContextService } from '../common/context/request-context.service';
-
-jest.mock('axios');
 
 class MemoryCache {
   private store = new Map<string, { value: any; expiresAt?: number }>();
@@ -43,53 +38,20 @@ describe('OtpService', () => {
   } as unknown as AuthService;
   const audit = { log: jest.fn() } as unknown as AuditLogService;
   const config = { get: (k: string) => process.env[k] } as any;
-  const telegram = {
-    getActiveLinkForUser: jest.fn(),
-    getActiveLinkByPhone: jest.fn(),
-    sendOtp: jest.fn(),
-  } as unknown as TelegramService;
   const notifications = {
     sendWhatsappTemplate: jest.fn(),
   } as any;
-  const context = { get: jest.fn() } as unknown as RequestContextService;
 
   beforeAll(() => {
     process.env.OTP_MAX_ATTEMPTS = '2';
     process.env.OTP_TTL_SECONDS = '120';
     process.env.OTP_SECRET = 'very-strong-secret-value';
     prisma.user.findUnique = jest.fn().mockResolvedValue({ id: 'user-1' } as any);
-    telegram.getActiveLinkForUser = jest.fn().mockResolvedValue({
-      id: 1,
-      telegramChatId: BigInt(123),
-      lastOtpAttempts: 0,
-      lastOtpSentAt: null,
-    } as any);
-    telegram.getActiveLinkByPhone = jest.fn().mockResolvedValue({
-      id: 1,
-      telegramChatId: BigInt(123),
-      lastOtpAttempts: 0,
-      lastOtpSentAt: null,
-    } as any);
-    telegram.sendOtp = jest.fn().mockResolvedValue({ ok: true, blocked: false });
-    context.get = jest.fn().mockReturnValue(undefined);
   });
 
   beforeEach(() => {
     cache.clear();
-    (axios.post as jest.Mock).mockReset();
-    telegram.getActiveLinkForUser = jest.fn().mockResolvedValue({
-      id: 1,
-      telegramChatId: BigInt(123),
-      lastOtpAttempts: 0,
-      lastOtpSentAt: null,
-    } as any);
-    telegram.getActiveLinkByPhone = jest.fn().mockResolvedValue({
-      id: 1,
-      telegramChatId: BigInt(123),
-      lastOtpAttempts: 0,
-      lastOtpSentAt: null,
-    } as any);
-    telegram.sendOtp = jest.fn().mockResolvedValue({ ok: true, blocked: false });
+    notifications.sendWhatsappTemplate = jest.fn();
   });
 
   it('locks after max failed attempts', async () => {
@@ -100,9 +62,7 @@ describe('OtpService', () => {
       config,
       auth,
       audit,
-      telegram,
       notifications,
-      context,
     );
     (service as any).generateOtp = jest.fn().mockReturnValue('123456');
 
@@ -113,37 +73,6 @@ describe('OtpService', () => {
     expect(locked).toBeTruthy();
   });
 
-  it('sends x-fasket-secret header when fallback webhook is used', async () => {
-    process.env.AUTOMATION_WEBHOOK_URL = 'https://automation.test/webhook';
-    process.env.AUTOMATION_HMAC_SECRET = 'hmac-secret';
-    process.env.AUTOMATION_WEBHOOK_SECRET = 'static-secret';
-    prisma.user.findUnique = jest.fn().mockResolvedValue({ id: 'user-1' } as any);
-    telegram.getActiveLinkForUser = jest.fn().mockResolvedValue(null);
-    telegram.getActiveLinkByPhone = jest.fn().mockResolvedValue(null);
-    telegram.sendOtp = jest.fn().mockResolvedValue({ ok: false, blocked: false });
-    notifications.sendWhatsappTemplate = jest.fn().mockRejectedValue(new Error('whatsapp_failed'));
-    (axios.post as jest.Mock).mockResolvedValue({ status: 200 });
-
-    const service = new OtpService(
-      cache as any,
-      prisma,
-      automation,
-      config,
-      auth,
-      audit,
-      telegram,
-      notifications,
-      context,
-    );
-    (service as any).generateOtp = jest.fn().mockReturnValue('654321');
-
-    const result = await service.requestOtp('+201555555555', 'LOGIN');
-    expect(result.channel).toBe('fallback');
-    expect(axios.post).toHaveBeenCalledTimes(1);
-    const headers = (axios.post as jest.Mock).mock.calls[0][2].headers;
-    expect(headers['x-fasket-secret']).toBe('static-secret');
-  });
-
   it('accepts valid OTPs for login', async () => {
     const service = new OtpService(
       cache as any,
@@ -152,9 +81,7 @@ describe('OtpService', () => {
       config,
       auth,
       audit,
-      telegram,
       notifications,
-      context,
     );
     (service as any).generateOtp = jest.fn().mockReturnValue('123456');
     auth.issueTokensForUserId = jest.fn().mockResolvedValue({ accessToken: 'access', refreshToken: 'refresh' });
@@ -173,9 +100,7 @@ describe('OtpService', () => {
       config,
       auth,
       audit,
-      telegram,
       notifications,
-      context,
     );
     (service as any).generateOtp = jest.fn().mockReturnValue('123456');
 
@@ -195,9 +120,7 @@ describe('OtpService', () => {
       config,
       auth,
       audit,
-      telegram,
       notifications,
-      context,
     );
     (service as any).generateOtp = jest.fn().mockReturnValue('123456');
 
