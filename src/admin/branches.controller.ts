@@ -1,6 +1,6 @@
-import { Body, Controller, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { Prisma } from '@prisma/client';
+import { OrderStatus, Prisma } from '@prisma/client';
 import { AdminOnly } from './_admin-guards';
 import { AdminService } from './admin.service';
 import { BranchListRequestDto, CreateBranchDto, UpdateBranchDto } from './dto/branch.dto';
@@ -102,6 +102,40 @@ export class AdminBranchesController {
       after: updated,
     });
     return updated;
+  }
+
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    const existing = await this.svc.prisma.branch.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Branch not found');
+
+    const activeOrders = await this.svc.prisma.order.count({
+      where: {
+        branchId: id,
+        status: { in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.OUT_FOR_DELIVERY] },
+      },
+    });
+    if (activeOrders > 0) {
+      throw new BadRequestException('Branch has active orders and cannot be deleted');
+    }
+
+    const [updated] = await this.svc.prisma.$transaction([
+      this.svc.prisma.branch.update({
+        where: { id },
+        data: { status: 'INACTIVE', isDefault: false },
+      }),
+      this.svc.prisma.coupon.updateMany({ where: { branchId: id }, data: { isActive: false } }),
+      this.svc.prisma.deliveryWindow.updateMany({ where: { branchId: id }, data: { isActive: false } }),
+      this.svc.prisma.deliveryZone.updateMany({ where: { branchId: id }, data: { isActive: false } }),
+    ]);
+    await this.svc.audit.log({
+      action: 'branch.delete',
+      entity: 'Branch',
+      entityId: id,
+      before: existing,
+      after: { status: updated.status, isDefault: updated.isDefault },
+    });
+    return { ok: true };
   }
 
   private async prepareBranchPayload(dto: CreateBranchDto | UpdateBranchDto, id?: string) {
