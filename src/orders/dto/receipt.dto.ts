@@ -36,6 +36,7 @@ export class OrderReceiptDto {
   items!: {
     productId: string;
     productName: string;
+    productNameAr?: string | null;
     quantity: number;
     unitPriceCents: number;
     lineTotalCents: number;

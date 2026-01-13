@@ -39,6 +39,7 @@ export class ReceiptService {
                 priceSnapshotCents: true,
                 qty: true,
                 options: true,
+                product: { select: { nameAr: true } },
               },
               orderBy: { id: 'asc' },
             },
@@ -78,6 +79,7 @@ export class ReceiptService {
                 priceSnapshotCents: true,
                 qty: true,
                 options: true,
+                product: { select: { nameAr: true } },
               },
               orderBy: { id: 'asc' },
             },
@@ -100,6 +102,7 @@ export class ReceiptService {
     const items = order.items.map((item: any) => ({
       productId: item.productId,
       productName: item.productNameSnapshot,
+      productNameAr: item.product?.nameAr ?? null,
       quantity: item.qty,
       unitPriceCents: item.priceSnapshotCents,
       lineTotalCents: item.priceSnapshotCents * item.qty,
