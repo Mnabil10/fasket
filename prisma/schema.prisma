@@ -75,6 +75,11 @@ enum ProductOptionGroupType {
   MULTI
 }
 
+enum ProductOptionGroupPriceMode {
+  ADD
+  SET
+}
+
 enum DeliveryFailureReason {
   NO_ANSWER
   WRONG_ADDRESS
@@ -528,6 +533,7 @@ model ProductOptionGroup {
   name        String
   nameAr      String?
   type        ProductOptionGroupType
+  priceMode   ProductOptionGroupPriceMode @default(ADD)
   minSelected Int                  @default(0)
   maxSelected Int?
   sortOrder   Int                  @default(0)

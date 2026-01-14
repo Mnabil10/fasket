@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Address, Cart, Coupon, Prisma, ProductStatus, ProductOptionGroupType } from '@prisma/client';
+import { Address, Cart, Coupon, Prisma, ProductOptionGroupPriceMode, ProductOptionGroupType, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
 import { localize } from 'src/common/utils/localize.util';
@@ -53,6 +53,7 @@ type CartItemWithProduct = Prisma.CartItemGetPayload<{
                 name: true;
                 nameAr: true;
                 type: true;
+                priceMode: true;
                 minSelected: true;
                 maxSelected: true;
                 isActive: true;
@@ -242,7 +243,8 @@ export class CartService {
       branchProduct.priceCents ??
       product.salePriceCents ??
       product.priceCents;
-    const price = basePrice + optionSelection.optionsTotalCents;
+    const effectiveBasePrice = optionSelection.basePriceOverrideCents ?? basePrice;
+    const price = effectiveBasePrice + optionSelection.optionsTotalCents;
     const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
     const cartItem = await this.prisma.cartItem.upsert({
       where: {
@@ -327,7 +329,8 @@ export class CartService {
       item.product.salePriceCents ??
       item.product.priceCents ??
       item.priceCents;
-    const price = basePrice + optionSelection.optionsTotalCents;
+    const effectiveBasePrice = optionSelection.basePriceOverrideCents ?? basePrice;
+    const price = effectiveBasePrice + optionSelection.optionsTotalCents;
     if (qty > availableStock) {
       throw new DomainError(ErrorCode.CART_PRODUCT_UNAVAILABLE, 'Insufficient stock for this product');
     }
@@ -442,6 +445,7 @@ export class CartService {
                     name: true,
                     nameAr: true,
                     type: true,
+                    priceMode: true,
                     minSelected: true,
                     maxSelected: true,
                     isActive: true,
@@ -504,6 +508,8 @@ export class CartService {
         }
         const optionResponses: CartItemOptionResponse[] = [];
         let optionsTotalCents = 0;
+        let baseOverrideCents = 0;
+        let hasBaseOverride = false;
         for (const selection of item.options ?? []) {
           const option = selection.option;
           const group = option?.group;
@@ -512,7 +518,12 @@ export class CartService {
             return null;
           }
           const optionQty = selection.qty ?? 1;
-          optionsTotalCents += option.priceCents * optionQty;
+          if (group.priceMode === ProductOptionGroupPriceMode.SET) {
+            baseOverrideCents += option.priceCents * optionQty;
+            hasBaseOverride = true;
+          } else {
+            optionsTotalCents += option.priceCents * optionQty;
+          }
           optionResponses.push({
             id: option.id,
             name: localize(option.name, option.nameAr, lang),
@@ -532,7 +543,8 @@ export class CartService {
           branchProduct.priceCents ??
           product.salePriceCents ??
           product.priceCents;
-        const unitPriceCents = effectivePrice + optionsTotalCents;
+        const effectiveBasePrice = hasBaseOverride ? baseOverrideCents : effectivePrice;
+        const unitPriceCents = effectiveBasePrice + optionsTotalCents;
         const localizedName = localize(product.name, product.nameAr, lang);
         const imageUrl = (await toPublicImageUrl(product.imageUrl)) ?? null;
         return {
@@ -811,7 +823,16 @@ export class CartService {
 
     const optionMap = new Map<
       string,
-      { option: { id: string; priceCents: number; maxQtyPerOption: number | null }; group: { id: string; type: ProductOptionGroupType; minSelected: number; maxSelected: number | null } }
+      {
+        option: { id: string; priceCents: number; maxQtyPerOption: number | null };
+        group: {
+          id: string;
+          type: ProductOptionGroupType;
+          priceMode: ProductOptionGroupPriceMode;
+          minSelected: number;
+          maxSelected: number | null;
+        };
+      }
     >();
     for (const group of groups) {
       for (const option of group.options) {
@@ -821,6 +842,8 @@ export class CartService {
 
     const selectedCounts = new Map<string, number>();
     let optionsTotalCents = 0;
+    let baseOverrideCents = 0;
+    let hasBaseOverride = false;
     for (const selection of selections) {
       const entry = optionMap.get(selection.optionId);
       if (!entry) {
@@ -829,7 +852,12 @@ export class CartService {
       if (entry.option.maxQtyPerOption && selection.qty > entry.option.maxQtyPerOption) {
         throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Option quantity exceeds limit');
       }
-      optionsTotalCents += entry.option.priceCents * selection.qty;
+      if (entry.group.priceMode === ProductOptionGroupPriceMode.SET) {
+        baseOverrideCents += entry.option.priceCents * selection.qty;
+        hasBaseOverride = true;
+      } else {
+        optionsTotalCents += entry.option.priceCents * selection.qty;
+      }
       selectedCounts.set(entry.group.id, (selectedCounts.get(entry.group.id) ?? 0) + 1);
     }
 
@@ -851,6 +879,7 @@ export class CartService {
 
     return {
       optionsTotalCents,
+      basePriceOverrideCents: hasBaseOverride ? baseOverrideCents : null,
       optionsHash: this.buildOptionsHash(selections),
     };
   }

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { ProductOptionGroupType } from '@prisma/client';
+import { ProductOptionGroupPriceMode, ProductOptionGroupType } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { cleanNullableString, cleanString } from '../../common/utils/sanitize.util';
@@ -19,6 +19,11 @@ export class CreateProductOptionGroupDto {
   @ApiProperty({ enum: ProductOptionGroupType })
   @IsEnum(ProductOptionGroupType)
   type!: ProductOptionGroupType;
+
+  @ApiPropertyOptional({ enum: ProductOptionGroupPriceMode })
+  @IsOptional()
+  @IsEnum(ProductOptionGroupPriceMode)
+  priceMode?: ProductOptionGroupPriceMode;
 
   @ApiPropertyOptional({ description: 'Minimum selections required' })
   @Transform(({ value }) => (value === undefined ? undefined : Number(value)))

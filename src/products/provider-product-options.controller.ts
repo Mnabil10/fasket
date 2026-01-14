@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Prisma, ProviderStatus, UserRole } from '@prisma/client';
+import { Prisma, ProductOptionGroupPriceMode, ProviderStatus, UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -41,13 +41,14 @@ export class ProviderProductOptionsController {
   ) {
     const providerId = await this.resolveProviderScope(user);
     await this.assertProductAccess(productId, providerId);
-    this.validateGroupRules(dto.type, dto.minSelected, dto.maxSelected);
+    this.validateGroupRules(dto.type, dto.minSelected, dto.maxSelected, dto.priceMode);
     return this.prisma.productOptionGroup.create({
       data: {
         productId,
         name: dto.name.trim(),
         nameAr: dto.nameAr ?? null,
         type: dto.type,
+        priceMode: dto.priceMode ?? ProductOptionGroupPriceMode.ADD,
         minSelected: dto.minSelected ?? 0,
         maxSelected: dto.maxSelected ?? null,
         sortOrder: dto.sortOrder ?? 0,
@@ -68,13 +69,15 @@ export class ProviderProductOptionsController {
     const nextType = dto.type ?? group.type;
     const nextMin = dto.minSelected ?? group.minSelected;
     const nextMax = dto.maxSelected ?? group.maxSelected ?? null;
-    this.validateGroupRules(nextType, nextMin, nextMax);
+    const nextPriceMode = dto.priceMode ?? group.priceMode ?? ProductOptionGroupPriceMode.ADD;
+    this.validateGroupRules(nextType, nextMin, nextMax, nextPriceMode);
     return this.prisma.productOptionGroup.update({
       where: { id: groupId },
       data: {
         name: dto.name?.trim(),
         nameAr: dto.nameAr,
         type: dto.type,
+        priceMode: dto.priceMode,
         minSelected: dto.minSelected,
         maxSelected: dto.maxSelected,
         sortOrder: dto.sortOrder,
@@ -145,7 +148,12 @@ export class ProviderProductOptionsController {
     return { ok: true };
   }
 
-  private validateGroupRules(type: string, minSelected?: number | null, maxSelected?: number | null) {
+  private validateGroupRules(
+    type: string,
+    minSelected?: number | null,
+    maxSelected?: number | null,
+    priceMode: ProductOptionGroupPriceMode = ProductOptionGroupPriceMode.ADD,
+  ) {
     const min = minSelected ?? 0;
     const max = maxSelected ?? null;
     if (max !== null && max < min) {
@@ -158,6 +166,8 @@ export class ProviderProductOptionsController {
       if (max !== null && max > 1) {
         throw new BadRequestException('Single choice groups cannot allow more than one selection');
       }
+    } else if (priceMode === ProductOptionGroupPriceMode.SET) {
+      throw new BadRequestException('Price override groups must be single choice');
     }
   }
 

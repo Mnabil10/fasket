@@ -260,6 +260,7 @@ export class ProductsService {
         name: this.localize(group.name, group.nameAr, lang) ?? group.name,
         nameAr: group.nameAr,
         type: group.type,
+        priceMode: group.priceMode,
         minSelected: group.minSelected,
         maxSelected: group.maxSelected,
         sortOrder: group.sortOrder,

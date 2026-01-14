@@ -7,6 +7,7 @@ import {
   OrderStatus,
   PaymentMethod,
   Prisma,
+  ProductOptionGroupPriceMode,
   ProductStatus,
   ProductOptionGroupType,
 } from '@prisma/client';
@@ -643,6 +644,7 @@ export class OrdersService {
             optionGroups: {
               id: string;
               type: ProductOptionGroupType;
+              priceMode: ProductOptionGroupPriceMode;
               minSelected: number;
               maxSelected: number | null;
               isActive: boolean;
@@ -759,6 +761,7 @@ export class OrdersService {
             item.product.priceCents;
           let optionSelection: {
             optionsTotalCents: number;
+            basePriceOverrideCents: number | null;
             options: Array<{ optionId: string; name: string; nameAr: string | null; priceCents: number; qty: number }>;
           };
           try {
@@ -767,7 +770,8 @@ export class OrdersService {
             branchErrors.set(item.branch.id, error?.userMessage ?? error?.message ?? 'Invalid product options');
             continue;
           }
-          const priceCents = basePrice + optionSelection.optionsTotalCents;
+          const effectiveBasePrice = optionSelection.basePriceOverrideCents ?? basePrice;
+          const priceCents = effectiveBasePrice + optionSelection.optionsTotalCents;
           validItems.push({
             cartItemId: item.cartItemId,
             branchId: item.branch.id,
@@ -1930,6 +1934,7 @@ export class OrdersService {
         item.product.priceCents;
       let optionSelection: {
         optionsTotalCents: number;
+        basePriceOverrideCents: number | null;
         options: Array<{ optionId: string; name: string; nameAr: string | null; priceCents: number; qty: number }>;
       };
       try {
@@ -1938,7 +1943,8 @@ export class OrdersService {
         branchErrors.set(item.branch.id, error?.userMessage ?? error?.message ?? 'Invalid product options');
         continue;
       }
-      const priceCents = basePrice + optionSelection.optionsTotalCents;
+      const effectiveBasePrice = optionSelection.basePriceOverrideCents ?? basePrice;
+      const priceCents = effectiveBasePrice + optionSelection.optionsTotalCents;
       validItems.push({
         branchId: item.branch.id,
         providerId: item.branch.providerId,
@@ -2576,6 +2582,7 @@ export class OrdersService {
       optionGroups?: Array<{
         id: string;
         type: ProductOptionGroupType;
+        priceMode?: ProductOptionGroupPriceMode | null;
         minSelected: number;
         maxSelected: number | null;
         isActive: boolean;
@@ -2600,19 +2607,36 @@ export class OrdersService {
       string,
       {
         option: { id: string; name: string; nameAr: string | null; priceCents: number; maxQtyPerOption: number | null };
-        group: { id: string; type: ProductOptionGroupType; minSelected: number; maxSelected: number | null };
+        group: {
+          id: string;
+          type: ProductOptionGroupType;
+          priceMode: ProductOptionGroupPriceMode;
+          minSelected: number;
+          maxSelected: number | null;
+        };
       }
     >();
     for (const group of groups) {
       if (!group.isActive) continue;
       for (const option of group.options) {
         if (!option.isActive) continue;
-        optionMap.set(option.id, { option, group });
+        optionMap.set(option.id, {
+          option,
+          group: {
+            id: group.id,
+            type: group.type,
+            priceMode: group.priceMode ?? ProductOptionGroupPriceMode.ADD,
+            minSelected: group.minSelected,
+            maxSelected: group.maxSelected,
+          },
+        });
       }
     }
 
     const selectedCounts = new Map<string, number>();
     let optionsTotalCents = 0;
+    let baseOverrideCents = 0;
+    let hasBaseOverride = false;
     const resolvedOptions: Array<{
       optionId: string;
       name: string;
@@ -2628,7 +2652,12 @@ export class OrdersService {
       if (entry.option.maxQtyPerOption && selection.qty > entry.option.maxQtyPerOption) {
         throw new DomainError(ErrorCode.CART_OPTIONS_INVALID, 'Option quantity exceeds limit');
       }
-      optionsTotalCents += entry.option.priceCents * selection.qty;
+      if (entry.group.priceMode === ProductOptionGroupPriceMode.SET) {
+        baseOverrideCents += entry.option.priceCents * selection.qty;
+        hasBaseOverride = true;
+      } else {
+        optionsTotalCents += entry.option.priceCents * selection.qty;
+      }
       resolvedOptions.push({
         optionId: entry.option.id,
         name: entry.option.name,
@@ -2656,7 +2685,11 @@ export class OrdersService {
     }
 
     resolvedOptions.sort((a, b) => a.optionId.localeCompare(b.optionId));
-    return { optionsTotalCents, options: resolvedOptions };
+    return {
+      optionsTotalCents,
+      basePriceOverrideCents: hasBaseOverride ? baseOverrideCents : null,
+      options: resolvedOptions,
+    };
   }
 
   private resolveCombinedShippingFee(
@@ -2858,7 +2891,8 @@ export class OrdersService {
             })) ?? [],
           ),
         );
-        const priceCents = basePrice + optionSelection.optionsTotalCents;
+        const effectiveBasePrice = optionSelection.basePriceOverrideCents ?? basePrice;
+        const priceCents = effectiveBasePrice + optionSelection.optionsTotalCents;
         const costCents = product.costPriceCents ?? 0;
         if (!costCents || costCents <= 0) {
           this.logger.warn({ msg: 'Missing cost price snapshot for product', productId: product.id });
