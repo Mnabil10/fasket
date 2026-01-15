@@ -129,6 +129,7 @@ Provider application lifecycle, approval flow, and plan/commission rules are doc
 4. Duplicate slugs/SKUs inside the same sheet are skipped without halting the batch.
 5. Category slugs are auto-resolved; missing slugs/sku fields are generated on the fly.
 6. Each update/create triggers cache invalidation and stock audit entries.
+7. Admin uploads must include `providerSlug` per row; categories are resolved within that provider.
 
 ## Media Upload Workflow
 

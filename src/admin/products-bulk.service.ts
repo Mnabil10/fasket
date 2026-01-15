@@ -20,6 +20,7 @@ const TEMPLATE_HEADERS = [
   'salePrice',
   'stock',
   'status',
+  'providerSlug',
   'categorySlug',
   'imageUrl',
   'images',
@@ -37,6 +38,7 @@ interface ParsedRow {
 interface ProductWriteValues {
   slug?: string;
   sku?: string;
+  providerId?: string;
   name: string;
   nameAr?: string;
   description?: string;
@@ -125,7 +127,9 @@ export class ProductsBulkService {
       throw new BadRequestException('No product rows were found in the file');
     }
 
-    const categoryMap = await this.buildCategoryMap(rows, options.providerId);
+    const providerMap = await this.buildProviderMap(rows);
+    const providerByRow = new Map<number, string | undefined>();
+    const rowsWithProvider: ParsedRow[] = [];
     const slugMap = new Map<string, Product>();
     const skuMap = new Map<string, Product>();
     const result: BulkUploadResult = {
@@ -138,10 +142,26 @@ export class ProductsBulkService {
     };
     const rowKeys = new Set<string>();
 
-    const parsedRows: ValidatedRow[] = [];
     for (const row of rows) {
       try {
-        const values = await this.mapRowToProduct(row.values, categoryMap);
+        const providerId = this.resolveProviderId(row.values, providerMap, options.providerId);
+        providerByRow.set(row.rowNumber, providerId);
+        rowsWithProvider.push(row);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        const code = error instanceof RowError ? error.code : 'ROW_ERROR';
+        result.errors.push({ row: row.rowNumber, code, message });
+        result.rows.push({ rowNumber: row.rowNumber, status: 'error', errorMessage: message, errorCode: code });
+      }
+    }
+
+    const categoryMap = await this.buildCategoryMap(rowsWithProvider, providerByRow);
+
+    const parsedRows: ValidatedRow[] = [];
+    for (const row of rowsWithProvider) {
+      try {
+        const providerId = providerByRow.get(row.rowNumber);
+        const values = await this.mapRowToProduct(row.values, categoryMap, providerId);
         parsedRows.push({ rowNumber: row.rowNumber, values });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
@@ -162,7 +182,7 @@ export class ProductsBulkService {
       new Set(parsedRows.map((row) => row.values.sku).filter((sku): sku is string => !!sku)),
     );
     if (slugCandidates.length || skuCandidates.length) {
-    const existingProducts = await this.prisma.product.findMany({
+      const existingProducts = await this.prisma.product.findMany({
         where: {
           OR: [
             ...(slugCandidates.length ? [{ slug: { in: slugCandidates } }] : []),
@@ -185,7 +205,7 @@ export class ProductsBulkService {
           throw new RowError('DUPLICATE_ROW', 'Duplicate slug/SKU in file. Row skipped.');
         }
         rowKeys.add(dedupeKey);
-        const existing = await this.resolveExistingProduct(values, slugMap, skuMap, options.providerId);
+        const existing = await this.resolveExistingProduct(values, slugMap, skuMap, values.providerId);
         if (existing) {
           values.slug = existing.slug;
           values.sku = values.sku ?? existing.sku ?? (await this.generateSku(values.name));
@@ -198,7 +218,7 @@ export class ProductsBulkService {
           values,
           existing: existing || undefined,
           action: existing ? 'update' : 'create',
-          providerId: options.providerId,
+          providerId: values.providerId,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
@@ -317,24 +337,36 @@ export class ProductsBulkService {
     return Object.values(row).some((value) => value !== undefined && String(value).trim() !== '');
   }
 
-  private async buildCategoryMap(rows: ParsedRow[], providerId?: string) {
-    const slugs = Array.from(
-      new Set(
-        rows
-          .map((row) => row.values.categorySlug?.toString().trim().toLowerCase())
-          .filter((slug): slug is string => !!slug),
-      ),
-    );
-    if (!slugs.length) return new Map<string, string>();
+  private async buildCategoryMap(rows: ParsedRow[], providerByRow: Map<number, string | undefined>) {
+    const slugsByProvider = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const rowProviderId = providerByRow.get(row.rowNumber);
+      const categorySlug = row.values.categorySlug?.toString().trim().toLowerCase();
+      if (!categorySlug || !rowProviderId) continue;
+      const existing = slugsByProvider.get(rowProviderId) ?? new Set<string>();
+      existing.add(categorySlug);
+      slugsByProvider.set(rowProviderId, existing);
+    }
+
+    if (!slugsByProvider.size) return new Map<string, string>();
+
+    const filters = Array.from(slugsByProvider.entries()).map(([providerKey, slugs]) => ({
+      providerId: providerKey,
+      slug: { in: Array.from(slugs) },
+      deletedAt: null,
+    }));
+
     const categories = await this.prisma.category.findMany({
-      where: {
-        slug: { in: slugs },
-        deletedAt: null,
-        ...(providerId ? { providerId } : {}),
-      },
-      select: { id: true, slug: true },
+      where: { OR: filters },
+      select: { id: true, slug: true, providerId: true },
     });
-    return new Map(categories.map((category) => [category.slug.toLowerCase(), category.id]));
+
+    const map = new Map<string, string>();
+    categories.forEach((category) => {
+      if (!category.providerId) return;
+      map.set(this.categoryKey(category.providerId, category.slug.toLowerCase()), category.id);
+    });
+    return map;
   }
 
   private async resolveExistingProduct(
@@ -390,7 +422,7 @@ export class ProductsBulkService {
     });
   }
 
-  private async mapRowToProduct(row: BulkRow, categoryMap: Map<string, string>) {
+  private async mapRowToProduct(row: BulkRow, categoryMap: Map<string, string>, providerId?: string) {
     const name = this.requireString(row.name, 'name');
     const slugValue = this.optionalString(row.slug);
     const skuValue = this.optionalString(row.sku);
@@ -400,11 +432,12 @@ export class ProductsBulkService {
     const salePriceCents = this.optionalMoney(row.salePrice);
     const stock = this.parseInteger(row.stock, 'stock');
     const status = this.parseStatus(row.status);
-    const categoryId = await this.resolveCategory(row.categorySlug, categoryMap);
+    const categoryId = await this.resolveCategory(row.categorySlug, categoryMap, providerId);
     const images = this.parseImages(row.images);
     return {
       slug,
       sku,
+      providerId,
       name,
       nameAr: this.optionalString(row.nameAr),
       description: this.optionalString(row.description),
@@ -420,14 +453,17 @@ export class ProductsBulkService {
     };
   }
 
-  private async resolveCategory(slugValue: any, categoryMap: Map<string, string>) {
+  private async resolveCategory(slugValue: any, categoryMap: Map<string, string>, providerId?: string) {
     if (!this.hasValue(slugValue)) {
       return undefined;
     }
+    if (!providerId) {
+      throw new RowError('PROVIDER_REQUIRED', 'providerSlug is required to resolve categorySlug');
+    }
     const slug = String(slugValue).trim().toLowerCase();
-    const id = categoryMap.get(slug);
+    const id = categoryMap.get(this.categoryKey(providerId, slug));
     if (!id) {
-      throw new RowError('CATEGORY_NOT_FOUND', `Category with slug "${slug}" was not found`);
+      throw new RowError('CATEGORY_NOT_FOUND', `Category with slug "${slug}" was not found for provider`);
     }
     return id;
   }
@@ -496,6 +532,45 @@ export class ProductsBulkService {
     return this.hasValue(value) ? String(value).trim() : undefined;
   }
 
+  private async buildProviderMap(rows: ParsedRow[]) {
+    const slugs = Array.from(
+      new Set(
+        rows
+          .map((row) => row.values.providerSlug?.toString().trim().toLowerCase())
+          .filter((slug): slug is string => !!slug),
+      ),
+    );
+    if (!slugs.length) return new Map<string, string>();
+    const providers = await this.prisma.provider.findMany({
+      where: { slug: { in: slugs } },
+      select: { id: true, slug: true },
+    });
+    return new Map(providers.map((provider) => [provider.slug.toLowerCase(), provider.id]));
+  }
+
+  private resolveProviderId(row: BulkRow, providerMap: Map<string, string>, providerScope?: string) {
+    const providerSlug = this.optionalString(row.providerSlug);
+    if (providerScope) {
+      if (!providerSlug) return providerScope;
+      const mapped = providerMap.get(providerSlug.toLowerCase());
+      if (!mapped) {
+        throw new RowError('PROVIDER_NOT_FOUND', `Provider "${providerSlug}" was not found`);
+      }
+      if (mapped !== providerScope) {
+        throw new RowError('PROVIDER_CONFLICT', 'Row provider does not match your provider account');
+      }
+      return providerScope;
+    }
+    if (!providerSlug) {
+      throw new RowError('PROVIDER_REQUIRED', 'providerSlug is required');
+    }
+    const providerId = providerMap.get(providerSlug.toLowerCase());
+    if (!providerId) {
+      throw new RowError('PROVIDER_NOT_FOUND', `Provider "${providerSlug}" was not found`);
+    }
+    return providerId;
+  }
+
   private parseImages(value: any) {
     if (!this.hasValue(value)) {
       return [];
@@ -515,6 +590,10 @@ export class ProductsBulkService {
 
   private hasValue(value: any) {
     return value !== undefined && value !== null && String(value).trim() !== '';
+  }
+
+  private categoryKey(providerId: string, slug: string) {
+    return `${providerId}:${slug}`;
   }
 
   private compactData<T extends Record<string, any>>(data: T) {
