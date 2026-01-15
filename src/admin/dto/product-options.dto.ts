@@ -53,6 +53,13 @@ export class CreateProductOptionGroupDto {
 
 export class UpdateProductOptionGroupDto extends PartialType(CreateProductOptionGroupDto) {}
 
+export class AttachProductOptionGroupDto {
+  @ApiProperty()
+  @Transform(({ value }) => cleanString(value))
+  @IsString()
+  groupId!: string;
+}
+
 export class CreateProductOptionDto {
   @ApiProperty()
   @Transform(({ value }) => cleanString(value))

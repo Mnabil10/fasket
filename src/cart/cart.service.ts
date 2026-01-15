@@ -814,7 +814,7 @@ export class CartService {
     selections: { optionId: string; qty: number }[],
   ) {
     const groups = await this.prisma.productOptionGroup.findMany({
-      where: { productId, isActive: true },
+      where: { products: { some: { id: productId } }, isActive: true },
       include: { options: { where: { isActive: true } } },
     });
     if (!groups.length && selections.length > 0) {

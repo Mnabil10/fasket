@@ -1,33 +1,73 @@
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  FileTypeValidator,
+  Get,
+  MaxFileSizeValidator,
+  NotFoundException,
+  Param,
+  ParseFilePipe,
+  Patch,
+  Post,
+  Query,
+  StreamableFile,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { Express } from 'express';
 import { Prisma, ProductOptionGroupPriceMode, ProviderStatus, UserRole } from '@prisma/client';
 import { AdminService } from './admin.service';
 import { ProviderOrStaffOrAdmin } from './_admin-guards';
 import {
   CreateProductOptionDto,
   CreateProductOptionGroupDto,
+  AttachProductOptionGroupDto,
   UpdateProductOptionDto,
   UpdateProductOptionGroupDto,
 } from './dto/product-options.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CurrentUserPayload } from '../common/types/current-user.type';
+import { ProductOptionsBulkService } from './product-options-bulk.service';
 
 @ApiTags('Admin/ProductOptions')
 @ApiBearerAuth()
 @ProviderOrStaffOrAdmin()
 @Controller({ path: 'admin', version: ['1'] })
 export class AdminProductOptionsController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly bulk: ProductOptionsBulkService,
+  ) {}
 
   @Get('products/:productId/option-groups')
   async listGroups(@CurrentUser() user: CurrentUserPayload, @Param('productId') productId: string) {
     const providerScope = await this.resolveProviderScope(user);
     await this.assertProductAccess(productId, providerScope);
     return this.admin.prisma.productOptionGroup.findMany({
-      where: { productId },
+      where: { products: { some: { id: productId } } },
       include: {
         options: { orderBy: { sortOrder: 'asc' } },
       },
+      orderBy: { sortOrder: 'asc' },
+    });
+  }
+
+  @Get('products/:productId/option-groups/available')
+  async listAvailableGroups(@CurrentUser() user: CurrentUserPayload, @Param('productId') productId: string) {
+    const providerScope = await this.resolveProviderScope(user);
+    const product = await this.assertProductAccess(productId, providerScope);
+    const providerId = product.providerId ?? null;
+    const where: Prisma.ProductOptionGroupWhereInput = {
+      products: { some: { providerId } },
+      NOT: { products: { some: { id: productId } } },
+    };
+    return this.admin.prisma.productOptionGroup.findMany({
+      where,
       orderBy: { sortOrder: 'asc' },
     });
   }
@@ -43,7 +83,6 @@ export class AdminProductOptionsController {
     this.validateGroupRules(dto.type, dto.minSelected, dto.maxSelected, dto.priceMode);
     return this.admin.prisma.productOptionGroup.create({
       data: {
-        productId,
         name: dto.name.trim(),
         nameAr: dto.nameAr ?? null,
         type: dto.type,
@@ -52,8 +91,114 @@ export class AdminProductOptionsController {
         maxSelected: dto.maxSelected ?? null,
         sortOrder: dto.sortOrder ?? 0,
         isActive: dto.isActive ?? true,
+        products: { connect: { id: productId } },
       },
     });
+  }
+
+  @Post('products/:productId/option-groups/attach')
+  async attachGroup(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('productId') productId: string,
+    @Body() dto: AttachProductOptionGroupDto,
+  ) {
+    const providerScope = await this.resolveProviderScope(user);
+    const product = await this.assertProductAccess(productId, providerScope);
+    const group = await this.admin.prisma.productOptionGroup.findUnique({
+      where: { id: dto.groupId },
+      include: { products: { select: { id: true, providerId: true } } },
+    });
+    if (!group) throw new NotFoundException('Option group not found');
+
+    const providerIds = new Set(group.products.map((p) => p.providerId ?? null));
+    if (providerIds.size > 1) {
+      throw new BadRequestException('Option group belongs to multiple providers');
+    }
+    const groupProviderId = providerIds.size ? Array.from(providerIds)[0] : null;
+    const productProviderId = product.providerId ?? null;
+    if (groupProviderId !== null && groupProviderId !== productProviderId) {
+      throw new BadRequestException('Option group belongs to another provider');
+    }
+    if (group.products.some((p) => p.id === productId)) {
+      return { ok: true, attached: false };
+    }
+    await this.admin.prisma.productOptionGroup.update({
+      where: { id: dto.groupId },
+      data: { products: { connect: { id: productId } } },
+    });
+    return { ok: true, attached: true };
+  }
+
+  @Delete('products/:productId/option-groups/:groupId')
+  async detachGroup(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('productId') productId: string,
+    @Param('groupId') groupId: string,
+  ) {
+    const providerScope = await this.resolveProviderScope(user);
+    await this.assertProductAccess(productId, providerScope);
+    const group = await this.admin.prisma.productOptionGroup.findFirst({
+      where: { id: groupId, products: { some: { id: productId } } },
+      select: { id: true },
+    });
+    if (!group) throw new NotFoundException('Option group not found');
+    await this.admin.prisma.productOptionGroup.update({
+      where: { id: groupId },
+      data: { products: { disconnect: { id: productId } } },
+    });
+    return { ok: true };
+  }
+
+  @Get('product-option-groups/:groupId/options-template')
+  @ApiOkResponse({
+    description: 'Excel template containing the required header row',
+    schema: { type: 'string', format: 'binary' },
+  })
+  async downloadOptionsTemplate(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('groupId') groupId: string,
+  ) {
+    const providerScope = await this.resolveProviderScope(user);
+    await this.assertGroupAccess(groupId, providerScope);
+    const buffer = this.bulk.generateTemplate();
+    return new StreamableFile(buffer, {
+      disposition: 'attachment; filename="option-groups-template.xlsx"',
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+  }
+
+  @Post('product-option-groups/:groupId/options-upload')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Summary of created, updated, and failed rows',
+  })
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  async bulkUploadOptions(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('groupId') groupId: string,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024, message: 'File must not exceed 5MB' }),
+          new FileTypeValidator({ fileType: /(csv|excel|spreadsheetml)/i }),
+        ],
+      }),
+    )
+    file: Express.Multer.File,
+    @Query('dryRun') dryRun?: string,
+  ) {
+    const providerScope = await this.resolveProviderScope(user);
+    await this.assertGroupAccess(groupId, providerScope);
+    return this.bulk.processUpload(file, groupId, { dryRun: String(dryRun).toLowerCase() === 'true' });
   }
 
   @Patch('product-option-groups/:groupId')
@@ -188,17 +333,18 @@ export class AdminProductOptionsController {
   private async assertProductAccess(productId: string, providerScope: string | null) {
     const product = await this.admin.prisma.product.findFirst({
       where: { id: productId, ...(providerScope ? { providerId: providerScope } : {}) },
-      select: { id: true },
+      select: { id: true, providerId: true },
     });
     if (!product) {
       throw new NotFoundException('Product not found');
     }
+    return product;
   }
 
   private getGroup(groupId: string, providerScope: string | null) {
     const where: Prisma.ProductOptionGroupWhereInput = {
       id: groupId,
-      ...(providerScope ? { product: { providerId: providerScope } } : {}),
+      ...(providerScope ? { products: { some: { providerId: providerScope } } } : {}),
     };
     return this.admin.prisma.productOptionGroup.findFirst({ where });
   }
@@ -206,8 +352,14 @@ export class AdminProductOptionsController {
   private getOption(optionId: string, providerScope: string | null) {
     const where: Prisma.ProductOptionWhereInput = {
       id: optionId,
-      ...(providerScope ? { group: { product: { providerId: providerScope } } } : {}),
+      ...(providerScope ? { group: { products: { some: { providerId: providerScope } } } } : {}),
     };
     return this.admin.prisma.productOption.findFirst({ where });
+  }
+
+  private async assertGroupAccess(groupId: string, providerScope: string | null) {
+    const group = await this.getGroup(groupId, providerScope);
+    if (!group) throw new NotFoundException('Option group not found');
+    return group;
   }
 }

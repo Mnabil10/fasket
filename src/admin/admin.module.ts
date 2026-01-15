@@ -34,6 +34,7 @@ import { ProvidersModule } from '../providers/providers.module';
 import { AdminProductOptionsController } from './product-options.controller';
 import { AdminDeliveryWindowsController } from './delivery-windows.controller';
 import { AdminProviderDeliveryZonePricingController } from './provider-delivery-zone-pricing.controller';
+import { ProductOptionsBulkService } from './product-options-bulk.service';
 
 @Module({
   controllers: [
@@ -75,6 +76,6 @@ import { AdminProviderDeliveryZonePricingController } from './provider-delivery-
     ProvidersModule,
     // ...other modules
   ],
-  providers: [AdminService, ProductsBulkService],
+  providers: [AdminService, ProductsBulkService, ProductOptionsBulkService],
 })
 export class AdminModule {}
