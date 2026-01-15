@@ -4,14 +4,8 @@
   - You are about to drop the `_ProductToProductOptionGroup` table. If the table is not empty, all the data it contains will be lost.
 
 */
--- DropForeignKey
-ALTER TABLE "_ProductToProductOptionGroup" DROP CONSTRAINT "_ProductToProductOptionGroup_A_fkey";
-
--- DropForeignKey
-ALTER TABLE "_ProductToProductOptionGroup" DROP CONSTRAINT "_ProductToProductOptionGroup_B_fkey";
-
--- DropTable
-DROP TABLE "_ProductToProductOptionGroup";
+-- DropTable (if exists)
+DROP TABLE IF EXISTS "_ProductToProductOptionGroup";
 
 -- CreateTable
 CREATE TABLE "_ProductOptionGroups" (
