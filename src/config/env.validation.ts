@@ -16,6 +16,7 @@ const baseSchema = z.object({
   SIGNUP_SESSION_TTL: z.coerce.number().int().positive().optional(),
 
   OTP_SECRET: z.string().optional(),
+  OTP_ENABLED: z.enum(['true','false']).optional(),
   OTP_TTL_SECONDS: z.coerce.number().int().positive().optional(),
   OTP_TTL_MIN: z.coerce.number().int().positive().default(5),
   OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
@@ -52,6 +53,7 @@ const baseSchema = z.object({
   LOG_LEVEL: z.string().optional(),
 
   DELIVERY_DISTANCE_ENABLED: z.enum(['true','false']).optional(),
+  GUEST_ORDERS_ENABLED: z.enum(['true','false']).optional(),
   ROUTING_BASE_URL: z.string().url().optional(),
   ROUTING_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
   ROUTING_FALLBACK_SPEED_KPH: z.coerce.number().positive().optional(),
@@ -95,6 +97,7 @@ const baseSchema = z.object({
   N8N_SECRET: z.string().optional(),
 
   WHATSAPP_PROVIDER: z.enum(['mock', 'meta']).default('mock'),
+  WHATSAPP_ENABLED: z.enum(['true','false']).optional(),
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   WHATSAPP_VERIFY_TOKEN: z.string().optional(),

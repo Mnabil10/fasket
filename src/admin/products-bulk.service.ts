@@ -1,5 +1,11 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { Prisma, Product, ProductStatus } from '@prisma/client';
+import {
+  Prisma,
+  Product,
+  ProductStatus,
+  ProductOptionGroupPriceMode,
+  ProductOptionGroupType,
+} from '@prisma/client';
 import { Express } from 'express';
 import * as XLSX from 'xlsx';
 import { parse } from 'csv-parse/sync';
@@ -25,6 +31,13 @@ const TEMPLATE_HEADERS = [
   'imageUrl',
   'images',
   'isHotOffer',
+  'optionGroupName',
+  'optionGroupNameAr',
+  'optionGroupType',
+  'optionGroupPriceMode',
+  'optionGroupMinSelected',
+  'optionGroupMaxSelected',
+  'optionGroupOptions',
 ] as const;
 
 type HeaderKey = (typeof TEMPLATE_HEADERS)[number];
@@ -33,6 +46,25 @@ type BulkRow = Record<HeaderKey, any>;
 interface ParsedRow {
   rowNumber: number;
   values: BulkRow;
+}
+
+interface OptionWriteValues {
+  name: string;
+  nameAr?: string | null;
+  priceCents: number;
+  maxQtyPerOption?: number | null;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+interface OptionGroupWriteValues {
+  name: string;
+  nameAr?: string | null;
+  type: ProductOptionGroupType;
+  priceMode: ProductOptionGroupPriceMode;
+  minSelected: number;
+  maxSelected?: number | null;
+  options: OptionWriteValues[];
 }
 
 interface ProductWriteValues {
@@ -51,6 +83,7 @@ interface ProductWriteValues {
   categoryId?: string;
   images: string[];
   isHotOffer: boolean;
+  optionGroup?: OptionGroupWriteValues | null;
 }
 
 interface ValidatedRow {
@@ -94,6 +127,8 @@ class RowError extends Error {
 export class ProductsBulkService {
   private readonly logger = new Logger(ProductsBulkService.name);
   private readonly statusSet = new Set<string>(Object.values(ProductStatus));
+  private readonly groupTypeSet = new Set<string>(Object.values(ProductOptionGroupType));
+  private readonly priceModeSet = new Set<string>(Object.values(ProductOptionGroupPriceMode));
   private readonly batchSize = Number(process.env.BULK_PRODUCT_BATCH_SIZE || 25);
 
   constructor(
@@ -276,6 +311,8 @@ export class ProductsBulkService {
       sku: op.values.sku,
       providerId: op.providerId,
     });
+    const optionGroup = op.values.optionGroup ?? null;
+    const hasOptionGroup = Boolean(optionGroup);
 
     if (op.action === 'update' && op.existing) {
       if (op.providerId && op.existing.providerId !== op.providerId) {
@@ -288,19 +325,25 @@ export class ProductsBulkService {
         }
         return current !== value;
       });
-      if (!hasChanges) {
+      if (!hasChanges && !hasOptionGroup) {
         return { status: 'skipped' as const, productId: op.existing.id };
       }
       if (dryRun) {
         return { status: 'updated' as const, productId: op.existing.id };
       }
-      const updated = await this.prisma.product.update({
-        where: { id: op.existing.id },
-        data: data as Prisma.ProductUncheckedUpdateInput,
-      });
-      await this.ensureDefaultBranchProduct(updated.id, updated.providerId);
-      if (op.values.stock !== undefined && op.existing.stock !== op.values.stock) {
-        await this.recordStockChange(op.existing.id, op.existing.stock, op.values.stock, 'bulk.upload');
+      let updated = op.existing;
+      if (hasChanges) {
+        updated = await this.prisma.product.update({
+          where: { id: op.existing.id },
+          data: data as Prisma.ProductUncheckedUpdateInput,
+        });
+        await this.ensureDefaultBranchProduct(updated.id, updated.providerId);
+        if (op.values.stock !== undefined && op.existing.stock !== op.values.stock) {
+          await this.recordStockChange(op.existing.id, op.existing.stock, op.values.stock, 'bulk.upload');
+        }
+      }
+      if (optionGroup) {
+        await this.applyOptionGroup(updated.id, optionGroup);
       }
       return { status: 'updated' as const, productId: updated.id };
     }
@@ -310,6 +353,9 @@ export class ProductsBulkService {
     }
     const created = await this.prisma.product.create({ data: data as Prisma.ProductUncheckedCreateInput });
     await this.ensureDefaultBranchProduct(created.id, created.providerId);
+    if (optionGroup) {
+      await this.applyOptionGroup(created.id, optionGroup);
+    }
     return { status: 'created' as const, productId: created.id };
   }
 
@@ -422,6 +468,69 @@ export class ProductsBulkService {
     });
   }
 
+  private async applyOptionGroup(productId: string, optionGroup: OptionGroupWriteValues) {
+    const existing = await this.prisma.productOptionGroup.findFirst({
+      where: { name: optionGroup.name, products: { some: { id: productId } } },
+      select: { id: true, products: { select: { id: true } } },
+    });
+
+    const groupData = {
+      name: optionGroup.name,
+      nameAr: optionGroup.nameAr ?? null,
+      type: optionGroup.type,
+      priceMode: optionGroup.priceMode,
+      minSelected: optionGroup.minSelected ?? 0,
+      maxSelected: optionGroup.maxSelected ?? null,
+      sortOrder: 0,
+      isActive: true,
+    };
+
+    if (existing) {
+      if (existing.products.length > 1) {
+        throw new RowError(
+          'OPTION_GROUP_SHARED',
+          'Option group is shared by multiple products; cannot update via bulk upload',
+        );
+      }
+      await this.prisma.productOptionGroup.update({
+        where: { id: existing.id },
+        data: groupData,
+      });
+      await this.prisma.productOption.deleteMany({ where: { groupId: existing.id } });
+      if (optionGroup.options.length) {
+        await this.prisma.productOption.createMany({
+          data: this.buildOptionRows(existing.id, optionGroup.options),
+        });
+      }
+      return existing.id;
+    }
+
+    const created = await this.prisma.productOptionGroup.create({
+      data: {
+        ...groupData,
+        products: { connect: { id: productId } },
+      },
+    });
+    if (optionGroup.options.length) {
+      await this.prisma.productOption.createMany({
+        data: this.buildOptionRows(created.id, optionGroup.options),
+      });
+    }
+    return created.id;
+  }
+
+  private buildOptionRows(groupId: string, options: OptionWriteValues[]) {
+    return options.map((option) => ({
+      groupId,
+      name: option.name,
+      nameAr: option.nameAr ?? null,
+      priceCents: option.priceCents,
+      maxQtyPerOption: option.maxQtyPerOption ?? null,
+      sortOrder: option.sortOrder ?? 0,
+      isActive: option.isActive,
+    }));
+  }
+
   private async mapRowToProduct(row: BulkRow, categoryMap: Map<string, string>, providerId?: string) {
     const name = this.requireString(row.name, 'name');
     const slugValue = this.optionalString(row.slug);
@@ -434,6 +543,7 @@ export class ProductsBulkService {
     const status = this.parseStatus(row.status);
     const categoryId = await this.resolveCategory(row.categorySlug, categoryMap, providerId);
     const images = this.parseImages(row.images);
+    const optionGroup = this.parseOptionGroup(row);
     return {
       slug,
       sku,
@@ -450,7 +560,193 @@ export class ProductsBulkService {
       categoryId,
       images,
       isHotOffer: this.parseBoolean(row.isHotOffer),
+      optionGroup,
     };
+  }
+
+  private parseOptionGroup(row: BulkRow): OptionGroupWriteValues | null {
+    const hasAnyGroupValue = [
+      row.optionGroupName,
+      row.optionGroupNameAr,
+      row.optionGroupType,
+      row.optionGroupPriceMode,
+      row.optionGroupMinSelected,
+      row.optionGroupMaxSelected,
+      row.optionGroupOptions,
+    ].some((value) => this.hasValue(value));
+    if (!hasAnyGroupValue) {
+      return null;
+    }
+
+    const name = this.optionalString(row.optionGroupName);
+    if (!name) {
+      throw new RowError('VALIDATION_ERROR', 'optionGroupName is required when option group columns are provided');
+    }
+
+    const options = this.parseOptionGroupOptions(row.optionGroupOptions);
+    if (!options.length) {
+      throw new RowError('VALIDATION_ERROR', 'optionGroupOptions is required when optionGroupName is provided');
+    }
+
+    const type = this.parseOptionGroupType(row.optionGroupType);
+    const priceMode = this.parseOptionGroupPriceMode(row.optionGroupPriceMode);
+    const minSelected = this.optionalInt(row.optionGroupMinSelected) ?? 0;
+    const maxSelected = this.optionalInt(row.optionGroupMaxSelected);
+
+    this.validateGroupRules(type, minSelected, maxSelected, priceMode);
+
+    return {
+      name,
+      nameAr: this.optionalString(row.optionGroupNameAr) ?? null,
+      type,
+      priceMode,
+      minSelected,
+      maxSelected: maxSelected ?? null,
+      options,
+    };
+  }
+
+  private parseOptionGroupType(value: any): ProductOptionGroupType {
+    if (!this.hasValue(value)) {
+      return ProductOptionGroupType.SINGLE;
+    }
+    const normalized = String(value).trim().toUpperCase();
+    if (!this.groupTypeSet.has(normalized)) {
+      throw new RowError(
+        'VALIDATION_ERROR',
+        `optionGroupType must be one of: ${Array.from(this.groupTypeSet).join(', ')}`,
+      );
+    }
+    return normalized as ProductOptionGroupType;
+  }
+
+  private parseOptionGroupPriceMode(value: any): ProductOptionGroupPriceMode {
+    if (!this.hasValue(value)) {
+      return ProductOptionGroupPriceMode.ADD;
+    }
+    const normalized = String(value).trim().toUpperCase();
+    if (!this.priceModeSet.has(normalized)) {
+      throw new RowError(
+        'VALIDATION_ERROR',
+        `optionGroupPriceMode must be one of: ${Array.from(this.priceModeSet).join(', ')}`,
+      );
+    }
+    return normalized as ProductOptionGroupPriceMode;
+  }
+
+  private parseOptionGroupOptions(value: any): OptionWriteValues[] {
+    if (!this.hasValue(value)) return [];
+    const raw = String(value).trim();
+    if (!raw) return [];
+
+    if (raw.startsWith('[') || raw.startsWith('{')) {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new RowError('VALIDATION_ERROR', 'optionGroupOptions must be valid JSON or a delimited list');
+      }
+      const list = Array.isArray(parsed) ? parsed : parsed?.options;
+      if (!Array.isArray(list)) {
+        throw new RowError('VALIDATION_ERROR', 'optionGroupOptions JSON must be an array');
+      }
+      return list.map((item, idx) => this.mapOptionObject(item, idx));
+    }
+
+    const entries = raw
+      .split(/;|\n/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (!entries.length) return [];
+
+    return entries.map((entry, idx) => {
+      const parts = entry.split('|').map((part) => part.trim());
+      const [name, nameAr, price, maxQty, sortOrder, isActive] = parts;
+      if (!name) {
+        throw new RowError('VALIDATION_ERROR', `optionGroupOptions entry ${idx + 1} is missing a name`);
+      }
+      return {
+        name,
+        nameAr: nameAr || null,
+        priceCents: this.parseOptionMoney(price),
+        maxQtyPerOption: this.optionalInt(maxQty),
+        sortOrder: this.optionalInt(sortOrder) ?? idx,
+        isActive: this.parseOptionBoolean(isActive),
+      };
+    });
+  }
+
+  private mapOptionObject(value: any, index: number): OptionWriteValues {
+    if (!value || typeof value !== 'object') {
+      throw new RowError('VALIDATION_ERROR', `optionGroupOptions entry ${index + 1} must be an object`);
+    }
+    const name = this.requireString(value.name ?? value.optionName ?? value.option, 'optionGroupOptions.name');
+    const nameAr = this.optionalString(value.nameAr ?? value.optionNameAr ?? value.option_ar) ?? null;
+    const priceValue = value.price ?? value.priceCents ?? value.price_cents ?? 0;
+    const maxQty = this.optionalInt(value.maxQtyPerOption ?? value.maxQty ?? value.max_qty_per_option);
+    const sortOrder = this.optionalInt(value.sortOrder ?? value.sort_order) ?? index;
+    const isActive = this.parseOptionBoolean(value.isActive ?? value.is_active);
+    return {
+      name,
+      nameAr,
+      priceCents: this.parseOptionMoney(priceValue),
+      maxQtyPerOption: maxQty,
+      sortOrder,
+      isActive,
+    };
+  }
+
+  private parseOptionMoney(value: any) {
+    if (!this.hasValue(value)) return 0;
+    return this.parseMoney(value, 'option price');
+  }
+
+  private parseOptionBoolean(value: any) {
+    if (!this.hasValue(value)) return true;
+    const normalized = String(value).trim().toLowerCase();
+    if (['1', 'true', 'yes', 'y'].includes(normalized)) {
+      return true;
+    }
+    if (['0', 'false', 'no', 'n'].includes(normalized)) {
+      return false;
+    }
+    throw new RowError('VALIDATION_ERROR', 'optionGroupOptions isActive must be true or false');
+  }
+
+  private optionalInt(value: any) {
+    if (!this.hasValue(value)) return null;
+    const numeric = Number(String(value).trim());
+    if (!Number.isFinite(numeric)) {
+      throw new RowError('VALIDATION_ERROR', 'Value must be a valid number');
+    }
+    const intValue = Math.floor(numeric);
+    if (intValue < 0) {
+      throw new RowError('VALIDATION_ERROR', 'Value must be zero or greater');
+    }
+    return intValue;
+  }
+
+  private validateGroupRules(
+    type: ProductOptionGroupType,
+    minSelected?: number | null,
+    maxSelected?: number | null,
+    priceMode: ProductOptionGroupPriceMode = ProductOptionGroupPriceMode.ADD,
+  ) {
+    const min = minSelected ?? 0;
+    const max = maxSelected ?? null;
+    if (max !== null && max < min) {
+      throw new RowError('VALIDATION_ERROR', 'maxSelected must be greater than or equal to minSelected');
+    }
+    if (type === ProductOptionGroupType.SINGLE) {
+      if (min > 1) {
+        throw new RowError('VALIDATION_ERROR', 'Single choice groups cannot require more than one selection');
+      }
+      if (max !== null && max > 1) {
+        throw new RowError('VALIDATION_ERROR', 'Single choice groups cannot allow more than one selection');
+      }
+    } else if (priceMode === ProductOptionGroupPriceMode.SET) {
+      throw new RowError('VALIDATION_ERROR', 'Price override groups must be single choice');
+    }
   }
 
   private async resolveCategory(slugValue: any, categoryMap: Map<string, string>, providerId?: string) {

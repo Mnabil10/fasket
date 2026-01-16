@@ -56,6 +56,8 @@ export class OtpService {
   private readonly otpPerIpLimit: number;
   private readonly secret: string;
   private readonly requestIdTtlSeconds: number;
+  private readonly otpEnabled: boolean;
+  private readonly whatsappEnabled: boolean;
 
   constructor(
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
@@ -74,10 +76,14 @@ export class OtpService {
     this.otpPerIpLimit = Number(this.config.get('OTP_PER_IP_LIMIT') ?? 20);
     this.requestIdTtlSeconds = Math.max(this.otpTtlSec, this.otpRateLimitSeconds);
     this.secret = this.config.get('OTP_SECRET') ?? this.config.get('JWT_ACCESS_SECRET') ?? 'otp-secret';
+    this.otpEnabled = (this.config.get<string>('OTP_ENABLED') ?? 'true') !== 'false';
+    this.whatsappEnabled = (this.config.get<string>('WHATSAPP_ENABLED') ?? 'true') !== 'false';
     this.ensureSecretStrength();
   }
 
   async requestOtp(phone: string, purpose: OtpPurpose, ip?: string) {
+    this.ensureOtpEnabled();
+    this.ensureOtpDeliveryEnabled();
     const normalizedPhone = normalizePhoneToE164(phone);
     this.ensurePurpose(purpose);
     await this.ensureRateLimit(purpose, normalizedPhone, ip);
@@ -154,6 +160,7 @@ export class OtpService {
   }
 
   async verifyOtp(phone: string, purpose: OtpPurpose, otpId: string, otp: string, ip?: string) {
+    this.ensureOtpEnabled();
     const normalizedPhone = normalizePhoneToE164(phone);
     this.ensurePurpose(purpose);
     const lockKey = this.lockKey(purpose, normalizedPhone);
@@ -261,6 +268,7 @@ export class OtpService {
   }
 
   async verifyOtpLegacy(phone: string, purpose: OtpPurpose, otp: string, ip?: string) {
+    this.ensureOtpEnabled();
     const record = await this.cache.get<OtpRecord>(this.otpKey(purpose, normalizePhoneToE164(phone)));
     if (!record) {
       throw new UnauthorizedException({
@@ -296,6 +304,17 @@ export class OtpService {
     }
   }
 
+  private ensureOtpEnabled() {
+    if (!this.otpEnabled) {
+      throw new BadRequestException('OTP is disabled');
+    }
+  }
+
+  private ensureOtpDeliveryEnabled() {
+    if (!this.whatsappEnabled) {
+      throw new BadRequestException('OTP delivery is disabled');
+    }
+  }
 
   private ensureSecretStrength() {
     const env = (this.config.get<string>('NODE_ENV') || '').toLowerCase();

@@ -18,6 +18,7 @@ export class WhatsappService {
   private readonly logger = new Logger(WhatsappService.name);
   private readonly provider: WhatsappProvider;
   private readonly defaultLanguage: WhatsappTemplateLanguage;
+  private readonly enabled: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -26,6 +27,7 @@ export class WhatsappService {
   ) {
     this.provider = this.resolveProvider(this.config.get<string>('WHATSAPP_PROVIDER'));
     this.defaultLanguage = normalizeWhatsappLanguage(this.config.get<string>('WHATSAPP_DEFAULT_LANGUAGE'));
+    this.enabled = (this.config.get<string>('WHATSAPP_ENABLED') ?? 'true') !== 'false';
   }
 
   async sendTemplate(params: {
@@ -42,6 +44,31 @@ export class WhatsappService {
     const templateName = String(params.template).trim();
     const templatePayload = buildWhatsappTemplatePayloadDynamic(templateName, language, params.variables);
     const redactedVariables = this.redactTemplateVariables(params.template, params.variables);
+    if (!this.enabled) {
+      this.logger.warn({ msg: 'WhatsApp disabled; skipping template', template: templatePayload.name, to: toPhone });
+      return this.prisma.whatsAppMessageLog.create({
+        data: {
+          provider: this.provider === 'meta' ? 'META' : 'MOCK',
+          direction: 'OUTBOUND',
+          type: 'TEMPLATE',
+          status: 'FAILED',
+          toPhone,
+          templateName: templatePayload.name,
+          templateLanguage: templatePayload.language,
+          payload: {
+            template: {
+              name: templatePayload.name,
+              language: templatePayload.language,
+              variables: redactedVariables,
+            },
+            metadata: params.metadata ?? null,
+          } as Prisma.InputJsonValue,
+          supportConversationId: params.supportConversationId ?? null,
+          supportMessageId: params.supportMessageId ?? null,
+          errorMessage: 'disabled',
+        },
+      });
+    }
     const log = await this.prisma.whatsAppMessageLog.create({
       data: {
         provider: this.provider === 'meta' ? 'META' : 'MOCK',
@@ -83,6 +110,23 @@ export class WhatsappService {
   }) {
     const toPhone = normalizePhoneToE164(params.to);
     const body = String(params.body ?? '').trim();
+    if (!this.enabled) {
+      this.logger.warn({ msg: 'WhatsApp disabled; skipping text', to: toPhone });
+      return this.prisma.whatsAppMessageLog.create({
+        data: {
+          provider: this.provider === 'meta' ? 'META' : 'MOCK',
+          direction: 'OUTBOUND',
+          type: 'TEXT',
+          status: 'FAILED',
+          toPhone,
+          body,
+          payload: { text: body, metadata: params.metadata ?? null } as Prisma.InputJsonValue,
+          supportConversationId: params.supportConversationId ?? null,
+          supportMessageId: params.supportMessageId ?? null,
+          errorMessage: 'disabled',
+        },
+      });
+    }
     const log = await this.prisma.whatsAppMessageLog.create({
       data: {
         provider: this.provider === 'meta' ? 'META' : 'MOCK',
@@ -116,6 +160,23 @@ export class WhatsappService {
     metadata?: Record<string, unknown>;
   }) {
     const toPhone = normalizePhoneToE164(params.to);
+    if (!this.enabled) {
+      this.logger.warn({ msg: 'WhatsApp disabled; skipping document', to: toPhone });
+      return this.prisma.whatsAppMessageLog.create({
+        data: {
+          provider: this.provider === 'meta' ? 'META' : 'MOCK',
+          direction: 'OUTBOUND',
+          type: 'DOCUMENT',
+          status: 'FAILED',
+          toPhone,
+          mediaUrl: params.link,
+          payload: { document: { link: params.link, filename: params.filename }, metadata: params.metadata ?? null } as Prisma.InputJsonValue,
+          supportConversationId: params.supportConversationId ?? null,
+          supportMessageId: params.supportMessageId ?? null,
+          errorMessage: 'disabled',
+        },
+      });
+    }
     const log = await this.prisma.whatsAppMessageLog.create({
       data: {
         provider: this.provider === 'meta' ? 'META' : 'MOCK',
