@@ -178,6 +178,12 @@ export class AdminProvidersController {
     if (data.slug) {
       data.slug = await this.svc.slugs.generateUniqueSlug('provider', data.slug, id);
     }
+    if (
+      (data.orderWindowStartMinutes !== undefined || data.orderWindowEndMinutes !== undefined) &&
+      (data.orderWindowStartMinutes === undefined || data.orderWindowEndMinutes === undefined)
+    ) {
+      throw new BadRequestException('Ordering window start and end minutes must be provided together');
+    }
     return data;
   }
 }

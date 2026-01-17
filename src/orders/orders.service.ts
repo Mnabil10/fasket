@@ -597,7 +597,17 @@ export class OrdersService {
         const explicitBranches = explicitBranchIds.length
           ? await tx.branch.findMany({
               where: { id: { in: explicitBranchIds } },
-              include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
+              include: {
+                provider: {
+                  select: {
+                    id: true,
+                    deliveryMode: true,
+                    status: true,
+                    orderWindowStartMinutes: true,
+                    orderWindowEndMinutes: true,
+                  },
+                },
+              },
             })
           : [];
         const branchById = new Map(explicitBranches.map((branch) => [branch.id, branch]));
@@ -616,7 +626,17 @@ export class OrdersService {
           ? await tx.branch.findMany({
               where: { providerId: { in: Array.from(providerIdsNeeded) }, status: 'ACTIVE' },
               orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-              include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
+              include: {
+                provider: {
+                  select: {
+                    id: true,
+                    deliveryMode: true,
+                    status: true,
+                    orderWindowStartMinutes: true,
+                    orderWindowEndMinutes: true,
+                  },
+                },
+              },
             })
           : [];
         const defaultBranchByProvider = new Map<string, (typeof providerBranches)[number]>();
@@ -627,7 +647,17 @@ export class OrdersService {
         }
         const fallbackBranch = await tx.branch.findUnique({
           where: { id: this.defaultBranchId },
-          include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
+          include: {
+            provider: {
+              select: {
+                id: true,
+                deliveryMode: true,
+                status: true,
+                orderWindowStartMinutes: true,
+                orderWindowEndMinutes: true,
+              },
+            },
+          },
         });
 
         const branchErrors = new Map<string, string>();
@@ -663,7 +693,13 @@ export class OrdersService {
             providerId: string;
             status: string;
             deliveryMode: DeliveryMode | null;
-            provider?: { id: string; deliveryMode: DeliveryMode; status: string } | null;
+            provider?: {
+              id: string;
+              deliveryMode: DeliveryMode;
+              status: string;
+              orderWindowStartMinutes: number | null;
+              orderWindowEndMinutes: number | null;
+            } | null;
           };
           qty: number;
           options: { optionId: string; qty: number }[];
@@ -732,7 +768,12 @@ export class OrdersService {
             id: string;
             providerId: string;
             deliveryMode: DeliveryMode | null;
-            provider?: { id: string; deliveryMode: DeliveryMode } | null;
+            provider?: {
+              id: string;
+              deliveryMode: DeliveryMode;
+              orderWindowStartMinutes: number | null;
+              orderWindowEndMinutes: number | null;
+            } | null;
           };
         }> = [];
 
@@ -822,6 +863,9 @@ export class OrdersService {
         }
         if (groupEntries.length > 1) {
           throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from multiple branches');
+        }
+        for (const [, group] of groupEntries) {
+          this.assertOrderingWindowOpen(group.branch.provider);
         }
 
         if (payload.loyaltyPointsToRedeem && payload.loyaltyPointsToRedeem > 0 && grouped.size > 1) {
@@ -1253,6 +1297,9 @@ export class OrdersService {
       if (groupEntries.length > 1) {
         throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from multiple branches');
       }
+      for (const [, group] of groupEntries) {
+        this.assertOrderingWindowOpen(group.branch.provider);
+      }
 
       if (payload.deliveryWindowId || payload.scheduledAt) {
         await this.resolveDeliveryWindowSelection({
@@ -1427,6 +1474,9 @@ export class OrdersService {
         }
         if (groupEntries.length > 1) {
           throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from multiple branches');
+        }
+        for (const [, group] of groupEntries) {
+          this.assertOrderingWindowOpen(group.branch.provider);
         }
 
         const scheduling = await this.resolveDeliveryWindowSelection({
@@ -1812,7 +1862,17 @@ export class OrdersService {
     const explicitBranches = explicitBranchIds.length
       ? await tx.branch.findMany({
           where: { id: { in: explicitBranchIds } },
-          include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
+          include: {
+            provider: {
+              select: {
+                id: true,
+                deliveryMode: true,
+                status: true,
+                orderWindowStartMinutes: true,
+                orderWindowEndMinutes: true,
+              },
+            },
+          },
         })
       : [];
     const branchById = new Map(explicitBranches.map((branch) => [branch.id, branch]));
@@ -1831,7 +1891,17 @@ export class OrdersService {
       ? await tx.branch.findMany({
           where: { providerId: { in: Array.from(providerIdsNeeded) }, status: 'ACTIVE' },
           orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-          include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
+          include: {
+            provider: {
+              select: {
+                id: true,
+                deliveryMode: true,
+                status: true,
+                orderWindowStartMinutes: true,
+                orderWindowEndMinutes: true,
+              },
+            },
+          },
         })
       : [];
     const defaultBranchByProvider = new Map<string, (typeof providerBranches)[number]>();
@@ -1843,7 +1913,17 @@ export class OrdersService {
 
     const fallbackBranch = await tx.branch.findUnique({
       where: { id: this.defaultBranchId },
-      include: { provider: { select: { id: true, deliveryMode: true, status: true } } },
+      include: {
+        provider: {
+          select: {
+            id: true,
+            deliveryMode: true,
+            status: true,
+            orderWindowStartMinutes: true,
+            orderWindowEndMinutes: true,
+          },
+        },
+      },
     });
 
     const branchErrors = new Map<string, string>();
@@ -2713,6 +2793,43 @@ export class OrdersService {
     return { totalFeeCents: sum, primaryBranchId };
   }
 
+  private normalizeOrderWindowMinutes(value: unknown): number | null {
+    if (value === null || value === undefined) return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    const rounded = Math.round(parsed);
+    if (rounded < 0 || rounded > 1440) return null;
+    return rounded;
+  }
+
+  private isWithinOrderWindow(minutes: number, startMinutes: number, endMinutes: number) {
+    if (startMinutes === endMinutes) {
+      return true;
+    }
+    if (startMinutes < endMinutes) {
+      return minutes >= startMinutes && minutes < endMinutes;
+    }
+    return minutes >= startMinutes || minutes < endMinutes;
+  }
+
+  private assertOrderingWindowOpen(
+    provider?: {
+      id?: string | null;
+      orderWindowStartMinutes?: number | null;
+      orderWindowEndMinutes?: number | null;
+    } | null,
+    now: Date = new Date(),
+  ) {
+    if (!provider) return;
+    const startMinutes = this.normalizeOrderWindowMinutes(provider.orderWindowStartMinutes);
+    const endMinutes = this.normalizeOrderWindowMinutes(provider.orderWindowEndMinutes);
+    if (startMinutes === null || endMinutes === null) return;
+    const minutes = now.getHours() * 60 + now.getMinutes();
+    if (!this.isWithinOrderWindow(minutes, startMinutes, endMinutes)) {
+      throw new DomainError(ErrorCode.ORDERING_CLOSED, 'Ordering is closed right now');
+    }
+  }
+
   private async resolveDeliveryWindowSelection(params: {
     branch: { id: string; providerId: string; schedulingEnabled?: boolean | null; schedulingAllowAsap?: boolean | null };
     subtotalCents: number;
@@ -2822,6 +2939,13 @@ export class OrdersService {
 
     const automationEvents: AutomationEventRef[] = [];
     const result = await this.prisma.$transaction(async (tx) => {
+      if (source.providerId) {
+        const provider = await tx.provider.findUnique({
+          where: { id: source.providerId },
+          select: { id: true, orderWindowStartMinutes: true, orderWindowEndMinutes: true },
+        });
+        this.assertOrderingWindowOpen(provider);
+      }
       const productIds = Array.from(new Set(source.items.map((i) => i.productId)));
       const products = await tx.product.findMany({
         where: { id: { in: productIds }, status: ProductStatus.ACTIVE, deletedAt: null },

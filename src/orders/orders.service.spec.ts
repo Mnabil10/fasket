@@ -305,6 +305,65 @@ describe('OrdersService.computeGroupTotals', () => {
   });
 });
 
+describe('OrdersService ordering window', () => {
+  const buildService = () =>
+    new OrdersService(
+      {} as any,
+      {} as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      {} as any,
+      { emit: jest.fn(), enqueueMany: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+  const makeDate = (hours: number, minutes: number) => new Date(2026, 0, 1, hours, minutes, 0, 0);
+
+  it('allows ordering when no window is configured', () => {
+    const service = buildService();
+    expect(() =>
+      (service as any).assertOrderingWindowOpen({ id: 'prov-1' }, makeDate(10, 0)),
+    ).not.toThrow();
+  });
+
+  it('allows ordering within the configured window', () => {
+    const service = buildService();
+    expect(() =>
+      (service as any).assertOrderingWindowOpen(
+        { id: 'prov-1', orderWindowStartMinutes: 480, orderWindowEndMinutes: 1200 },
+        makeDate(12, 0),
+      ),
+    ).not.toThrow();
+  });
+
+  it('blocks ordering outside the configured window', () => {
+    const service = buildService();
+    let thrown: any;
+    try {
+      (service as any).assertOrderingWindowOpen(
+        { id: 'prov-1', orderWindowStartMinutes: 480, orderWindowEndMinutes: 1200 },
+        makeDate(6, 0),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown).toMatchObject({ code: ErrorCode.ORDERING_CLOSED });
+  });
+
+  it('supports windows that wrap past midnight', () => {
+    const service = buildService();
+    expect(() =>
+      (service as any).assertOrderingWindowOpen(
+        { id: 'prov-1', orderWindowStartMinutes: 1200, orderWindowEndMinutes: 300 },
+        makeDate(1, 0),
+      ),
+    ).not.toThrow();
+  });
+});
+
 describe('OrdersService.cancelOrderGroup', () => {
   const buildService = () => {
     const prisma = {

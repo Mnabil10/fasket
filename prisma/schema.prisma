@@ -360,6 +360,8 @@ model Provider {
   deliveryRatePerKmCents Int?
   minDeliveryFeeCents Int?
   maxDeliveryFeeCents Int?
+  orderWindowStartMinutes Int?
+  orderWindowEndMinutes   Int?
   contactEmail    String?
   contactPhone    String?
   logoUrl         String?

@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, IntersectionType, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsEnum, IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
+import { IsEmail, IsEnum, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 import { cleanNullableString, cleanString } from '../../common/utils/sanitize.util';
 import { normalizePhoneToE164OrNull } from '../../common/utils/phone.util';
 import { PaginationDto } from './pagination.dto';
@@ -107,6 +107,22 @@ export class CreateProviderDto {
   @IsOptional()
   @IsString()
   descriptionAr?: string;
+
+  @ApiPropertyOptional({ description: 'Ordering window start minutes since midnight (0-1440)' })
+  @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1440)
+  orderWindowStartMinutes?: number;
+
+  @ApiPropertyOptional({ description: 'Ordering window end minutes since midnight (0-1440)' })
+  @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1440)
+  orderWindowEndMinutes?: number;
 }
 
 export class UpdateProviderDto extends PartialType(CreateProviderDto) {}

@@ -15,6 +15,7 @@ export class OrderReceiptDto {
     notes?: string;
     label?: string;
   };
+  orderNotes?: string | null;
   deliveryZone!: {
     id: string;
     name: string;
@@ -63,6 +64,7 @@ export class OrderReceiptDto {
   couponDiscountCents!: number;
   loyaltyDiscountCents!: number;
   shippingFeeCents!: number;
+  serviceFeeCents!: number;
   totalCents!: number;
   loyaltyPointsRedeemed!: number;
   loyaltyPointsEarned!: number;
