@@ -93,6 +93,7 @@ export class OrdersService {
   private readonly defaultProviderId = 'prov_default';
   private readonly defaultBranchId = 'branch_default';
   private readonly serviceFeeCents = 300;
+  private readonly defaultTimeZone = 'Africa/Cairo';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -864,8 +865,17 @@ export class OrdersService {
         if (groupEntries.length > 1) {
           throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from multiple branches');
         }
-        for (const [, group] of groupEntries) {
-          this.assertOrderingWindowOpen(group.branch.provider);
+        const scheduling = await this.resolveDeliveryWindowSelection({
+          branch: groupEntries[0][1].branch,
+          subtotalCents: groupEntries[0][1].subtotalCents,
+          deliveryWindowId: payload.deliveryWindowId,
+          scheduledAt: payload.scheduledAt,
+        });
+        const isAsap = !scheduling.deliveryWindowId && !scheduling.scheduledAt;
+        if (isAsap) {
+          for (const [, group] of groupEntries) {
+            await this.assertOrderingWindowOpen(group.branch.provider);
+          }
         }
 
         if (payload.loyaltyPointsToRedeem && payload.loyaltyPointsToRedeem > 0 && grouped.size > 1) {
@@ -962,13 +972,6 @@ export class OrdersService {
           shippingByBranch,
         );
         const serviceFeeCentsTotal = this.calculateServiceFeeCents(groupEntries.length);
-
-        const scheduling = await this.resolveDeliveryWindowSelection({
-          branch: groupEntries[0][1].branch,
-          subtotalCents: groupEntries[0][1].subtotalCents,
-          deliveryWindowId: payload.deliveryWindowId,
-          scheduledAt: payload.scheduledAt,
-        });
 
         const orderGroup = await tx.orderGroup.create({
           data: {
@@ -1297,17 +1300,17 @@ export class OrdersService {
       if (groupEntries.length > 1) {
         throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from multiple branches');
       }
-      for (const [, group] of groupEntries) {
-        this.assertOrderingWindowOpen(group.branch.provider);
-      }
-
-      if (payload.deliveryWindowId || payload.scheduledAt) {
-        await this.resolveDeliveryWindowSelection({
-          branch: groupEntries[0][1].branch,
-          subtotalCents: groupEntries[0][1].subtotalCents,
-          deliveryWindowId: payload.deliveryWindowId,
-          scheduledAt: payload.scheduledAt,
-        });
+      const scheduling = await this.resolveDeliveryWindowSelection({
+        branch: groupEntries[0][1].branch,
+        subtotalCents: groupEntries[0][1].subtotalCents,
+        deliveryWindowId: payload.deliveryWindowId,
+        scheduledAt: payload.scheduledAt,
+      });
+      const isAsap = !scheduling.deliveryWindowId && !scheduling.scheduledAt;
+      if (isAsap) {
+        for (const [, group] of groupEntries) {
+          await this.assertOrderingWindowOpen(group.branch.provider);
+        }
       }
 
       const groups = groupEntries.map(([branchId, group]) => {
@@ -1475,16 +1478,18 @@ export class OrdersService {
         if (groupEntries.length > 1) {
           throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from multiple branches');
         }
-        for (const [, group] of groupEntries) {
-          this.assertOrderingWindowOpen(group.branch.provider);
-        }
-
         const scheduling = await this.resolveDeliveryWindowSelection({
           branch: groupEntries[0][1].branch,
           subtotalCents: groupEntries[0][1].subtotalCents,
           deliveryWindowId: payload.deliveryWindowId,
           scheduledAt: payload.scheduledAt,
         });
+        const isAsap = !scheduling.deliveryWindowId && !scheduling.scheduledAt;
+        if (isAsap) {
+          for (const [, group] of groupEntries) {
+            await this.assertOrderingWindowOpen(group.branch.provider);
+          }
+        }
 
         const subtotalCentsTotal = groupEntries.reduce(
           (sum, [, group]) => sum + group.subtotalCents,
@@ -2812,7 +2817,7 @@ export class OrdersService {
     return minutes >= startMinutes || minutes < endMinutes;
   }
 
-  private assertOrderingWindowOpen(
+  private async assertOrderingWindowOpen(
     provider?: {
       id?: string | null;
       orderWindowStartMinutes?: number | null;
@@ -2824,7 +2829,8 @@ export class OrdersService {
     const startMinutes = this.normalizeOrderWindowMinutes(provider.orderWindowStartMinutes);
     const endMinutes = this.normalizeOrderWindowMinutes(provider.orderWindowEndMinutes);
     if (startMinutes === null || endMinutes === null) return;
-    const minutes = now.getHours() * 60 + now.getMinutes();
+    const timeZone = await this.getSchedulingTimeZone();
+    const { minutes } = this.getZonedDayAndMinutes(now, timeZone);
     if (!this.isWithinOrderWindow(minutes, startMinutes, endMinutes)) {
       throw new DomainError(ErrorCode.ORDERING_CLOSED, 'Ordering is closed right now');
     }
@@ -2877,11 +2883,11 @@ export class OrdersService {
       throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Delivery window does not match branch');
     }
 
-    const day = scheduledAt.getDay();
+    const timeZone = await this.getSchedulingTimeZone();
+    const { day, minutes } = this.getZonedDayAndMinutes(scheduledAt, timeZone);
     if (Array.isArray(window.daysOfWeek) && window.daysOfWeek.length > 0 && !window.daysOfWeek.includes(day)) {
       throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Delivery window is not available on this day');
     }
-    const minutes = scheduledAt.getHours() * 60 + scheduledAt.getMinutes();
     if (window.startMinutes >= window.endMinutes) {
       throw new DomainError(ErrorCode.DELIVERY_WINDOW_INVALID, 'Delivery window configuration is invalid');
     }
@@ -2905,6 +2911,63 @@ export class OrdersService {
     }
 
     return { deliveryWindowId: window.id, scheduledAt };
+  }
+
+  private async getSchedulingTimeZone() {
+    const settings = await this.settings.getSettings();
+    const raw = String(settings.timezone ?? '').trim();
+    if (!raw) return this.defaultTimeZone;
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: raw }).format();
+      return raw;
+    } catch {
+      return this.defaultTimeZone;
+    }
+  }
+
+  private getZonedDayAndMinutes(date: Date, timeZone: string) {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+      const parts = formatter.formatToParts(date);
+      let hour = Number(parts.find((part) => part.type === 'hour')?.value);
+      const minute = Number(parts.find((part) => part.type === 'minute')?.value);
+      const weekday = parts.find((part) => part.type === 'weekday')?.value;
+      const day = this.weekdayToNumber(weekday);
+      if (hour === 24) hour = 0;
+      if (!Number.isFinite(hour) || !Number.isFinite(minute) || day === null) {
+        return { day: date.getDay(), minutes: date.getHours() * 60 + date.getMinutes() };
+      }
+      return { day, minutes: hour * 60 + minute };
+    } catch {
+      return { day: date.getDay(), minutes: date.getHours() * 60 + date.getMinutes() };
+    }
+  }
+
+  private weekdayToNumber(value?: string | null) {
+    switch (value) {
+      case 'Sun':
+        return 0;
+      case 'Mon':
+        return 1;
+      case 'Tue':
+        return 2;
+      case 'Wed':
+        return 3;
+      case 'Thu':
+        return 4;
+      case 'Fri':
+        return 5;
+      case 'Sat':
+        return 6;
+      default:
+        return null;
+    }
   }
 
   private inferServiceFeeCents(params: {
@@ -2944,7 +3007,7 @@ export class OrdersService {
           where: { id: source.providerId },
           select: { id: true, orderWindowStartMinutes: true, orderWindowEndMinutes: true },
         });
-        this.assertOrderingWindowOpen(provider);
+        await this.assertOrderingWindowOpen(provider);
       }
       const productIds = Array.from(new Set(source.items.map((i) => i.productId)));
       const products = await tx.product.findMany({
