@@ -31,7 +31,7 @@ export class SettingsService {
       }
       this.logger.warn('Settings row missing. Creating default settings row.');
       return this.prisma.setting.create({
-        data: { currency: 'EGP' },
+        data: { currency: 'EGP', timezone: 'Africa/Cairo' },
       });
     }, this.cacheTtlSec);
   }

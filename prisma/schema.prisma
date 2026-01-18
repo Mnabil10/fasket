@@ -1278,7 +1278,7 @@ model Setting {
   maxLoginAttempts         Int     @default(5)
   dataRetentionDays        Int     @default(365)
   backupFrequency          String  @default("daily") // daily|weekly|monthly
-  timezone                 String  @default("America/New_York")
+  timezone                 String  @default("Africa/Cairo")
   language                 String  @default("en")
   currency                 String  @default("EGP")
 
