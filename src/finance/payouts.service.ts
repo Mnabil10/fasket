@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { FinanceService } from './finance.service';
 import { CommissionConfigService } from './commission-config.service';
 import { DomainError, ErrorCode } from '../common/errors';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class PayoutsService {
@@ -13,6 +14,7 @@ export class PayoutsService {
     private readonly prisma: PrismaService,
     private readonly finance: FinanceService,
     private readonly configs: CommissionConfigService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async createPayout(
@@ -124,6 +126,18 @@ export class PayoutsService {
           amountCents: refund,
           currency: existing.currency ?? 'EGP',
           metadata: { reason: params.failureReason ?? 'payout.failed' },
+        },
+      });
+      await this.notifications.notifyAdminEvent({
+        title: 'Payment failure',
+        body: `Payout ${existing.id} failed for provider ${existing.providerId}.`,
+        type: 'payment_failure',
+        data: {
+          payoutId: existing.id,
+          providerId: existing.providerId,
+          amountCents: existing.amountCents,
+          currency: existing.currency ?? 'EGP',
+          reason: params.failureReason ?? null,
         },
       });
     }

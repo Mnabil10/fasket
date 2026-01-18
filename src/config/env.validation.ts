@@ -106,6 +106,15 @@ const baseSchema = z.object({
   WHATSAPP_API_BASE_URL: z.string().url().optional(),
   WHATSAPP_DEFAULT_LANGUAGE: z.enum(['en', 'ar']).optional(),
 
+  PUSH_PROVIDER: z.enum(['fcm', 'onesignal', 'apns', 'mock']).optional(),
+  FCM_SERVER_KEY: z.string().optional(),
+  ONESIGNAL_REST_KEY: z.string().optional(),
+  ONESIGNAL_APP_ID: z.string().optional(),
+  WEB_PUSH_PUBLIC_KEY: z.string().optional(),
+  WEB_PUSH_PRIVATE_KEY: z.string().optional(),
+  WEB_PUSH_SUBJECT: z.string().optional(),
+  NOTIFICATION_BATCH_SIZE: z.coerce.number().int().positive().optional(),
+
   SENTRY_DSN: z.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().optional(),
   SENTRY_PROFILES_SAMPLE_RATE: z.coerce.number().optional(),

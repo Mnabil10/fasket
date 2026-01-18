@@ -23,7 +23,6 @@ import { AutomationEventsService, AutomationEventRef } from '../automation/autom
 import { BillingService } from '../billing/billing.service';
 import { FinanceService } from '../finance/finance.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { normalizeWhatsappLanguage, WhatsappTemplateLanguage } from '../whatsapp/templates/whatsapp.templates';
 import { OtpService } from '../otp/otp.service';
 import { normalizePhoneToE164 } from '../common/utils/phone.util';
 
@@ -1183,7 +1182,7 @@ export class OrdersService {
         await this.automation.enqueueMany(automationEvents);
         for (const orderId of result.orderIds) {
           await this.clearCachesForOrder(orderId, userId);
-          await this.notifyOrderCreatedWhatsapp(orderId);
+      await this.notifications.notifyOrderCreated(orderId);
         }
         this.logger.log({ msg: 'Order created', orderGroupId: result.orderGroupId, userId });
       if (result.orderIds.length === 1) {
@@ -1677,7 +1676,7 @@ export class OrdersService {
         await this.automation.enqueueMany(automationEvents);
         for (const orderId of result.orderIds) {
           await this.clearCachesForOrder(orderId, null);
-          await this.notifyOrderCreatedWhatsapp(orderId);
+          await this.notifications.notifyOrderCreated(orderId);
         }
       if (result.orderIds.length === 1) {
         return this.getGuestOrderDetail(result.orderIds[0]);
@@ -3252,7 +3251,7 @@ export class OrdersService {
     });
       await this.automation.enqueueMany(automationEvents);
       await this.clearCachesForOrder(result.orderId, userId);
-      await this.notifyOrderCreatedWhatsapp(result.orderId);
+      await this.notifications.notifyOrderCreated(result.orderId);
       return this.detail(userId, result.orderId);
     }
 
@@ -3323,7 +3322,11 @@ export class OrdersService {
 
       await this.automation.enqueueMany(automationEvents);
       await this.clearCachesForOrder(orderId, userId);
-      await this.notifyOrderCancelledWhatsapp(orderId, 'Cancelled by customer');
+      await this.notifications.notifyOrderStatusChange(orderId, OrderStatus.CANCELED, {
+        previousStatus: order.status,
+        actorId: userId,
+        reason: 'Cancelled by customer',
+      });
       return this.detail(userId, orderId);
     }
 
@@ -3401,7 +3404,11 @@ export class OrdersService {
         after: { status: nextStatus, note },
       });
       await this.clearCachesForOrder(orderId, before.userId);
-      await this.notifyOrderStatusWhatsapp(orderId);
+      await this.notifications.notifyOrderStatusChange(orderId, nextStatus, {
+        previousStatus: before.status,
+        actorId,
+        reason: note,
+      });
       return { success: true, loyaltyEarned };
     }
 
@@ -3467,7 +3474,11 @@ export class OrdersService {
         after: { status: OrderStatus.CANCELED },
       });
       await this.clearCachesForOrder(orderId, order.userId);
-      await this.notifyOrderCancelledWhatsapp(orderId, note ?? 'Cancelled by admin');
+      await this.notifications.notifyOrderStatusChange(orderId, OrderStatus.CANCELED, {
+        previousStatus: order.status,
+        actorId,
+        reason: note ?? 'Cancelled by admin',
+      });
       return { success: true };
     }
 
@@ -3895,222 +3906,6 @@ export class OrdersService {
       default:
         return 'PENDING';
     }
-  }
-
-  private async notifyOrderCreatedWhatsapp(orderId: string) {
-    try {
-      const context = await this.loadOrderWhatsappContext(orderId);
-      if (!context) return;
-      const settings = await this.settings.getSettings();
-      const lang = this.resolveWhatsappLanguage(settings.language);
-      await this.sendCustomerOrderStatusWhatsapp(context, lang, settings);
-      await this.sendProviderNewOrderWhatsapp(context, lang, settings);
-    } catch (err) {
-      this.logger.warn({ msg: 'WhatsApp order created notification failed', orderId, error: (err as Error)?.message });
-    }
-  }
-
-  private async notifyOrderStatusWhatsapp(orderId: string) {
-    try {
-      const context = await this.loadOrderWhatsappContext(orderId);
-      if (!context) return;
-      const settings = await this.settings.getSettings();
-      const lang = this.resolveWhatsappLanguage(settings.language);
-      await this.sendCustomerOrderStatusWhatsapp(context, lang, settings);
-    } catch (err) {
-      this.logger.warn({ msg: 'WhatsApp order status notification failed', orderId, error: (err as Error)?.message });
-    }
-  }
-
-  private async notifyOrderCancelledWhatsapp(orderId: string, reason?: string) {
-    try {
-      const context = await this.loadOrderWhatsappContext(orderId);
-      if (!context) return;
-      const settings = await this.settings.getSettings();
-      const lang = this.resolveWhatsappLanguage(settings.language);
-      await this.sendCustomerOrderStatusWhatsapp(context, lang, settings);
-      await this.sendProviderOrderCancelledWhatsapp(context, lang, reason ?? undefined);
-    } catch (err) {
-      this.logger.warn({ msg: 'WhatsApp order cancel notification failed', orderId, error: (err as Error)?.message });
-    }
-  }
-
-  private async loadOrderWhatsappContext(orderId: string) {
-    return this.prisma.order.findUnique({
-      where: { id: orderId },
-      select: {
-        id: true,
-        code: true,
-        status: true,
-        deliveryEtaMinutes: true,
-        estimatedDeliveryTime: true,
-        totalCents: true,
-        notes: true,
-        guestPhone: true,
-        user: { select: { phone: true } },
-        providerId: true,
-        provider: { select: { contactPhone: true } },
-        items: { select: { qty: true } },
-      },
-    });
-  }
-
-  private async sendCustomerOrderStatusWhatsapp(
-    order: {
-      id: string;
-      code: string | null;
-      status: OrderStatus;
-      deliveryEtaMinutes: number | null;
-      estimatedDeliveryTime: string | null;
-      guestPhone: string | null;
-      user: { phone: string } | null;
-    },
-    lang: WhatsappTemplateLanguage,
-    settings: { contactPhone?: string | null },
-  ) {
-    const phone = order.user?.phone ?? order.guestPhone;
-    if (!phone) return;
-    const idempotencyKey = `order:${order.id}:status:${order.status}`;
-    const existing = await this.prisma.whatsAppMessageLog.findFirst({
-      where: {
-        direction: 'OUTBOUND',
-        payload: { path: ['metadata', 'idempotencyKey'], equals: idempotencyKey },
-      },
-    });
-    if (existing) return;
-    const eta = this.localizeEta(lang, order.deliveryEtaMinutes ?? undefined) || order.estimatedDeliveryTime || '';
-    const supportHint = this.buildSupportHint(settings, lang);
-    await this.notifications.sendWhatsappTemplate({
-      to: phone,
-      template: 'order_status_update_v1',
-      language: lang,
-      variables: {
-        order_no: order.code ?? order.id,
-        status: this.localizeOrderStatus(order.status, lang),
-        eta,
-        support_hint: supportHint,
-      },
-      metadata: { orderId: order.id, status: order.status, idempotencyKey },
-    });
-  }
-
-  private async sendProviderNewOrderWhatsapp(
-    order: {
-      id: string;
-      code: string | null;
-      notes: string | null;
-      totalCents: number;
-      providerId: string | null;
-      provider: { contactPhone: string | null } | null;
-      items: Array<{ qty: number }>;
-    },
-    lang: WhatsappTemplateLanguage,
-    settings: { currency?: string | null },
-  ) {
-    if (!order.providerId) return;
-    const enabled = await this.isProviderWhatsappEnabled(order.providerId, 'newOrders');
-    if (!enabled) return;
-    const phone = await this.resolveProviderWhatsappPhone(order.providerId, order.provider?.contactPhone ?? null);
-    if (!phone) return;
-    const itemsCount = order.items.reduce((sum, item) => sum + (item.qty ?? 0), 0);
-    const currency = settings.currency ?? 'EGP';
-    const totalAmount = `${currency} ${(order.totalCents / 100).toFixed(2)}`;
-    await this.notifications.sendWhatsappTemplate({
-      to: phone,
-      template: 'provider_new_order_v1',
-      language: lang,
-      variables: {
-        order_no: order.code ?? order.id,
-        items_count: itemsCount,
-        total_amount: totalAmount,
-        notes: order.notes ?? '-',
-      },
-      metadata: { orderId: order.id },
-    });
-  }
-
-  private async sendProviderOrderCancelledWhatsapp(
-    order: {
-      id: string;
-      code: string | null;
-      providerId: string | null;
-      provider: { contactPhone: string | null } | null;
-    },
-    lang: WhatsappTemplateLanguage,
-    reason?: string,
-  ) {
-    if (!order.providerId) return;
-    const enabled = await this.isProviderWhatsappEnabled(order.providerId, 'newOrders');
-    if (!enabled) return;
-    const phone = await this.resolveProviderWhatsappPhone(order.providerId, order.provider?.contactPhone ?? null);
-    if (!phone) return;
-    await this.notifications.sendWhatsappTemplate({
-      to: phone,
-      template: 'provider_order_cancelled_v1',
-      language: lang,
-      variables: {
-        order_no: order.code ?? order.id,
-        reason: reason ?? 'Canceled',
-      },
-      metadata: { orderId: order.id },
-    });
-  }
-
-  private resolveWhatsappLanguage(value?: string | null): WhatsappTemplateLanguage {
-    return normalizeWhatsappLanguage(value ?? undefined);
-  }
-
-  private localizeOrderStatus(status: OrderStatus, lang: WhatsappTemplateLanguage) {
-    const mapping: Record<OrderStatus, { en: string; ar: string }> = {
-      PENDING: { en: 'Pending', ar: '\u0642\u064A\u062F \u0627\u0644\u0627\u0646\u062A\u0638\u0627\u0631' },
-      CONFIRMED: { en: 'Confirmed', ar: '\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u0637\u0644\u0628' },
-      PREPARING: { en: 'Preparing', ar: '\u0642\u064A\u062F \u0627\u0644\u062A\u062D\u0636\u064A\u0631' },
-      OUT_FOR_DELIVERY: { en: 'Out for delivery', ar: '\u0641\u064A \u0627\u0644\u0637\u0631\u064A\u0642' },
-      DELIVERY_FAILED: { en: 'Delivery failed', ar: '\u0641\u0634\u0644 \u0627\u0644\u062A\u0648\u0635\u064A\u0644' },
-      DELIVERED: { en: 'Delivered', ar: '\u062A\u0645 \u0627\u0644\u062A\u0648\u0635\u064A\u0644' },
-      CANCELED: { en: 'Canceled', ar: '\u062A\u0645 \u0627\u0644\u0625\u0644\u063A\u0627\u0621' },
-    };
-    const label = mapping[status] ?? { en: status, ar: status };
-    return lang === 'ar' ? label.ar : label.en;
-  }
-
-  private localizeEta(lang: WhatsappTemplateLanguage, minutes?: number) {
-    if (!minutes || minutes <= 0) return '';
-    if (lang === 'ar') {
-      return `\u0627\u0644\u0648\u0642\u062A \u0627\u0644\u0645\u062A\u0648\u0642\u0639: ${minutes} \u062F\u0642\u064A\u0642\u0629`;
-    }
-    return `ETA: ${minutes} min`;
-  }
-
-  private buildSupportHint(settings: { contactPhone?: string | null }, lang: WhatsappTemplateLanguage) {
-    if (settings.contactPhone) {
-      return lang === 'ar'
-        ? `\u062F\u0639\u0645: ${settings.contactPhone}`
-        : `Support: ${settings.contactPhone}`;
-    }
-    return lang === 'ar'
-      ? '\u0627\u0631\u062F \u0628\u0643\u0644\u0645\u0629 \u0645\u0633\u0627\u0639\u062F\u0629 \u0644\u0644\u062F\u0639\u0645'
-      : 'Reply HELP for support';
-  }
-
-  private async resolveProviderWhatsappPhone(providerId: string, fallback?: string | null) {
-    if (fallback) return fallback;
-    const owner = await this.prisma.providerUser.findFirst({
-      where: { providerId, role: { in: ['OWNER', 'MANAGER'] } },
-      orderBy: { createdAt: 'asc' },
-      select: { user: { select: { phone: true } } },
-    });
-    return owner?.user?.phone ?? null;
-  }
-
-  private async isProviderWhatsappEnabled(providerId: string, key: 'newOrders' | 'invoiceUpdates') {
-    const preference = await this.prisma.providerNotificationPreference.findUnique({ where: { providerId } });
-    const payload = preference?.preferences as Record<string, any> | undefined;
-    const channel = payload?.[key];
-    if (channel && typeof channel === 'object' && 'whatsapp' in channel) {
-      return Boolean(channel.whatsapp);
-    }
-    return true;
   }
 
   private toOrderDetail(order: OrderWithRelations, zone?: any) {

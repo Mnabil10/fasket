@@ -14,6 +14,7 @@ import { SlugService } from '../common/slug/slug.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
 import { CreateProviderApplicationDto } from './dto/provider-application.dto';
 import { DomainError, ErrorCode } from '../common/errors';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export type ProviderApplicationBranchInput = {
   name?: string | null;
@@ -42,6 +43,7 @@ export class ProviderApplicationsService {
     private readonly automation: AutomationEventsService,
     private readonly slugs: SlugService,
     private readonly audit: AuditLogService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async createApplication(dto: CreateProviderApplicationDto) {
@@ -68,6 +70,12 @@ export class ProviderApplicationsService {
     if (event) {
       await this.automation.enqueueMany([event]);
     }
+    await this.notifications.notifyAdminEvent({
+      title: 'Provider application',
+      body: `New provider application from ${created.businessName}.`,
+      type: 'provider_application_submitted',
+      data: { applicationId: created.id, providerType: created.providerType, city: created.city, region: created.region },
+    });
     return created;
   }
 
@@ -210,6 +218,18 @@ export class ProviderApplicationsService {
       },
     });
 
+    await this.notifications.notifyAdminEvent({
+      title: 'Provider onboarded',
+      body: `${result.provider.name} has been onboarded.`,
+      type: 'provider_onboarded',
+      data: {
+        applicationId,
+        providerId: result.provider.id,
+        providerName: result.provider.name,
+        planId: input.planId,
+      },
+    });
+
     return result;
   }
 
@@ -246,6 +266,13 @@ export class ProviderApplicationsService {
       entityId: applicationId,
       actorId,
       after: { status: ProviderApplicationStatus.REJECTED, reason },
+    });
+
+    await this.notifications.notifyAdminEvent({
+      title: 'Provider application rejected',
+      body: `Provider application ${applicationId} was rejected.`,
+      type: 'provider_application_rejected',
+      data: { applicationId, reason },
     });
 
     return updated;

@@ -7,9 +7,10 @@ import { ProviderApplicationsService } from './provider-applications.service';
 import { PublicProvidersController } from './public-providers.controller';
 import { ProviderDeliveryWindowsController } from './provider-delivery-windows.controller';
 import { ProviderDeliveryZonePricingController } from './provider-delivery-zone-pricing.controller';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [PrismaModule, AutomationModule],
+  imports: [PrismaModule, AutomationModule, NotificationsModule],
   controllers: [
     ProviderController,
     ProviderApplicationsController,

@@ -134,7 +134,7 @@ export class AdminCustomersController {
       this.svc.prisma.sessionLog.deleteMany({ where: { userId: id } }),
       this.svc.prisma.loyaltyTransaction.deleteMany({ where: { userId: id } }),
       this.svc.prisma.loyaltyCycle.deleteMany({ where: { userId: id } }),
-      this.svc.prisma.pushDevice.deleteMany({ where: { userId: id } }),
+      this.svc.prisma.notificationDevice.deleteMany({ where: { userId: id } }),
       this.svc.prisma.telegramLink.deleteMany({ where: { userId: id } }),
       this.svc.prisma.user.delete({ where: { id } }),
     ]);

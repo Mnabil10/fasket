@@ -6,6 +6,7 @@ import { AutomationEventsService } from './automation-events.service';
 import { AutomationProcessor } from './automation.processor';
 import { OpsAlertService } from '../ops/ops-alert.service';
 import * as dotenv from 'dotenv';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 dotenv.config();
 
@@ -43,6 +44,7 @@ const queueProviders = redisEnabled
   imports: [
     PrismaModule,
     ConfigModule,
+    NotificationsModule,
     ...queueImports,
   ],
   providers: [AutomationEventsService, OpsAlertService, ...queueProviders],

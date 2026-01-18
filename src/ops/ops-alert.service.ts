@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as Sentry from '@sentry/node';
 import { AutomationEventsService } from '../automation/automation-events.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class OpsAlertService {
@@ -11,6 +12,7 @@ export class OpsAlertService {
   constructor(
     @Inject(forwardRef(() => AutomationEventsService)) private readonly automation: AutomationEventsService,
     private readonly config: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {
     this.sentryEnabled = Boolean(this.config.get<string>('SENTRY_DSN'));
     this.logger.log({
@@ -30,6 +32,16 @@ export class OpsAlertService {
     this.logger.error({ msg: 'Ops alert', type, payload });
     if (this.sentryEnabled) {
       Sentry.captureMessage(`Ops alert: ${type}`, { level: 'error', extra: payload });
+    }
+    try {
+      await this.notifications.notifyAdminEvent({
+        title: 'System alert',
+        body: payload?.message ? String(payload.message) : `Ops alert: ${type}`,
+        type: 'system_error',
+        data: { type, payload },
+      });
+    } catch (err) {
+      this.logger.warn({ msg: 'Admin alert send failed', type, error: (err as Error)?.message });
     }
     try {
       await this.automation.emit(type, payload, { dedupeKey });

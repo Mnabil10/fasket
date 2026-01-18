@@ -14,7 +14,7 @@ export class NotificationsController {
   @UseGuards(AuthGuard('jwt'))
   @Post('register-device')
   registerDevice(@CurrentUser() user: CurrentUserPayload, @Body() dto: RegisterDeviceDto) {
-    return this.notifications.registerDevice(user.userId, dto);
+    return this.notifications.registerDevice(user.userId, user.role, dto);
   }
 
   @UseGuards(AuthGuard('jwt'))

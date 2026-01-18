@@ -35,6 +35,7 @@ import { AdminProductOptionsController } from './product-options.controller';
 import { AdminDeliveryWindowsController } from './delivery-windows.controller';
 import { AdminProviderDeliveryZonePricingController } from './provider-delivery-zone-pricing.controller';
 import { ProductOptionsBulkService } from './product-options-bulk.service';
+import { AdminNotificationsController } from './notifications.controller';
 
 @Module({
   controllers: [
@@ -64,6 +65,7 @@ import { ProductOptionsBulkService } from './product-options-bulk.service';
     AdminProductOptionsController,
     AdminDeliveryWindowsController,
     AdminProviderDeliveryZonePricingController,
+    AdminNotificationsController,
   ],
   imports: [
     // Additional modules can be wired here when needed

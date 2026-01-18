@@ -1,12 +1,15 @@
 import { Logger, Module } from '@nestjs/common';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import * as dotenv from 'dotenv';
 import { NotificationsService } from './notifications.service';
 import { NotificationsController } from './notifications.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { NotificationsProcessor } from './notifications.processor';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
+import { SettingsModule } from '../settings/settings.module';
+import { NotificationsGateway } from './notifications.gateway';
 
 // Ensure .env is loaded before evaluating the flag
 dotenv.config();
@@ -55,6 +58,7 @@ const queueProviders = redisEnabled
               logger.debug({ msg: 'Skipping notification job (queue disabled)', name, payload });
               return { id: 'noop' } as any;
             },
+            __notificationsDisabled: true,
           };
         },
       },
@@ -65,9 +69,11 @@ const queueProviders = redisEnabled
   imports: [
     PrismaModule,
     WhatsappModule,
+    SettingsModule,
+    JwtModule.register({}),
     ...queueImports,
   ],
-  providers: [NotificationsService, ...queueProviders],
+  providers: [NotificationsService, NotificationsGateway, ...queueProviders],
   controllers: [NotificationsController],
   exports: [NotificationsService],
 })
