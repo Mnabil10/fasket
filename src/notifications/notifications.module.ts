@@ -1,4 +1,4 @@
-import { Logger, Module } from '@nestjs/common';
+import { Logger, Module, forwardRef } from '@nestjs/common';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -68,7 +68,7 @@ const queueProviders = redisEnabled
 @Module({
   imports: [
     PrismaModule,
-    WhatsappModule,
+    forwardRef(() => WhatsappModule),
     SettingsModule,
     JwtModule.register({}),
     ...queueImports,

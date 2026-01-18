@@ -44,7 +44,7 @@ const queueProviders = redisEnabled
   imports: [
     PrismaModule,
     ConfigModule,
-    NotificationsModule,
+    forwardRef(() => NotificationsModule),
     ...queueImports,
   ],
   providers: [AutomationEventsService, OpsAlertService, ...queueProviders],

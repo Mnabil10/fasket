@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { AutomationSupportController } from './automation-support.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { SettingsModule } from '../settings/settings.module';
@@ -8,7 +8,7 @@ import { CommonModule } from '../common/common.module';
 import { AutomationHmacGuard } from '../automation/automation-hmac.guard';
 
 @Module({
-  imports: [PrismaModule, SettingsModule, AutomationModule, CommonModule],
+  imports: [PrismaModule, SettingsModule, forwardRef(() => AutomationModule), CommonModule],
   controllers: [AutomationSupportController],
   providers: [AutomationSupportService, AutomationHmacGuard],
   exports: [AutomationSupportService],
