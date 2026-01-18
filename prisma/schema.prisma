@@ -284,6 +284,8 @@ model User {
   loyaltyCycles LoyaltyCycle[]
   sessions   SessionLog[]
   notificationDevices NotificationDevice[]
+  notificationsCreated Notification[]
+  notificationLogs NotificationLog[]
   telegramLink TelegramLink?
   providerMemberships ProviderUser[]
   notificationPreference UserNotificationPreference?

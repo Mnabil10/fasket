@@ -81,7 +81,7 @@ export class NotificationsProcessor extends WorkerHost {
     const receipts: DeliveryReceipt[] = [];
     for (const device of devices) {
       const notification = await this.buildMessage(payload, device.language ?? 'en');
-      const dispatch = await this.dispatchToDevice(device, notification).catch((err: Error) => ({
+      const dispatch = await this.dispatchToDevice(device, notification).catch((err: Error): DispatchResult => ({
         receipt: {
           status: 'failed' as const,
           provider: this.provider,
@@ -107,14 +107,15 @@ export class NotificationsProcessor extends WorkerHost {
     }
 
     await this.markNotificationSending(payload.notificationId);
-    const filteredDevices = payload.channel ? devices.filter((device) => this.matchesChannel(device, payload.channel)) : devices;
+    const targetChannel = payload.channel;
+    const filteredDevices = targetChannel ? devices.filter((device) => this.matchesChannel(device, targetChannel)) : devices;
     const deviceIds = filteredDevices.map((device) => device.id);
     const sentSet = await this.fetchAlreadySent(payload.notificationId, deviceIds);
     const pendingDevices = filteredDevices.filter((device) => !sentSet.has(device.id));
     const receipts: DeliveryReceipt[] = [];
     const failedDevices: DeviceRecord[] = [];
     for (const device of pendingDevices) {
-      const dispatch = await this.dispatchToDevice(device, payload.payload, payload.channel).catch((err: Error) => ({
+      const dispatch = await this.dispatchToDevice(device, payload.payload, payload.channel).catch((err: Error): DispatchResult => ({
         receipt: {
           status: 'failed' as const,
           provider: this.provider,
