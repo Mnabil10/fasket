@@ -23,7 +23,7 @@ import { Express } from 'express';
 import { Prisma, ProviderStatus, UserRole } from '@prisma/client';
 import { AdminOnly, ProviderOrStaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
-import { CategoryListQueryDto, CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
+import { CategoryListQueryDto, CategoryProductReorderDto, CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 import { UploadsService } from 'src/uploads/uploads.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -241,6 +241,78 @@ export class AdminCategoriesController {
     });
     await this.svc.cache.categoriesChanged();
     return updated;
+  }
+
+  @Patch(':id/products/reorder')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['orderedProductIds'],
+      properties: { orderedProductIds: { type: 'array', items: { type: 'string' } } },
+    },
+  })
+  async reorderCategoryProducts(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() dto: CategoryProductReorderDto,
+  ) {
+    const providerScope = await this.resolveProviderScope(user);
+    const orderedProductIds = Array.from(
+      new Set((dto.orderedProductIds ?? []).map((entry) => String(entry).trim()).filter(Boolean)),
+    );
+    if (!orderedProductIds.length) {
+      throw new BadRequestException('orderedProductIds is required');
+    }
+    const categoryWhere: Prisma.CategoryWhereInput = {
+      id,
+      deletedAt: null,
+      ...(providerScope ? { OR: [{ providerId: providerScope }, { providerId: null }] } : {}),
+    };
+    const result = await this.svc.prisma.$transaction(async (tx) => {
+      const category = await tx.category.findFirst({ where: categoryWhere, select: { id: true } });
+      if (!category) {
+        throw new NotFoundException('Category not found');
+      }
+      const products = await tx.product.findMany({
+        where: {
+          categoryId: id,
+          deletedAt: null,
+          ...(providerScope ? { providerId: providerScope } : {}),
+        },
+        select: { id: true, sortOrder: true },
+      });
+      const existingIds = new Set(products.map((product) => product.id));
+      if (existingIds.size !== orderedProductIds.length) {
+        throw new BadRequestException('orderedProductIds must include all category products');
+      }
+      for (const productId of orderedProductIds) {
+        if (!existingIds.has(productId)) {
+          throw new BadRequestException('orderedProductIds must include all category products');
+        }
+      }
+      const sortOrderMap = new Map(products.map((product) => [product.id, product.sortOrder]));
+      const updates = orderedProductIds
+        .map((productId, index) => {
+          const current = sortOrderMap.get(productId) ?? 0;
+          return current === index ? null : { id: productId, sortOrder: index };
+        })
+        .filter((entry): entry is { id: string; sortOrder: number } => !!entry);
+      if (!updates.length) {
+        return { updated: 0 };
+      }
+      const ids = updates.map((entry) => entry.id);
+      const cases = Prisma.sql`CASE "id" ${Prisma.join(
+        updates.map((entry) => Prisma.sql`WHEN ${entry.id} THEN ${entry.sortOrder}`),
+      )} END`;
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "Product"
+        SET "sortOrder" = ${cases}
+        WHERE "id" IN (${Prisma.join(ids)})
+      `);
+      return { updated: updates.length };
+    });
+    await this.svc.cache.productsChanged();
+    return { ok: true, ...result };
   }
 
   // Soft delete: sets deletedAt, keeps referential integrity

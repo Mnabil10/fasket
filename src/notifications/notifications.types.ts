@@ -23,6 +23,7 @@ export type NotificationTarget =
   | { type: 'role'; role: UserRole }
   | { type: 'roles'; roles: UserRole[] }
   | { type: 'area'; areaId: string }
+  | { type: 'areas'; areaIds: string[] }
   | { type: 'provider'; providerId: string }
   | { type: 'broadcast' }
   | { type: 'devices'; deviceIds: string[] };

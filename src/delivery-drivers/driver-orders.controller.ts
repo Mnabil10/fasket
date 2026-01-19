@@ -17,6 +17,7 @@ import {
 } from './dto/driver-orders.dto';
 import { DeliveryDriversService } from './delivery-drivers.service';
 import { DomainError, ErrorCode } from '../common/errors';
+import { SettingsService } from '../settings/settings.service';
 
 @ApiTags('Driver/Orders')
 @ApiBearerAuth()
@@ -28,6 +29,7 @@ export class DriverOrdersController {
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
     private readonly drivers: DeliveryDriversService,
+    private readonly settings: SettingsService,
   ) {}
 
   @Get()
@@ -60,8 +62,10 @@ export class DriverOrdersController {
       this.prisma.order.count({ where }),
     ]);
 
+    const zones = items.length ? await this.settings.getDeliveryZones({ includeInactive: true }) : [];
+    const zoneById = new Map(zones.map((zone) => [zone.id, zone]));
     return {
-      items: items.map((order) => this.mapDriverOrder(order)),
+      items: items.map((order) => this.mapDriverOrder(order, { zoneById })),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -82,7 +86,10 @@ export class DriverOrdersController {
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Order not found', 404);
     }
-    return this.mapDriverOrder(order, { includeItems: true });
+    const zone = order.deliveryZoneId
+      ? await this.settings.getZoneById(order.deliveryZoneId, { includeInactive: true })
+      : undefined;
+    return this.mapDriverOrder(order, { includeItems: true, zone });
   }
 
   @Patch(':id/status')
@@ -172,8 +179,14 @@ export class DriverOrdersController {
     return order;
   }
 
-  private mapDriverOrder(order: any, options: { includeItems?: boolean } = {}) {
+  private mapDriverOrder(
+    order: any,
+    options: { includeItems?: boolean; zone?: any; zoneById?: Map<string, any> } = {},
+  ) {
     const guestAddress = order.guestAddress as Record<string, any> | null | undefined;
+    const zone =
+      options.zone ?? (options.zoneById && order.deliveryZoneId ? options.zoneById.get(order.deliveryZoneId) : undefined);
+    const deliveryZoneName = this.settings.resolveZoneName(zone, order.deliveryZoneName ?? undefined);
     const address = order.address
       ? {
           label: order.address.label ?? null,
@@ -205,6 +218,8 @@ export class DriverOrdersController {
       createdAt: order.createdAt,
       totalCents: order.totalCents,
       paymentMethod: order.paymentMethod,
+      deliveryZoneId: order.deliveryZoneId ?? null,
+      deliveryZoneName: deliveryZoneName ?? null,
       customer: order.user
         ? { id: order.user.id, name: order.user.name, phone: order.user.phone }
         : { id: order.id, name: order.guestName ?? 'Guest', phone: order.guestPhone ?? '' },

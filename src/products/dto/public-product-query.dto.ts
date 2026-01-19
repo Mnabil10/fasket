@@ -45,10 +45,10 @@ export class PublicProductListDto extends PaginationDto {
   })
   lang?: 'en' | 'ar';
 
-  @ApiPropertyOptional({ enum: ['createdAt', 'priceCents', 'name'], default: 'createdAt' })
+  @ApiPropertyOptional({ enum: ['createdAt', 'priceCents', 'name', 'sortOrder'], default: 'createdAt' })
   @IsOptional()
-  @IsIn(['createdAt', 'priceCents', 'name'])
-  orderBy?: 'createdAt' | 'priceCents' | 'name' = 'createdAt';
+  @IsIn(['createdAt', 'priceCents', 'name', 'sortOrder'])
+  orderBy?: 'createdAt' | 'priceCents' | 'name' | 'sortOrder' = 'createdAt';
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'desc' })
   @IsOptional()

@@ -29,6 +29,11 @@ export class AdminOrderListDto extends PaginationDto {
   @Transform(({ value }) => (value ? new Date(value) : undefined))
   to?: Date;
 
+  @ApiPropertyOptional({ description: 'ISO date - updated at greater than or equal' })
+  @IsOptional()
+  @Transform(({ value }) => (value ? new Date(value) : undefined))
+  updatedAfter?: Date;
+
   @ApiPropertyOptional({ description: 'Search by customer name/phone/email' })
   @IsOptional()
   @IsString()
@@ -68,4 +73,9 @@ export class AdminOrderListDto extends PaginationDto {
   @IsOptional()
   @IsString()
   orderGroupId?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by delivery zone id' })
+  @IsOptional()
+  @IsString()
+  deliveryZoneId?: string;
 }

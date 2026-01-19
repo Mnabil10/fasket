@@ -25,6 +25,7 @@ import { FinanceService } from '../finance/finance.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OtpService } from '../otp/otp.service';
 import { normalizePhoneToE164 } from '../common/utils/phone.util';
+import { OrdersGateway } from './orders.gateway';
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
@@ -105,6 +106,7 @@ export class OrdersService {
     private readonly finance: FinanceService,
     private readonly notifications: NotificationsService,
     private readonly otp: OtpService,
+    private readonly ordersGateway: OrdersGateway,
   ) {}
 
   async list(userId: string) {
@@ -938,6 +940,10 @@ export class OrdersService {
           string,
           {
             fee: number;
+            baseFeeCents?: number | null;
+            appliedFeeCents?: number | null;
+            campaignId?: string | null;
+            campaignName?: string | null;
             distanceKm: number | null;
             ratePerKmCents: number | null;
             etaMinutes?: number | null;
@@ -955,7 +961,11 @@ export class OrdersService {
             subtotalCents: grouped.get(branchId)?.subtotalCents ?? 0,
           });
           shippingByBranch.set(branchId, {
-            fee: quote.shippingFeeCents,
+            fee: quote.deliveryPricing?.appliedFeeCents ?? quote.shippingFeeCents,
+            baseFeeCents: quote.deliveryPricing?.baseFeeCents ?? quote.shippingFeeCents,
+            appliedFeeCents: quote.deliveryPricing?.appliedFeeCents ?? quote.shippingFeeCents,
+            campaignId: quote.deliveryPricing?.campaignId ?? null,
+            campaignName: quote.deliveryPricing?.campaignName ?? null,
             distanceKm: distancePricingEnabled ? quote.distanceKm : null,
             ratePerKmCents: distancePricingEnabled ? quote.ratePerKmCents : null,
             etaMinutes: quote.etaMinutes ?? null,
@@ -1004,7 +1014,22 @@ export class OrdersService {
           const deliveryDistanceKm = distancePricingEnabled ? shippingQuote?.distanceKm ?? null : null;
           const deliveryRatePerKmCents = distancePricingEnabled ? shippingQuote?.ratePerKmCents ?? null : null;
           const shippingFeeCents =
-            groupEntries.length > 1 ? (branchId === primaryBranchId ? shippingFeeCentsTotal : 0) : shippingQuote?.fee ?? 0;
+            groupEntries.length > 1
+              ? (branchId === primaryBranchId ? shippingFeeCentsTotal : 0)
+              : shippingQuote?.appliedFeeCents ?? shippingQuote?.fee ?? 0;
+          const deliveryBaseFeeCents =
+            groupEntries.length > 1
+              ? (branchId === primaryBranchId ? shippingQuote?.baseFeeCents ?? shippingFeeCentsTotal : 0)
+              : shippingQuote?.baseFeeCents ?? shippingFeeCents;
+          const deliveryAppliedFeeCents = shippingFeeCents;
+          const deliveryCampaignId =
+            groupEntries.length > 1
+              ? (branchId === primaryBranchId ? shippingQuote?.campaignId ?? null : null)
+              : shippingQuote?.campaignId ?? null;
+          const deliveryCampaignName =
+            groupEntries.length > 1
+              ? (branchId === primaryBranchId ? shippingQuote?.campaignName ?? null : null)
+              : shippingQuote?.campaignName ?? null;
           const deliveryEtaMinutes = shippingQuote?.etaMinutes ?? null;
           const estimatedDeliveryTime = shippingQuote?.estimatedDeliveryTime ?? null;
           const totalCents =
@@ -1023,6 +1048,10 @@ export class OrdersService {
               scheduledAt: scheduling.scheduledAt ?? null,
               subtotalCents: group.subtotalCents,
               shippingFeeCents,
+              deliveryBaseFeeCents,
+              deliveryAppliedFeeCents,
+              deliveryCampaignId,
+              deliveryCampaignName,
               serviceFeeCents: this.serviceFeeCents,
               discountCents: discountForBranch,
               totalCents,
@@ -1068,6 +1097,7 @@ export class OrdersService {
           createdOrders.push(order);
 
           for (const item of group.items) {
+            // TODO: Adjust stock decrement for weight-based items once kg inventory is supported.
             const branchProduct = branchProductMap.get(`${branchId}:${item.productId}`);
             let updatedProductStock = false;
             if (branchProduct?.stock !== null && branchProduct?.stock !== undefined) {
@@ -1182,7 +1212,8 @@ export class OrdersService {
         await this.automation.enqueueMany(automationEvents);
         for (const orderId of result.orderIds) {
           await this.clearCachesForOrder(orderId, userId);
-      await this.notifications.notifyOrderCreated(orderId);
+          await this.notifications.notifyOrderCreated(orderId);
+          await this.emitRealtimeNewOrder(orderId);
         }
         this.logger.log({ msg: 'Order created', orderGroupId: result.orderGroupId, userId });
       if (result.orderIds.length === 1) {
@@ -1245,6 +1276,10 @@ export class OrdersService {
         string,
         {
           fee: number;
+          baseFeeCents?: number | null;
+          appliedFeeCents?: number | null;
+          campaignId?: string | null;
+          campaignName?: string | null;
           distanceKm: number | null;
           ratePerKmCents: number | null;
           etaMinutes?: number | null;
@@ -1264,7 +1299,11 @@ export class OrdersService {
             subtotalCents: grouped.get(branchId)?.subtotalCents ?? 0,
           });
           shippingByBranch.set(branchId, {
-            fee: quote.shippingFeeCents,
+            fee: quote.deliveryPricing?.appliedFeeCents ?? quote.shippingFeeCents,
+            baseFeeCents: quote.deliveryPricing?.baseFeeCents ?? quote.shippingFeeCents,
+            appliedFeeCents: quote.deliveryPricing?.appliedFeeCents ?? quote.shippingFeeCents,
+            campaignId: quote.deliveryPricing?.campaignId ?? null,
+            campaignName: quote.deliveryPricing?.campaignName ?? null,
             distanceKm: distancePricingEnabled ? quote.distanceKm : null,
             ratePerKmCents: distancePricingEnabled ? quote.ratePerKmCents : null,
             etaMinutes: quote.etaMinutes ?? null,
@@ -1423,6 +1462,10 @@ export class OrdersService {
           string,
           {
             fee: number;
+            baseFeeCents?: number | null;
+            appliedFeeCents?: number | null;
+            campaignId?: string | null;
+            campaignName?: string | null;
             distanceKm: number | null;
             ratePerKmCents: number | null;
             etaMinutes?: number | null;
@@ -1442,7 +1485,11 @@ export class OrdersService {
               subtotalCents: grouped.get(branchId)?.subtotalCents ?? 0,
             });
             shippingByBranch.set(branchId, {
-              fee: quote.shippingFeeCents,
+              fee: quote.deliveryPricing?.appliedFeeCents ?? quote.shippingFeeCents,
+              baseFeeCents: quote.deliveryPricing?.baseFeeCents ?? quote.shippingFeeCents,
+              appliedFeeCents: quote.deliveryPricing?.appliedFeeCents ?? quote.shippingFeeCents,
+              campaignId: quote.deliveryPricing?.campaignId ?? null,
+              campaignName: quote.deliveryPricing?.campaignName ?? null,
               distanceKm: distancePricingEnabled ? quote.distanceKm : null,
               ratePerKmCents: distancePricingEnabled ? quote.ratePerKmCents : null,
               etaMinutes: quote.etaMinutes ?? null,
@@ -1536,7 +1583,22 @@ export class OrdersService {
           const deliveryDistanceKm = distancePricingEnabled ? shippingQuote?.distanceKm ?? null : null;
           const deliveryRatePerKmCents = distancePricingEnabled ? shippingQuote?.ratePerKmCents ?? null : null;
           const shippingFeeCents =
-            groupEntries.length > 1 ? (branchId === primaryBranchId ? shippingFeeCentsTotal : 0) : shippingQuote?.fee ?? 0;
+            groupEntries.length > 1
+              ? (branchId === primaryBranchId ? shippingFeeCentsTotal : 0)
+              : shippingQuote?.appliedFeeCents ?? shippingQuote?.fee ?? 0;
+          const deliveryBaseFeeCents =
+            groupEntries.length > 1
+              ? (branchId === primaryBranchId ? shippingQuote?.baseFeeCents ?? shippingFeeCentsTotal : 0)
+              : shippingQuote?.baseFeeCents ?? shippingFeeCents;
+          const deliveryAppliedFeeCents = shippingFeeCents;
+          const deliveryCampaignId =
+            groupEntries.length > 1
+              ? (branchId === primaryBranchId ? shippingQuote?.campaignId ?? null : null)
+              : shippingQuote?.campaignId ?? null;
+          const deliveryCampaignName =
+            groupEntries.length > 1
+              ? (branchId === primaryBranchId ? shippingQuote?.campaignName ?? null : null)
+              : shippingQuote?.campaignName ?? null;
           const deliveryEtaMinutes = shippingQuote?.etaMinutes ?? null;
           const estimatedDeliveryTime = shippingQuote?.estimatedDeliveryTime ?? null;
           const totalCents = group.subtotalCents + shippingFeeCents + this.serviceFeeCents;
@@ -1553,6 +1615,10 @@ export class OrdersService {
               scheduledAt: scheduling.scheduledAt ?? null,
               subtotalCents: group.subtotalCents,
               shippingFeeCents,
+              deliveryBaseFeeCents,
+              deliveryAppliedFeeCents,
+              deliveryCampaignId,
+              deliveryCampaignName,
               serviceFeeCents: this.serviceFeeCents,
               discountCents: 0,
               totalCents,
@@ -1677,6 +1743,7 @@ export class OrdersService {
         for (const orderId of result.orderIds) {
           await this.clearCachesForOrder(orderId, null);
           await this.notifications.notifyOrderCreated(orderId);
+          await this.emitRealtimeNewOrder(orderId);
         }
       if (result.orderIds.length === 1) {
         return this.getGuestOrderDetail(result.orderIds[0]);
@@ -3149,6 +3216,10 @@ export class OrdersService {
       }
 
       let shippingFeeCents = 0;
+      let deliveryBaseFeeCents: number | null = null;
+      let deliveryAppliedFeeCents: number | null = null;
+      let deliveryCampaignId: string | null = null;
+      let deliveryCampaignName: string | null = null;
       let deliveryDistanceKm: number | null = null;
       let deliveryRatePerKmCents: number | null = null;
       let deliveryEtaMinutes: number | null = null;
@@ -3164,7 +3235,11 @@ export class OrdersService {
           zoneId: address.zoneId ?? null,
           subtotalCents,
         });
-        shippingFeeCents = quote.shippingFeeCents;
+        shippingFeeCents = quote.deliveryPricing?.appliedFeeCents ?? quote.shippingFeeCents;
+        deliveryBaseFeeCents = quote.deliveryPricing?.baseFeeCents ?? shippingFeeCents;
+        deliveryAppliedFeeCents = quote.deliveryPricing?.appliedFeeCents ?? shippingFeeCents;
+        deliveryCampaignId = quote.deliveryPricing?.campaignId ?? null;
+        deliveryCampaignName = quote.deliveryPricing?.campaignName ?? null;
         deliveryDistanceKm = distancePricingEnabled ? quote.distanceKm : null;
         deliveryRatePerKmCents = distancePricingEnabled ? quote.ratePerKmCents : null;
         deliveryEtaMinutes = quote.etaMinutes ?? null;
@@ -3174,7 +3249,11 @@ export class OrdersService {
           subtotalCents,
           zoneId: address.zoneId,
         });
-        shippingFeeCents = quote.shippingFeeCents;
+        shippingFeeCents = quote.deliveryPricing?.appliedFeeCents ?? quote.shippingFeeCents;
+        deliveryBaseFeeCents = quote.deliveryPricing?.baseFeeCents ?? shippingFeeCents;
+        deliveryAppliedFeeCents = quote.deliveryPricing?.appliedFeeCents ?? shippingFeeCents;
+        deliveryCampaignId = quote.deliveryPricing?.campaignId ?? null;
+        deliveryCampaignName = quote.deliveryPricing?.campaignName ?? null;
         deliveryEtaMinutes = quote.etaMinutes ?? null;
         estimatedDeliveryTime = quote.estimatedDeliveryTime ?? null;
       }
@@ -3190,6 +3269,10 @@ export class OrdersService {
           deliveryTermsAccepted: true,
           subtotalCents,
           shippingFeeCents,
+          deliveryBaseFeeCents,
+          deliveryAppliedFeeCents,
+          deliveryCampaignId,
+          deliveryCampaignName,
           serviceFeeCents: this.serviceFeeCents,
           discountCents: 0,
           totalCents,
@@ -3252,6 +3335,7 @@ export class OrdersService {
       await this.automation.enqueueMany(automationEvents);
       await this.clearCachesForOrder(result.orderId, userId);
       await this.notifications.notifyOrderCreated(result.orderId);
+      await this.emitRealtimeNewOrder(result.orderId);
       return this.detail(userId, result.orderId);
     }
 
@@ -3327,6 +3411,7 @@ export class OrdersService {
         actorId: userId,
         reason: 'Cancelled by customer',
       });
+      await this.emitRealtimeStatusUpdate(orderId);
       return this.detail(userId, orderId);
     }
 
@@ -3409,6 +3494,7 @@ export class OrdersService {
         actorId,
         reason: note,
       });
+      await this.emitRealtimeStatusUpdate(orderId);
       return { success: true, loyaltyEarned };
     }
 
@@ -3479,6 +3565,7 @@ export class OrdersService {
         actorId,
         reason: note ?? 'Cancelled by admin',
       });
+      await this.emitRealtimeStatusUpdate(orderId);
       return { success: true };
     }
 
@@ -3818,6 +3905,54 @@ export class OrdersService {
     });
   }
 
+  private async emitRealtimeNewOrder(orderId: string) {
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: { id: orderId },
+        select: { id: true, code: true, status: true, providerId: true, createdAt: true, updatedAt: true },
+      });
+      if (!order) return;
+      const payload = {
+        orderId: order.id,
+        orderCode: order.code ?? order.id,
+        status: order.status,
+        providerId: order.providerId ?? null,
+        createdAt: order.createdAt?.toISOString?.() ?? null,
+        updatedAt: order.updatedAt?.toISOString?.() ?? new Date().toISOString(),
+      };
+      this.ordersGateway.emitAdminNewOrder(payload);
+      if (order.providerId) {
+        this.ordersGateway.emitProviderNewOrder(order.providerId, payload);
+      }
+    } catch (err) {
+      this.logger.warn({ msg: 'Realtime new order emit failed', orderId, error: (err as Error)?.message });
+    }
+  }
+
+  private async emitRealtimeStatusUpdate(orderId: string) {
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: { id: orderId },
+        select: { id: true, code: true, status: true, providerId: true, createdAt: true, updatedAt: true },
+      });
+      if (!order) return;
+      const payload = {
+        orderId: order.id,
+        orderCode: order.code ?? order.id,
+        status: order.status,
+        providerId: order.providerId ?? null,
+        createdAt: order.createdAt?.toISOString?.() ?? null,
+        updatedAt: order.updatedAt?.toISOString?.() ?? new Date().toISOString(),
+      };
+      this.ordersGateway.emitAdminOrderStatus(payload);
+      if (order.providerId) {
+        this.ordersGateway.emitProviderOrderStatus(order.providerId, payload);
+      }
+    } catch (err) {
+      this.logger.warn({ msg: 'Realtime status emit failed', orderId, error: (err as Error)?.message });
+    }
+  }
+
   private async buildOrderEventPayload(
     orderId: string,
     client: Prisma.TransactionClient | PrismaService = this.prisma,
@@ -3919,6 +4054,11 @@ export class OrdersService {
         loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
         totalCents: order.totalCents ?? 0,
       });
+    const deliveryBaseFeeCents = order.deliveryBaseFeeCents ?? order.shippingFeeCents ?? 0;
+    const deliveryAppliedFeeCents = order.deliveryAppliedFeeCents ?? order.shippingFeeCents ?? deliveryBaseFeeCents;
+    const deliveryCampaignId = order.deliveryCampaignId ?? null;
+    const deliveryCampaignName = order.deliveryCampaignName ?? null;
+    const deliveryZoneName = this.settings.resolveZoneName(zone, order.deliveryZoneName ?? undefined);
     return {
       id: order.id,
       code: order.code ?? order.id,
@@ -3927,6 +4067,12 @@ export class OrdersService {
       paymentMethod: order.paymentMethod,
       subtotalCents: order.subtotalCents,
       shippingFeeCents: order.shippingFeeCents,
+      deliveryPricing: {
+        baseFeeCents: deliveryBaseFeeCents,
+        appliedFeeCents: deliveryAppliedFeeCents,
+        campaignId: deliveryCampaignId,
+        campaignName: deliveryCampaignName,
+      },
       serviceFeeCents,
       discountCents: order.discountCents,
       loyaltyDiscountCents: order.loyaltyDiscountCents,
@@ -3938,7 +4084,7 @@ export class OrdersService {
       estimatedDeliveryTime: order.estimatedDeliveryTime ?? undefined,
       deliveryEtaMinutes: order.deliveryEtaMinutes ?? undefined,
         deliveryZoneId: order.deliveryZoneId ?? undefined,
-        deliveryZoneName: order.deliveryZoneName ?? undefined,
+        deliveryZoneName: deliveryZoneName ?? undefined,
         deliveryWindowId: order.deliveryWindowId ?? undefined,
         scheduledAt: order.scheduledAt ?? undefined,
         deliveryWindow: order.deliveryWindow

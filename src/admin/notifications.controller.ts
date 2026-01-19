@@ -144,6 +144,13 @@ export class AdminNotificationsController {
       }
       return { type: 'area', areaId: input.areaId };
     }
+    if (input.type === 'areas') {
+      const areaIds = Array.from(new Set((input.areaIds ?? []).map((id) => String(id || '').trim()).filter(Boolean)));
+      if (!areaIds.length) {
+        throw new BadRequestException('areaIds is required for areas targets');
+      }
+      return { type: 'areas', areaIds };
+    }
     if (input.type === 'provider') {
       if (!input.providerId) {
         throw new BadRequestException('providerId is required for provider targets');

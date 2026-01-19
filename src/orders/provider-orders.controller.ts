@@ -12,6 +12,7 @@ import { AdminOrderListDto } from '../admin/dto/admin-order-list.dto';
 import { OrderStatusNoteDto, UpdateOrderStatusDto } from '../admin/dto/order-status.dto';
 import { DomainError, ErrorCode } from '../common/errors';
 import { PrismaService } from '../prisma/prisma.service';
+import { SettingsService } from '../settings/settings.service';
 
 @ApiTags('Provider/Orders')
 @ApiBearerAuth()
@@ -23,6 +24,7 @@ export class ProviderOrdersController {
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
     private readonly receipts: ReceiptService,
+    private readonly settings: SettingsService,
   ) {}
 
   @Get()
@@ -33,6 +35,7 @@ export class ProviderOrdersController {
   })
   @ApiQuery({ name: 'from', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'to', required: false, description: 'ISO date' })
+  @ApiQuery({ name: 'updatedAfter', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'customer', required: false })
   @ApiQuery({ name: 'minTotalCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } })
@@ -45,6 +48,9 @@ export class ProviderOrdersController {
     if (query.from || query.to) where.createdAt = {};
     if (query.from) (where.createdAt as Prisma.DateTimeFilter).gte = query.from;
     if (query.to) (where.createdAt as Prisma.DateTimeFilter).lte = query.to;
+    if (query.updatedAfter) {
+      where.updatedAt = { gte: query.updatedAfter };
+    }
     if (query.customer) {
       const term = query.customer;
       where.OR = [
@@ -67,6 +73,9 @@ export class ProviderOrdersController {
     if (query.orderGroupId) {
       where.orderGroupId = query.orderGroupId;
     }
+    if (query.deliveryZoneId) {
+      where.deliveryZoneId = query.deliveryZoneId;
+    }
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({
@@ -82,7 +91,8 @@ export class ProviderOrdersController {
       this.prisma.order.count({ where }),
     ]);
 
-    return { items, total, page: query.page, pageSize: query.pageSize };
+    const withZones = await this.attachDeliveryZoneNames(items);
+    return { items: withZones, total, page: query.page, pageSize: query.pageSize };
   }
 
   @Get(':id')
@@ -109,7 +119,7 @@ export class ProviderOrdersController {
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_UNAUTHORIZED, 'Order not found', 403);
     }
-    return order;
+    return this.attachDeliveryZoneName(order);
   }
 
   @Get(':id/history')
@@ -230,5 +240,27 @@ export class ProviderOrdersController {
     if (order.driverId) {
       throw new ForbiddenException('Provider accounts cannot cancel once a driver is assigned');
     }
+  }
+
+  private async attachDeliveryZoneNames<T extends { deliveryZoneId?: string | null; deliveryZoneName?: string | null }>(
+    orders: T[],
+  ): Promise<T[]> {
+    if (!orders.length) return orders;
+    const zones = await this.settings.getDeliveryZones({ includeInactive: true });
+    const zoneById = new Map(zones.map((zone) => [zone.id, zone]));
+    return orders.map((order) => {
+      const zone = order.deliveryZoneId ? zoneById.get(order.deliveryZoneId) : undefined;
+      const name = this.settings.resolveZoneName(zone, order.deliveryZoneName ?? undefined);
+      return { ...order, deliveryZoneName: name ?? order.deliveryZoneName ?? null };
+    });
+  }
+
+  private async attachDeliveryZoneName<T extends { deliveryZoneId?: string | null; deliveryZoneName?: string | null }>(
+    order: T,
+  ): Promise<T> {
+    if (!order?.deliveryZoneId) return order;
+    const zone = await this.settings.getZoneById(order.deliveryZoneId, { includeInactive: true });
+    const name = this.settings.resolveZoneName(zone, order.deliveryZoneName ?? undefined);
+    return { ...order, deliveryZoneName: name ?? order.deliveryZoneName ?? null };
   }
 }

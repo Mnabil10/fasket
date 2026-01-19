@@ -1,13 +1,23 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsDateString, IsEnum, IsIn, IsOptional, IsString, MinLength, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsIn,
+  IsOptional,
+  IsString,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
 import { NotificationStatus, UserRole } from '@prisma/client';
 import { PaginationDto } from './pagination.dto';
 
 export class NotificationTargetDto {
-  @ApiProperty({ enum: ['all', 'role', 'area', 'provider', 'user'] })
-  @IsIn(['all', 'role', 'area', 'provider', 'user'])
-  type!: 'all' | 'role' | 'area' | 'provider' | 'user';
+  @ApiProperty({ enum: ['all', 'role', 'area', 'areas', 'provider', 'user'] })
+  @IsIn(['all', 'role', 'area', 'areas', 'provider', 'user'])
+  type!: 'all' | 'role' | 'area' | 'areas' | 'provider' | 'user';
 
   @ApiPropertyOptional({ enum: UserRole })
   @IsOptional()
@@ -18,6 +28,12 @@ export class NotificationTargetDto {
   @IsOptional()
   @IsString()
   areaId?: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  areaIds?: string[];
 
   @ApiPropertyOptional()
   @IsOptional()

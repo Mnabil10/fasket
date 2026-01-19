@@ -161,6 +161,8 @@ export class NotificationsProcessor extends WorkerHost {
       baseWhere.role = { in: target.roles };
     } else if (target.type === 'area') {
       baseWhere.user = { addresses: { some: { zoneId: target.areaId } } };
+    } else if (target.type === 'areas') {
+      baseWhere.user = { addresses: { some: { zoneId: { in: target.areaIds } } } };
     } else if (target.type === 'provider') {
       baseWhere.user = { providerMemberships: { some: { providerId: target.providerId } } };
     } else if (target.type === 'devices') {

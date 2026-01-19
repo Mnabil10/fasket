@@ -20,6 +20,13 @@ export interface DeliveryConfig {
   deliveryZones: DeliveryZone[];
 }
 
+export interface DeliveryPricingMetadata {
+  baseFeeCents: number;
+  appliedFeeCents: number;
+  campaignId?: string | null;
+  campaignName?: string | null;
+}
+
 export interface LoyaltyConfig {
   enabled: boolean;
   earnRate: number;              // points per 1 currency unit
@@ -40,6 +47,7 @@ export interface DeliveryQuote {
   deliveryZoneName?: string;
   etaMinutes?: number;
   estimatedDeliveryTime?: string | null;
+  deliveryPricing?: DeliveryPricingMetadata;
 }
 
 export interface DistanceDeliveryQuote extends DeliveryQuote {

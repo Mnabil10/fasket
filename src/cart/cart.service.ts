@@ -17,6 +17,9 @@ type CartItemWithProduct = Prisma.CartItemGetPayload<{
         imageUrl: true;
         priceCents: true;
         salePriceCents: true;
+        pricingModel: true;
+        pricePerKg: true;
+        unitLabel: true;
         stock: true;
         deletedAt: true;
         status: true;
@@ -85,6 +88,9 @@ type CartItemResponse = {
     imageUrl: string | null;
     priceCents: number;
     salePriceCents?: number | null;
+    pricingModel?: string | null;
+    pricePerKg?: number | null;
+    unitLabel?: string | null;
   };
 };
 
@@ -413,6 +419,9 @@ export class CartService {
             imageUrl: true,
             priceCents: true,
             salePriceCents: true,
+            pricingModel: true,
+            pricePerKg: true,
+            unitLabel: true,
             stock: true,
             deletedAt: true,
             status: true,
@@ -562,6 +571,9 @@ export class CartService {
             imageUrl,
             priceCents: product.priceCents,
             salePriceCents: product.salePriceCents,
+            pricingModel: product.pricingModel ?? null,
+            pricePerKg: product.pricePerKg ?? null,
+            unitLabel: product.unitLabel ?? null,
           },
         };
       }),

@@ -3,6 +3,13 @@ import { ErrorCode } from '../common/errors/error-codes';
 import { OrdersService } from './orders.service';
 import { PaymentMethodDto } from './dto';
 
+const buildRealtimeGateway = () => ({
+  emitAdminNewOrder: jest.fn(),
+  emitProviderNewOrder: jest.fn(),
+  emitAdminOrderStatus: jest.fn(),
+  emitProviderOrderStatus: jest.fn(),
+});
+
 describe('OrdersService.awardLoyaltyForOrder', () => {
   const mockAudit = { log: jest.fn() } as any;
   const mockCache = {} as any;
@@ -68,6 +75,7 @@ describe('OrdersService.awardLoyaltyForOrder', () => {
       mockBilling,
       mockFinance,
       {} as any,
+      buildRealtimeGateway(),
     );
     return { service, prisma, tx, settings, loyalty };
   };
@@ -131,6 +139,7 @@ describe('OrdersService status transitions', () => {
       {} as any,
       {} as any,
       {} as any,
+      buildRealtimeGateway(),
     );
     return { service, prisma };
   };
@@ -219,6 +228,7 @@ describe('OrdersService.create delivery terms', () => {
       {} as any,
       {} as any,
       {} as any,
+      buildRealtimeGateway(),
     );
     return { service, prisma };
   };
@@ -262,6 +272,7 @@ describe('OrdersService.computeGroupTotals', () => {
       {} as any,
       {} as any,
       {} as any,
+      buildRealtimeGateway(),
     );
     return service;
   };
@@ -317,6 +328,7 @@ describe('OrdersService ordering window', () => {
       {} as any,
       {} as any,
       {} as any,
+      buildRealtimeGateway(),
     );
 
   const makeDate = (hours: number, minutes: number) => new Date(2026, 0, 1, hours, minutes, 0, 0);
@@ -379,6 +391,7 @@ describe('OrdersService.cancelOrderGroup', () => {
       {} as any,
       {} as any,
       {} as any,
+      buildRealtimeGateway(),
     );
     return { service, prisma };
   };
@@ -456,6 +469,7 @@ describe('OrdersService.refreshOrderGroupTotals', () => {
       {} as any,
       {} as any,
       {} as any,
+      buildRealtimeGateway(),
     );
     return { service, prisma };
   };
@@ -539,6 +553,7 @@ describe('OrdersService.assignDriverToOrder', () => {
       {} as any,
       {} as any,
       {} as any,
+      buildRealtimeGateway(),
     );
     jest.spyOn(service as any, 'buildOrderEventPayload').mockResolvedValue({ orderId: 'o1' });
     jest.spyOn(service, 'clearCachesForOrder').mockResolvedValue(undefined);
@@ -607,6 +622,7 @@ describe('OrdersService.updateStatus delivery timestamps', () => {
       {} as any,
       finance,
       {} as any,
+      buildRealtimeGateway(),
     );
     jest.spyOn(service as any, 'emitOrderStatusAutomationEvent').mockResolvedValue(null);
     jest.spyOn(service as any, 'emitStatusChanged').mockResolvedValue(null);

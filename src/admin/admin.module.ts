@@ -36,6 +36,8 @@ import { AdminDeliveryWindowsController } from './delivery-windows.controller';
 import { AdminProviderDeliveryZonePricingController } from './provider-delivery-zone-pricing.controller';
 import { ProductOptionsBulkService } from './product-options-bulk.service';
 import { AdminNotificationsController } from './notifications.controller';
+import { AdminDeliveryCampaignsController } from './delivery-campaigns.controller';
+import { DeliveryCampaignsModule } from '../delivery-campaigns/delivery-campaigns.module';
 
 @Module({
   controllers: [
@@ -66,6 +68,7 @@ import { AdminNotificationsController } from './notifications.controller';
     AdminDeliveryWindowsController,
     AdminProviderDeliveryZonePricingController,
     AdminNotificationsController,
+    AdminDeliveryCampaignsController,
   ],
   imports: [
     // Additional modules can be wired here when needed
@@ -76,6 +79,7 @@ import { AdminNotificationsController } from './notifications.controller';
     AutomationModule,
     ReviewsModule,
     ProvidersModule,
+    DeliveryCampaignsModule,
     // ...other modules
   ],
   providers: [AdminService, ProductsBulkService, ProductOptionsBulkService],

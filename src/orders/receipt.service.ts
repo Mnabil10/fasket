@@ -114,10 +114,11 @@ export class ReceiptService {
         qty: option.qty,
       })),
     }));
+    const resolvedZoneName = this.settings.resolveZoneName(zone, order.deliveryZoneName ?? undefined);
     const deliveryZone = zone
       ? {
           id: zone.id,
-          name: zone.nameEn || zone.nameAr || order.deliveryZoneName || 'Delivery zone',
+          name: resolvedZoneName ?? 'Delivery zone',
           city: zone.city ?? undefined,
           region: zone.region ?? undefined,
           deliveryFeeCents: zone.feeCents,
@@ -129,7 +130,7 @@ export class ReceiptService {
       : order.deliveryZoneId || order.deliveryZoneName
         ? {
             id: order.deliveryZoneId ?? 'legacy',
-            name: order.deliveryZoneName ?? 'Delivery',
+            name: resolvedZoneName ?? order.deliveryZoneName ?? 'Delivery',
             city: order.address?.city ?? undefined,
             region: undefined,
             deliveryFeeCents: order.shippingFeeCents ?? 0,
@@ -148,6 +149,11 @@ export class ReceiptService {
           plateNumber: order.driver.vehicle?.plateNumber,
         }
       : null;
+    const deliveryBaseFeeCents = order.deliveryBaseFeeCents ?? order.shippingFeeCents ?? 0;
+    const deliveryAppliedFeeCents =
+      order.deliveryAppliedFeeCents ?? order.shippingFeeCents ?? deliveryBaseFeeCents;
+    const deliveryCampaignId = order.deliveryCampaignId ?? null;
+    const deliveryCampaignName = order.deliveryCampaignName ?? null;
 
     return {
       id: order.id,
@@ -169,6 +175,8 @@ export class ReceiptService {
         label: order.address?.label ?? guestAddress?.fullAddress ?? undefined,
       },
       orderNotes: order.note ?? order.notes ?? null,
+      deliveryZoneId: order.deliveryZoneId ?? deliveryZone?.id ?? null,
+      deliveryZoneName: resolvedZoneName ?? null,
       deliveryZone,
       driver,
       items,
@@ -176,6 +184,12 @@ export class ReceiptService {
       couponDiscountCents: order.couponDiscountCents ?? order.discountCents ?? 0,
       loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,
       shippingFeeCents: order.shippingFeeCents ?? 0,
+      deliveryPricing: {
+        baseFeeCents: deliveryBaseFeeCents,
+        appliedFeeCents: deliveryAppliedFeeCents,
+        campaignId: deliveryCampaignId,
+        campaignName: deliveryCampaignName,
+      },
       serviceFeeCents: order.serviceFeeCents ?? 0,
       totalCents: order.totalCents,
       loyaltyPointsEarned: order.loyaltyPointsEarned ?? 0,

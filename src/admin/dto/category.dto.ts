@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, IntersectionType, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, ArrayNotEmpty, IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { cleanNullableString, cleanString } from '../../common/utils/sanitize.util';
 import { PaginationDto, SortDto } from './pagination.dto';
 
@@ -71,3 +71,11 @@ export class CategoryListQueryDto extends IntersectionType(
   PaginationDto,
   IntersectionType(SortDto, CategoryQueryDto),
 ) {}
+
+export class CategoryProductReorderDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  orderedProductIds!: string[];
+}

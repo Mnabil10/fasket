@@ -15,6 +15,13 @@ import { AdminOrderListDto } from './dto/admin-order-list.dto';
 import { DomainError, ErrorCode } from '../common/errors';
 import { Throttle } from '@nestjs/throttler';
 import { AutomationEventRef, AutomationEventsService } from '../automation/automation-events.service';
+import { SettingsService } from '../settings/settings.service';
+
+type AdminOrderProviderSummary = {
+  providerId: string | null;
+  providerName: string | null;
+  itemsCount?: number;
+};
 
 @ApiTags('Admin/Orders')
 @ApiBearerAuth()
@@ -30,6 +37,7 @@ export class AdminOrdersController {
     private readonly audit: AuditLogService,
     private readonly orders: OrdersService,
     private readonly automation: AutomationEventsService,
+    private readonly settings: SettingsService,
   ) {}
 
   @Get()
@@ -40,6 +48,7 @@ export class AdminOrdersController {
   })
   @ApiQuery({ name: 'from', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'to', required: false, description: 'ISO date' })
+  @ApiQuery({ name: 'updatedAfter', required: false, description: 'ISO date' })
   @ApiQuery({ name: 'customer', required: false })
   @ApiQuery({ name: 'minTotalCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'maxTotalCents', required: false, schema: { type: 'integer' } })
@@ -54,6 +63,9 @@ export class AdminOrdersController {
     if (query.from || query.to) where.createdAt = {};
     if (query.from) (where.createdAt as Prisma.DateTimeFilter).gte = query.from;
     if (query.to) (where.createdAt as Prisma.DateTimeFilter).lte = query.to;
+    if (query.updatedAfter) {
+      where.updatedAt = { gte: query.updatedAfter };
+    }
     if (query.customer) {
       const term = query.customer;
       where.OR = [
@@ -86,6 +98,9 @@ export class AdminOrdersController {
     if (query.orderGroupId) {
       where.orderGroupId = query.orderGroupId;
     }
+    if (query.deliveryZoneId) {
+      where.deliveryZoneId = query.deliveryZoneId;
+    }
 
     const [items, total] = await this.svc.prisma.$transaction([
       this.svc.prisma.order.findMany({
@@ -94,6 +109,7 @@ export class AdminOrdersController {
         include: {
           user: { select: { id: true, name: true, phone: true } },
           driver: { select: { id: true, fullName: true, phone: true } },
+          provider: { select: { id: true, name: true } },
         },
         skip: query.skip,
         take: query.take,
@@ -101,7 +117,22 @@ export class AdminOrdersController {
       this.svc.prisma.order.count({ where }),
     ]);
 
-    return { items, total, page: query.page, pageSize: query.pageSize };
+    const orderGroupIds = Array.from(
+      new Set(items.map((order) => order.orderGroupId).filter((id): id is string => Boolean(id))),
+    );
+    const groupProviders = await this.getOrderGroupProviders(orderGroupIds, providerScope);
+    const enriched = items.map((order) => {
+      const { provider, ...rest } = order;
+      const providers = order.orderGroupId ? groupProviders.get(order.orderGroupId) ?? [] : [];
+      return {
+        ...rest,
+        providerName: provider?.name ?? null,
+        ...(providers.length > 1 ? { providers } : {}),
+      };
+    });
+
+    const withZones = await this.attachDeliveryZoneNames(enriched);
+    return { items: withZones, total, page: query.page, pageSize: query.pageSize };
   }
 
   @Get(':id')
@@ -114,6 +145,7 @@ export class AdminOrdersController {
         address: true,
         user: true,
         deliveryWindow: true,
+        provider: { select: { id: true, name: true } },
         statusHistory: true,
         driver: {
           select: {
@@ -131,7 +163,17 @@ export class AdminOrdersController {
       }
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
     }
-    return order;
+    const groupProviders = order.orderGroupId
+      ? await this.getOrderGroupProviders([order.orderGroupId], providerScope)
+      : new Map<string, AdminOrderProviderSummary[]>();
+    const providers = order.orderGroupId ? groupProviders.get(order.orderGroupId) ?? [] : [];
+    const { provider, ...rest } = order;
+    const enrichedOrder = {
+      ...rest,
+      providerName: provider?.name ?? null,
+      ...(providers.length > 1 ? { providers } : {}),
+    };
+    return this.attachDeliveryZoneName(enrichedOrder);
   }
 
   @Get(':id/history')
@@ -300,5 +342,68 @@ export class AdminOrdersController {
     if (order.driverId) {
       throw new ForbiddenException('Provider accounts cannot cancel once a driver is assigned');
     }
+  }
+
+  private async getOrderGroupProviders(orderGroupIds: string[], providerScope?: string | null) {
+    if (!orderGroupIds.length) return new Map<string, AdminOrderProviderSummary[]>();
+    const orders = await this.svc.prisma.order.findMany({
+      where: {
+        orderGroupId: { in: orderGroupIds },
+        ...(providerScope ? { providerId: providerScope } : {}),
+      },
+      select: {
+        orderGroupId: true,
+        providerId: true,
+        provider: { select: { id: true, name: true } },
+        _count: { select: { items: true } },
+      },
+    });
+    const grouped = new Map<string, Map<string | null, AdminOrderProviderSummary>>();
+    for (const order of orders) {
+      if (!order.orderGroupId) continue;
+      const providerId = order.providerId ?? null;
+      const groupMap = grouped.get(order.orderGroupId) ?? new Map<string | null, AdminOrderProviderSummary>();
+      const existing = groupMap.get(providerId);
+      if (existing) {
+        existing.itemsCount = (existing.itemsCount ?? 0) + order._count.items;
+      } else {
+        groupMap.set(providerId, {
+          providerId,
+          providerName: order.provider?.name ?? null,
+          itemsCount: order._count.items,
+        });
+      }
+      grouped.set(order.orderGroupId, groupMap);
+    }
+    const result = new Map<string, AdminOrderProviderSummary[]>();
+    for (const [groupId, providers] of grouped.entries()) {
+      const list = Array.from(providers.values()).sort((a, b) =>
+        String(a.providerName ?? a.providerId ?? '').localeCompare(String(b.providerName ?? b.providerId ?? '')),
+      );
+      result.set(groupId, list);
+    }
+    return result;
+  }
+
+  private async attachDeliveryZoneNames<T extends { deliveryZoneId?: string | null; deliveryZoneName?: string | null }>(
+    orders: T[],
+  ): Promise<T[]> {
+    if (!orders.length) return orders;
+    const zones = await this.settings.getDeliveryZones({ includeInactive: true });
+    const zoneById = new Map(zones.map((zone) => [zone.id, zone]));
+    return orders.map((order) => {
+      const zone = order.deliveryZoneId ? zoneById.get(order.deliveryZoneId) : undefined;
+      const name = this.settings.resolveZoneName(zone, order.deliveryZoneName ?? undefined);
+      return { ...order, deliveryZoneName: name ?? order.deliveryZoneName ?? null };
+    });
+  }
+
+  private async attachDeliveryZoneName<T extends { deliveryZoneId?: string | null; deliveryZoneName?: string | null }>(
+    order: T,
+  ): Promise<T> {
+    if (!order?.deliveryZoneId) return order;
+    const zone = await this.settings.getZoneById(order.deliveryZoneId, { includeInactive: true });
+    const name = this.settings.resolveZoneName(zone, order.deliveryZoneName ?? undefined);
+    return { ...order, deliveryZoneName: name ?? order.deliveryZoneName ?? null };
   }
 }

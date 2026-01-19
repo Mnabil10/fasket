@@ -5,6 +5,7 @@ import { cleanNullableString, cleanString } from '../../common/utils/sanitize.ut
 import { PaginationDto } from './pagination.dto';
 
 export enum ProductStatusDto { DRAFT='DRAFT', ACTIVE='ACTIVE', HIDDEN='HIDDEN', DISCONTINUED='DISCONTINUED' }
+export enum ProductPricingModelDto { UNIT='unit', WEIGHT='weight' }
 
 export class CreateProductDto {
   @ApiProperty()
@@ -53,6 +54,23 @@ export class CreateProductDto {
   @Min(0)
   priceCents!: number;
 
+  @ApiPropertyOptional({ enum: ProductPricingModelDto, default: ProductPricingModelDto.UNIT })
+  @IsOptional()
+  @IsEnum(ProductPricingModelDto)
+  pricingModel?: ProductPricingModelDto = ProductPricingModelDto.UNIT;
+
+  @ApiPropertyOptional({ description: 'Price per kg in cents (required for weight pricing)' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  pricePerKg?: number;
+
+  @ApiPropertyOptional({ description: 'Unit label (e.g. kg)' })
+  @Transform(({ value }) => cleanNullableString(value))
+  @IsOptional()
+  @IsString()
+  unitLabel?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()
@@ -86,6 +104,12 @@ export class CreateProductDto {
   @IsString()
   providerId?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sortOrder?: number;
+
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
@@ -115,8 +139,8 @@ export class ProductListQueryDto {
   @Transform(({ value }) => value === 'true')
   @IsOptional() @IsBoolean() inStock?: boolean;
 
-  @ApiPropertyOptional({ enum: ['createdAt','priceCents','name'], default: 'createdAt' })
-  @IsOptional() @IsString() orderBy?: 'createdAt' | 'priceCents' | 'name' = 'createdAt';
+  @ApiPropertyOptional({ enum: ['createdAt','priceCents','name','sortOrder'], default: 'createdAt' })
+  @IsOptional() @IsString() orderBy?: 'createdAt' | 'priceCents' | 'name' | 'sortOrder' = 'createdAt';
 
   @ApiPropertyOptional({ enum: ['asc','desc'], default: 'desc' })
   @IsOptional() @IsString() sort?: 'asc' | 'desc' = 'desc';

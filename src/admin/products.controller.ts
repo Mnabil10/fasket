@@ -22,7 +22,7 @@ import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags, ApiConsumes, ApiBody }
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Express } from 'express';
-import { Prisma, ProviderStatus, UserRole } from '@prisma/client';
+import { Prisma, ProviderStatus, UserRole, ProductPricingModel } from '@prisma/client';
 import { AdminOnly, ProviderOrStaffOrAdmin } from './_admin-guards';
 import { AdminService } from './admin.service';
 import { BulkUploadResult, ProductsBulkService } from './products-bulk.service';
@@ -32,6 +32,7 @@ import { toPublicImageUrl } from 'src/uploads/image.util';
 import { RequestContextService } from '../common/context/request-context.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CurrentUserPayload } from '../common/types/current-user.type';
+import { disableWeightOptionGroup, syncWeightOptionGroup } from '../products/weight-variants.util';
 
 @ApiTags('Admin/Products')
 @ApiBearerAuth()
@@ -164,7 +165,7 @@ export class AdminProductsController {
   @ApiQuery({ name: 'minPriceCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'maxPriceCents', required: false, schema: { type: 'integer' } })
   @ApiQuery({ name: 'inStock', required: false, schema: { type: 'boolean' } })
-  @ApiQuery({ name: 'orderBy', required: false, enum: ['createdAt','priceCents','name'] })
+  @ApiQuery({ name: 'orderBy', required: false, enum: ['createdAt','priceCents','name','sortOrder'] })
   @ApiQuery({ name: 'sort', required: false, enum: ['asc','desc'] })
   @ApiOkResponse({ description: 'Paginated products' })
   async list(@CurrentUser() user: CurrentUserPayload, @Query() query: ProductListRequestDto) {
@@ -233,6 +234,10 @@ export class AdminProductsController {
         categoryId: { type: 'string' },
         image: { type: 'string', format: 'binary' },
         sku: { type: 'string' },
+        pricingModel: { type: 'string', enum: ['unit', 'weight'] },
+        pricePerKg: { type: 'integer' },
+        unitLabel: { type: 'string' },
+        sortOrder: { type: 'integer' },
       },
       required: ['name','priceCents','stock'],
     },
@@ -260,6 +265,7 @@ export class AdminProductsController {
   ) {
     const providerScope = await this.resolveProviderScope(user);
     const payload = await this.prepareProductPayload(dto);
+    this.normalizeWeightPricing(payload);
     this.validatePricing(payload);
     if (providerScope) {
       payload.providerId = providerScope;
@@ -287,6 +293,9 @@ export class AdminProductsController {
       payload.images = this.normalizeImagesInput(image.variants) ?? [];
     }
     const created = await this.svc.prisma.product.create({ data: payload as Prisma.ProductCreateInput });
+    if (payload.pricingModel === ProductPricingModel.weight) {
+      await syncWeightOptionGroup(this.svc.prisma, created.id, payload.pricePerKg ?? payload.priceCents);
+    }
     await this.ensureDefaultBranchProduct(created);
     await this.svc.audit.log({
       action: 'product.create',
@@ -321,6 +330,10 @@ export class AdminProductsController {
         categoryId: { type: 'string' },
         sku: { type: 'string' },
         image: { type: 'string', format: 'binary' },
+        pricingModel: { type: 'string', enum: ['unit', 'weight'] },
+        pricePerKg: { type: 'integer' },
+        unitLabel: { type: 'string' },
+        sortOrder: { type: 'integer' },
       },
     },
   })
@@ -352,6 +365,7 @@ export class AdminProductsController {
     });
     if (!existing) throw new NotFoundException('Product not found');
     const payload = await this.prepareProductPayload(dto, id);
+    this.normalizeWeightPricing(payload, existing);
     this.validatePricing(payload, existing);
     if (providerScope) {
       payload.providerId = providerScope;
@@ -389,6 +403,13 @@ export class AdminProductsController {
       where: { id },
       data: updateData,
     });
+    const nextPricingModel = (payload.pricingModel ?? existing.pricingModel) as ProductPricingModel;
+    if (nextPricingModel === ProductPricingModel.weight) {
+      const pricePerKg = payload.pricePerKg ?? existing.pricePerKg ?? updated.priceCents;
+      await syncWeightOptionGroup(this.svc.prisma, updated.id, pricePerKg);
+    } else if (existing.pricingModel === ProductPricingModel.weight && payload.pricingModel === ProductPricingModel.unit) {
+      await disableWeightOptionGroup(this.svc.prisma, updated.id);
+    }
     await this.ensureDefaultBranchProduct(updated);
     if (payload.stock !== undefined && payload.stock !== existing.stock) {
       await this.recordStockChange(id, existing.stock, payload.stock, 'admin.update');
@@ -473,17 +494,59 @@ export class AdminProductsController {
     return data;
   }
 
-  private validatePricing(payload: Record<string, any>, existing?: { priceCents: number; salePriceCents?: number | null }) {
+  private validatePricing(
+    payload: Record<string, any>,
+    existing?: { priceCents: number; salePriceCents?: number | null; pricingModel?: string | null; pricePerKg?: number | null },
+  ) {
     const price = payload.priceCents ?? existing?.priceCents;
     const sale = payload.salePriceCents ?? existing?.salePriceCents ?? null;
+    const pricingModel = payload.pricingModel ?? existing?.pricingModel ?? ProductPricingModel.unit;
+    const pricePerKg = payload.pricePerKg ?? existing?.pricePerKg ?? null;
     if (price !== undefined && price < 0) {
       throw new BadRequestException('Invalid price');
     }
     if (sale !== null && sale !== undefined && price !== undefined && sale >= price) {
       throw new BadRequestException('Sale price must be lower than price');
     }
+    if (pricingModel === ProductPricingModel.weight) {
+      if (pricePerKg === null || pricePerKg === undefined) {
+        throw new BadRequestException('Price per kg is required for weight-based products');
+      }
+      if (pricePerKg < 0) {
+        throw new BadRequestException('Invalid price per kg');
+      }
+    }
     if (payload.stock !== undefined && payload.stock < 0) {
       throw new BadRequestException('Invalid stock');
+    }
+  }
+
+  private normalizeWeightPricing(
+    payload: Record<string, any>,
+    existing?: { pricingModel?: string | null; pricePerKg?: number | null; unitLabel?: string | null; priceCents: number },
+  ) {
+    const pricingModel = payload.pricingModel ?? existing?.pricingModel ?? ProductPricingModel.unit;
+    if (pricingModel === ProductPricingModel.weight) {
+      const pricePerKg =
+        payload.pricePerKg ??
+        existing?.pricePerKg ??
+        payload.priceCents ??
+        existing?.priceCents;
+      if (pricePerKg !== undefined && pricePerKg !== null) {
+        payload.pricePerKg = pricePerKg;
+      }
+      if (payload.priceCents === undefined && pricePerKg !== undefined && pricePerKg !== null) {
+        payload.priceCents = pricePerKg;
+      }
+      if (!payload.unitLabel) {
+        payload.unitLabel = existing?.unitLabel ?? 'kg';
+      }
+      payload.salePriceCents = null;
+      payload.pricingModel = ProductPricingModel.weight;
+    } else if (payload.pricingModel === ProductPricingModel.unit) {
+      payload.pricingModel = ProductPricingModel.unit;
+      payload.pricePerKg = null;
+      payload.unitLabel = null;
     }
   }
 

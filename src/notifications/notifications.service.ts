@@ -39,6 +39,7 @@ export type AdminNotificationInput = {
   body: string;
   imageUrl?: string | null;
   type?: string | null;
+  data?: Record<string, any>;
   target: NotificationTarget;
   scheduledAt?: Date | null;
   createdById?: string | null;
@@ -46,6 +47,7 @@ export type AdminNotificationInput = {
   priority?: NotificationPriority;
   sound?: string | null;
   sendNow?: boolean;
+  deliveryCampaignId?: string | null;
 };
 
 @Injectable()
@@ -211,6 +213,7 @@ export class NotificationsService {
       type: input.type ?? undefined,
       priority: input.priority ?? this.defaultPriority,
       sound: input.sound ?? undefined,
+      data: input.data,
     });
 
     const notification = await this.prisma.notification.create({
@@ -226,6 +229,7 @@ export class NotificationsService {
         status,
         scheduledAt: sendNow ? null : scheduledAt,
         createdById: input.createdById ?? null,
+        deliveryCampaignId: input.deliveryCampaignId ?? null,
       },
     });
 

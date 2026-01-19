@@ -63,6 +63,7 @@ export class ProductsService {
         });
         if (category) where.categoryId = category.id;
       }
+      const isCategoryListing = Boolean(where.categoryId);
       const search = q?.q?.trim();
       if (search) {
         where.OR = [
@@ -83,11 +84,15 @@ export class ProductsService {
           where.priceCents = range;
         }
       }
+      const sort: Prisma.SortOrder = q.sort ?? 'desc';
+      const orderBy: Prisma.ProductOrderByWithRelationInput[] = isCategoryListing
+        ? [{ sortOrder: 'asc' }, { createdAt: 'desc' }]
+        : [this.buildProductOrderBy(q.orderBy ?? 'createdAt', sort)];
       const [items, total] = await this.prisma.$transaction([
         this.prisma.product.findMany({
           where,
           include: { category: { select: categorySelect } },
-          orderBy: { [q.orderBy ?? 'createdAt']: q.sort ?? 'desc' },
+          orderBy,
           skip: (page - 1) * pageSize,
           take: pageSize,
         }),
@@ -210,7 +215,25 @@ export class ProductsService {
     return localize(value ?? '', valueAr ?? undefined, lang);
   }
 
+  private buildProductOrderBy(
+    field: NonNullable<PublicProductListDto['orderBy']>,
+    sort: Prisma.SortOrder,
+  ): Prisma.ProductOrderByWithRelationInput {
+    switch (field) {
+      case 'priceCents':
+        return { priceCents: sort };
+      case 'name':
+        return { name: sort };
+      case 'sortOrder':
+        return { sortOrder: sort };
+      case 'createdAt':
+      default:
+        return { createdAt: sort };
+    }
+  }
+
   private async toProductSummary(product: ProductWithCategory, lang?: Lang) {
+    const isWeightBased = product.pricingModel === 'weight';
     return {
       id: product.id,
       name: this.localize(product.name, product.nameAr, lang) ?? product.name,
@@ -219,6 +242,11 @@ export class ProductsService {
       etag: this.buildEtag(product),
       priceCents: product.priceCents,
       salePriceCents: product.salePriceCents,
+      pricingModel: product.pricingModel,
+      pricePerKg: product.pricePerKg,
+      unitLabel: product.unitLabel ?? (isWeightBased ? 'kg' : null),
+      isWeightBased,
+      weightBased: isWeightBased,
       stock: product.stock,
       providerId: product.providerId,
       category: product.category
@@ -232,6 +260,7 @@ export class ProductsService {
   }
 
   private async toProductDetail(product: ProductDetailWithOptions, lang?: Lang) {
+    const isWeightBased = product.pricingModel === 'weight';
     return {
       id: product.id,
       name: this.localize(product.name, product.nameAr, lang) ?? product.name,
@@ -244,6 +273,11 @@ export class ProductsService {
       images: product.images,
       priceCents: product.priceCents,
       salePriceCents: product.salePriceCents,
+      pricingModel: product.pricingModel,
+      pricePerKg: product.pricePerKg,
+      unitLabel: product.unitLabel ?? (isWeightBased ? 'kg' : null),
+      isWeightBased,
+      weightBased: isWeightBased,
       stock: product.stock,
       status: product.status,
       isHotOffer: product.isHotOffer,

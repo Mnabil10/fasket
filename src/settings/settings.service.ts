@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../common/cache/cache.service';
 import { DeliveryConfig, DeliveryQuote, DeliveryZone, DistanceDeliveryQuote, LoyaltyConfig } from './settings.types';
 import { DomainError, ErrorCode } from '../common/errors';
+import { DeliveryCampaignsService } from '../delivery-campaigns/delivery-campaigns.service';
 
 @Injectable()
 export class SettingsService {
@@ -21,6 +22,7 @@ export class SettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
+    private readonly campaigns: DeliveryCampaignsService,
   ) {}
 
   async getSettings(): Promise<Setting> {
@@ -92,6 +94,15 @@ export class SettingsService {
       includeInactive: options?.includeInactive ?? false,
     });
     return zones.find((zone) => zone.id === zoneId);
+  }
+
+  resolveZoneName(zone?: DeliveryZone | null, fallback?: string | null): string | null {
+    if (!zone) return fallback ?? null;
+    const nameAr = String(zone.nameAr ?? '').trim();
+    if (nameAr) return nameAr;
+    const nameEn = String(zone.nameEn ?? '').trim();
+    if (nameEn) return nameEn;
+    return fallback ?? null;
   }
 
   async listZones(params?: { search?: string; isActive?: boolean; page?: number; pageSize?: number }) {
@@ -316,6 +327,12 @@ export class SettingsService {
       return {
         shippingFeeCents: 0,
         estimatedDeliveryTime: config.estimatedDeliveryTime ?? null,
+        deliveryPricing: {
+          baseFeeCents: 0,
+          appliedFeeCents: 0,
+          campaignId: null,
+          campaignName: null,
+        },
       };
     }
     if (params.zoneId) {
@@ -337,9 +354,15 @@ export class SettingsService {
       return {
         shippingFeeCents,
         deliveryZoneId: zone.id,
-        deliveryZoneName: zone.nameEn,
+        deliveryZoneName: this.resolveZoneName(zone) ?? undefined,
         etaMinutes: zone.etaMinutes,
         estimatedDeliveryTime: this.formatEta(zone.etaMinutes) ?? config.estimatedDeliveryTime ?? null,
+        deliveryPricing: {
+          baseFeeCents: shippingFeeCents,
+          appliedFeeCents: shippingFeeCents,
+          campaignId: null,
+          campaignName: null,
+        },
       };
     }
     const baseShipping =
@@ -349,6 +372,12 @@ export class SettingsService {
     return {
       shippingFeeCents: baseShipping,
       estimatedDeliveryTime: config.estimatedDeliveryTime ?? null,
+      deliveryPricing: {
+        baseFeeCents: baseShipping,
+        appliedFeeCents: baseShipping,
+        campaignId: null,
+        campaignName: null,
+      },
     };
   }
 
@@ -427,16 +456,32 @@ export class SettingsService {
         if (deliveryMode === DeliveryMode.MERCHANT) {
           shippingFeeCents = 0;
         }
+        const baseFeeCents = shippingFeeCents;
+        const campaign = deliveryMode === DeliveryMode.MERCHANT
+          ? null
+          : await this.applyCampaignPricing({
+              baseFeeCents,
+              zoneId: zone.id,
+              providerId: branch.providerId,
+            });
+        const appliedFeeCents = campaign?.appliedFeeCents ?? baseFeeCents;
+        shippingFeeCents = appliedFeeCents;
         return {
           shippingFeeCents,
           deliveryZoneId: zone.id,
-          deliveryZoneName: zone.nameEn,
+          deliveryZoneName: this.resolveZoneName(zone) ?? undefined,
           distanceKm: null,
           ratePerKmCents: null,
           minDeliveryFeeCents: minFee,
           maxDeliveryFeeCents: maxFee,
           etaMinutes: zone.etaMinutes ?? undefined,
           estimatedDeliveryTime: this.formatEta(zone.etaMinutes) ?? settings.estimatedDeliveryTime ?? null,
+          deliveryPricing: {
+            baseFeeCents,
+            appliedFeeCents,
+            campaignId: campaign?.campaignId ?? null,
+            campaignName: campaign?.campaignName ?? null,
+          },
         };
       }
     }
@@ -451,6 +496,16 @@ export class SettingsService {
         if (deliveryMode === DeliveryMode.MERCHANT) {
           shippingFeeCents = 0;
         }
+        const baseFeeCents = shippingFeeCents;
+        const campaign = deliveryMode === DeliveryMode.MERCHANT
+          ? null
+          : await this.applyCampaignPricing({
+              baseFeeCents,
+              zoneId,
+              providerId: branch.providerId,
+            });
+        const appliedFeeCents = campaign?.appliedFeeCents ?? baseFeeCents;
+        shippingFeeCents = appliedFeeCents;
         return {
           shippingFeeCents,
           deliveryZoneId: quote.deliveryZoneId,
@@ -461,6 +516,12 @@ export class SettingsService {
           maxDeliveryFeeCents: maxFee,
           etaMinutes: quote.etaMinutes ?? undefined,
           estimatedDeliveryTime: quote.estimatedDeliveryTime ?? settings.estimatedDeliveryTime ?? null,
+          deliveryPricing: {
+            baseFeeCents,
+            appliedFeeCents,
+            campaignId: campaign?.campaignId ?? null,
+            campaignName: campaign?.campaignName ?? null,
+          },
         };
       }
 
@@ -474,6 +535,16 @@ export class SettingsService {
       if (deliveryMode === DeliveryMode.MERCHANT) {
         shippingFeeCents = 0;
       }
+      const baseFeeCents = shippingFeeCents;
+      const campaign = deliveryMode === DeliveryMode.MERCHANT
+        ? null
+        : await this.applyCampaignPricing({
+            baseFeeCents,
+            zoneId,
+            providerId: branch.providerId,
+          });
+      const appliedFeeCents = campaign?.appliedFeeCents ?? baseFeeCents;
+      shippingFeeCents = appliedFeeCents;
       return {
         shippingFeeCents,
         distanceKm: null,
@@ -482,6 +553,12 @@ export class SettingsService {
         maxDeliveryFeeCents: maxFee,
         etaMinutes: undefined,
         estimatedDeliveryTime: settings.estimatedDeliveryTime ?? null,
+        deliveryPricing: {
+          baseFeeCents,
+          appliedFeeCents,
+          campaignId: campaign?.campaignId ?? null,
+          campaignName: campaign?.campaignName ?? null,
+        },
       };
     }
 
@@ -521,6 +598,16 @@ export class SettingsService {
     if (deliveryMode === DeliveryMode.MERCHANT) {
       shippingFeeCents = 0;
     }
+    const baseFeeCents = shippingFeeCents;
+    const campaign = deliveryMode === DeliveryMode.MERCHANT
+      ? null
+      : await this.applyCampaignPricing({
+          baseFeeCents,
+          zoneId,
+          providerId: branch.providerId,
+        });
+    const appliedFeeCents = campaign?.appliedFeeCents ?? baseFeeCents;
+    shippingFeeCents = appliedFeeCents;
 
     const etaMinutes = route?.durationMinutes ?? this.estimateEtaMinutes(distanceKm) ?? undefined;
     const estimatedDeliveryTime = this.formatEta(etaMinutes) ?? settings.estimatedDeliveryTime ?? null;
@@ -533,7 +620,41 @@ export class SettingsService {
       maxDeliveryFeeCents: maxFee,
       etaMinutes: etaMinutes ?? undefined,
       estimatedDeliveryTime,
+      deliveryPricing: {
+        baseFeeCents,
+        appliedFeeCents,
+        campaignId: campaign?.campaignId ?? null,
+        campaignName: campaign?.campaignName ?? null,
+      },
     };
+  }
+
+  private async applyCampaignPricing(params: {
+    baseFeeCents: number;
+    zoneId?: string | null;
+    providerId?: string | null;
+  }) {
+    if (!params.zoneId || !params.providerId) {
+      return { appliedFeeCents: params.baseFeeCents, campaignId: null, campaignName: null };
+    }
+    const campaign = await this.campaigns.findActiveCampaign({
+      zoneId: params.zoneId,
+      providerId: params.providerId,
+    });
+    if (!campaign) {
+      return { appliedFeeCents: params.baseFeeCents, campaignId: null, campaignName: null };
+    }
+    const appliedFeeCents = this.toNonNegativeInt(campaign.deliveryPriceCents);
+    this.logger.debug({
+      msg: 'Delivery campaign applied',
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      zoneId: params.zoneId,
+      providerId: params.providerId,
+      baseFeeCents: params.baseFeeCents,
+      appliedFeeCents,
+    });
+    return { appliedFeeCents, campaignId: campaign.id, campaignName: campaign.name };
   }
 
   async getLoyaltyConfig(): Promise<LoyaltyConfig> {
