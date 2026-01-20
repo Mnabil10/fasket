@@ -660,29 +660,23 @@ export class CartService {
         let shippingFeeCents = 0;
         let distanceKm: number | null = null;
         let ratePerKmCents: number | null = null;
-        let deliveryRequiresLocation = false;
         let deliveryUnavailable = false;
         const deliveryMode = branch?.deliveryMode ?? undefined;
 
-        const hasLocation = addressLat !== null && addressLng !== null;
-        if (!distancePricingEnabled || hasLocation) {
-          try {
-            const quote = await this.settings.computeBranchDeliveryQuote({
-              branchId,
-              addressLat: hasLocation ? addressLat : null,
-              addressLng: hasLocation ? addressLng : null,
-              zoneId: effectiveAddress?.zoneId ?? null,
-              subtotalCents,
-            });
-            shippingFeeCents = quote.shippingFeeCents;
-            distanceKm = distancePricingEnabled ? quote.distanceKm : null;
-            ratePerKmCents = distancePricingEnabled ? quote.ratePerKmCents : null;
-          } catch {
-            deliveryUnavailable = true;
-            shippingFeeCents = 0;
-          }
-        } else {
-          deliveryRequiresLocation = true;
+        try {
+          const quote = await this.settings.computeBranchDeliveryQuote({
+            branchId,
+            addressLat,
+            addressLng,
+            zoneId: effectiveAddress?.zoneId ?? null,
+            subtotalCents,
+          });
+          shippingFeeCents = quote.shippingFeeCents;
+          distanceKm = distancePricingEnabled ? quote.distanceKm : null;
+          ratePerKmCents = distancePricingEnabled ? quote.ratePerKmCents : null;
+        } catch {
+          deliveryUnavailable = true;
+          shippingFeeCents = 0;
         }
 
         return {
@@ -696,7 +690,7 @@ export class CartService {
           distanceKm,
           ratePerKmCents,
           deliveryMode,
-          deliveryRequiresLocation: distancePricingEnabled ? deliveryRequiresLocation : false,
+          deliveryRequiresLocation: false,
           deliveryUnavailable,
         };
       }),
@@ -753,7 +747,7 @@ export class CartService {
         etaText: null,
         feeMessageEn: null,
         feeMessageAr: null,
-        requiresLocation: distancePricingEnabled && (addressLat === null || addressLng === null),
+        requiresLocation: false,
       },
     };
   }

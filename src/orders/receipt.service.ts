@@ -39,7 +39,7 @@ export class ReceiptService {
                 priceSnapshotCents: true,
                 qty: true,
                 options: true,
-                product: { select: { nameAr: true } },
+                product: { select: { nameAr: true, pricingModel: true } },
               },
               orderBy: { id: 'asc' },
             },
@@ -79,7 +79,7 @@ export class ReceiptService {
                 priceSnapshotCents: true,
                 qty: true,
                 options: true,
-                product: { select: { nameAr: true } },
+                product: { select: { nameAr: true, pricingModel: true } },
               },
               orderBy: { id: 'asc' },
             },
@@ -114,6 +114,7 @@ export class ReceiptService {
         qty: option.qty,
       })),
     }));
+    const hasWeightBasedItems = order.items.some((item: any) => item.product?.pricingModel === 'weight');
     const resolvedZoneName = this.settings.resolveZoneName(zone, order.deliveryZoneName ?? undefined);
     const deliveryZone = zone
       ? {
@@ -180,6 +181,7 @@ export class ReceiptService {
       deliveryZone,
       driver,
       items,
+      hasWeightBasedItems,
       subtotalCents: order.subtotalCents,
       couponDiscountCents: order.couponDiscountCents ?? order.discountCents ?? 0,
       loyaltyDiscountCents: order.loyaltyDiscountCents ?? 0,

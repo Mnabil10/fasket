@@ -429,6 +429,8 @@ export class SettingsService {
         ? Math.max(0, Math.floor(params.subtotalCents))
         : null;
     const zoneId = params.zoneId ?? null;
+    const hasLocation = Number.isFinite(params.addressLat) && Number.isFinite(params.addressLng);
+    const useDistancePricing = this.distancePricingEnabled && hasLocation;
     if (zoneId) {
       const zone = await this.getZoneById(zoneId);
       if (!zone) {
@@ -486,7 +488,7 @@ export class SettingsService {
       }
     }
 
-    if (!this.distancePricingEnabled) {
+    if (!useDistancePricing) {
       if (zoneId && subtotalCents !== null) {
         const quote = await this.computeDeliveryQuote({
           subtotalCents,
@@ -562,9 +564,6 @@ export class SettingsService {
       };
     }
 
-    if (!Number.isFinite(params.addressLat) || !Number.isFinite(params.addressLng)) {
-      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is missing');
-    }
     if (branch.lat === null || branch.lat === undefined || branch.lng === null || branch.lng === undefined) {
       throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Branch location is missing');
     }

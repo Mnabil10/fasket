@@ -51,6 +51,7 @@ export class OrderReceiptDto {
       qty: number;
     }[];
   }[];
+  hasWeightBasedItems!: boolean;
   scheduledAt?: Date | null;
   deliveryWindow?: {
     id: string;

@@ -534,6 +534,7 @@ export class OrdersService {
       walletProvider: savedPaymentMethod?.walletProvider ?? null,
     });
     const automationEvents: AutomationEventRef[] = [];
+    const distancePricingEnabled = this.settings.isDistancePricingEnabled();
 
     if (idempotencyKey) {
       const existingGroup = await this.prisma.orderGroup.findFirst({
@@ -582,17 +583,6 @@ export class OrdersService {
         if (!address) {
           throw new DomainError(ErrorCode.ADDRESS_NOT_FOUND, 'Invalid address');
         }
-        const distancePricingEnabled = this.settings.isDistancePricingEnabled();
-        if (
-          distancePricingEnabled &&
-          (address.lat === null ||
-            address.lat === undefined ||
-            address.lng === null ||
-            address.lng === undefined)
-        ) {
-          throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is required');
-        }
-
         const explicitBranchIds = Array.from(
           new Set(cart.items.map((item) => item.branchId).filter(Boolean) as string[]),
         );
@@ -1257,12 +1247,6 @@ export class OrdersService {
       (payload.splitFailurePolicy ?? OrderSplitFailurePolicyDto.PARTIAL) as OrderSplitFailurePolicy;
     const address = payload.address as GuestAddressInput;
     const distancePricingEnabled = this.settings.isDistancePricingEnabled();
-    if (
-      distancePricingEnabled &&
-      (!Number.isFinite(address.lat) || !Number.isFinite(address.lng))
-    ) {
-      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is required');
-    }
 
     return this.prisma.$transaction(async (tx) => {
       const { grouped, branchErrors } = await this.resolveGuestItems(tx, payload.items, splitPolicy);
@@ -1426,13 +1410,6 @@ export class OrdersService {
         'Guest checkout currently supports cash on delivery only',
       );
     }
-    if (
-      distancePricingEnabled &&
-      (!Number.isFinite(address.lat) || !Number.isFinite(address.lng))
-    ) {
-      throw new DomainError(ErrorCode.VALIDATION_FAILED, 'Address location is required');
-    }
-
     if (idempotencyKey) {
       const existingGroup = await this.prisma.orderGroup.findFirst({
         where: { idempotencyKey, userId: null, guestPhone },
