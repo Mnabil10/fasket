@@ -557,7 +557,7 @@ export class OrdersService {
         }
         const couponCode = payload.couponCode ?? cart.couponCode ?? undefined;
 
-        const productIds = cart.items.map((item) => item.productId);
+        const productIds = Array.from(new Set(cart.items.map((item) => item.productId)));
         const products = await tx.product.findMany({
           where: { id: { in: productIds }, status: ProductStatus.ACTIVE, deletedAt: null },
           select: {
