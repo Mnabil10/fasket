@@ -17,6 +17,7 @@ import { WhatsappQueueJob, WhatsappProvider } from './whatsapp.types';
 export class WhatsappService {
   private readonly logger = new Logger(WhatsappService.name);
   private readonly provider: WhatsappProvider;
+  private readonly providerLabel: 'META' | 'MOCK';
   private readonly defaultLanguage: WhatsappTemplateLanguage;
   private readonly enabled: boolean;
 
@@ -26,6 +27,7 @@ export class WhatsappService {
     @InjectQueue('whatsapp.send') @Optional() private readonly queue?: Queue<WhatsappQueueJob>,
   ) {
     this.provider = this.resolveProvider(this.config.get<string>('WHATSAPP_PROVIDER'));
+    this.providerLabel = this.provider === 'mock' ? 'MOCK' : 'META';
     this.defaultLanguage = normalizeWhatsappLanguage(this.config.get<string>('WHATSAPP_DEFAULT_LANGUAGE'));
     this.enabled = (this.config.get<string>('WHATSAPP_ENABLED') ?? 'true') !== 'false';
   }
@@ -38,17 +40,19 @@ export class WhatsappService {
     supportConversationId?: string;
     supportMessageId?: string;
     metadata?: Record<string, unknown>;
+    sendAt?: string | Date | null;
   }) {
     const toPhone = normalizePhoneToE164(params.to);
     const language = normalizeWhatsappLanguage(params.language ?? this.defaultLanguage);
     const templateName = String(params.template).trim();
     const templatePayload = buildWhatsappTemplatePayloadDynamic(templateName, language, params.variables);
     const redactedVariables = this.redactTemplateVariables(params.template, params.variables);
+    const sendAt = this.normalizeSendAt(params.sendAt);
     if (!this.enabled) {
       this.logger.warn({ msg: 'WhatsApp disabled; skipping template', template: templatePayload.name, to: toPhone });
       return this.prisma.whatsAppMessageLog.create({
         data: {
-          provider: this.provider === 'meta' ? 'META' : 'MOCK',
+          provider: this.providerLabel,
           direction: 'OUTBOUND',
           type: 'TEMPLATE',
           status: 'FAILED',
@@ -61,7 +65,7 @@ export class WhatsappService {
               language: templatePayload.language,
               variables: redactedVariables,
             },
-            metadata: params.metadata ?? null,
+            metadata: { ...(params.metadata ?? {}), ...(sendAt ? { sendAt } : {}) },
           } as Prisma.InputJsonValue,
           supportConversationId: params.supportConversationId ?? null,
           supportMessageId: params.supportMessageId ?? null,
@@ -71,7 +75,7 @@ export class WhatsappService {
     }
     const log = await this.prisma.whatsAppMessageLog.create({
       data: {
-        provider: this.provider === 'meta' ? 'META' : 'MOCK',
+        provider: this.providerLabel,
         direction: 'OUTBOUND',
         type: 'TEMPLATE',
         status: 'QUEUED',
@@ -84,7 +88,7 @@ export class WhatsappService {
             language: templatePayload.language,
             variables: redactedVariables,
           },
-          metadata: params.metadata ?? null,
+          metadata: { ...(params.metadata ?? {}), ...(sendAt ? { sendAt } : {}) },
         } as Prisma.InputJsonValue,
         supportConversationId: params.supportConversationId ?? null,
         supportMessageId: params.supportMessageId ?? null,
@@ -96,9 +100,14 @@ export class WhatsappService {
       logId: log.id,
       to: toPhone,
       template: templatePayload,
+      sendAt,
     });
 
     return log;
+  }
+
+  isMessageProProvider() {
+    return this.provider === 'message-pro';
   }
 
   async sendText(params: {
@@ -107,20 +116,22 @@ export class WhatsappService {
     supportConversationId?: string;
     supportMessageId?: string;
     metadata?: Record<string, unknown>;
+    sendAt?: string | Date | null;
   }) {
     const toPhone = normalizePhoneToE164(params.to);
     const body = String(params.body ?? '').trim();
+    const sendAt = this.normalizeSendAt(params.sendAt);
     if (!this.enabled) {
       this.logger.warn({ msg: 'WhatsApp disabled; skipping text', to: toPhone });
       return this.prisma.whatsAppMessageLog.create({
         data: {
-          provider: this.provider === 'meta' ? 'META' : 'MOCK',
+          provider: this.providerLabel,
           direction: 'OUTBOUND',
           type: 'TEXT',
           status: 'FAILED',
           toPhone,
           body,
-          payload: { text: body, metadata: params.metadata ?? null } as Prisma.InputJsonValue,
+          payload: { text: body, metadata: { ...(params.metadata ?? {}), ...(sendAt ? { sendAt } : {}) } } as Prisma.InputJsonValue,
           supportConversationId: params.supportConversationId ?? null,
           supportMessageId: params.supportMessageId ?? null,
           errorMessage: 'disabled',
@@ -129,13 +140,13 @@ export class WhatsappService {
     }
     const log = await this.prisma.whatsAppMessageLog.create({
       data: {
-        provider: this.provider === 'meta' ? 'META' : 'MOCK',
+        provider: this.providerLabel,
         direction: 'OUTBOUND',
         type: 'TEXT',
         status: 'QUEUED',
         toPhone,
         body,
-        payload: { text: body, metadata: params.metadata ?? null } as Prisma.InputJsonValue,
+        payload: { text: body, metadata: { ...(params.metadata ?? {}), ...(sendAt ? { sendAt } : {}) } } as Prisma.InputJsonValue,
         supportConversationId: params.supportConversationId ?? null,
         supportMessageId: params.supportMessageId ?? null,
       },
@@ -146,6 +157,7 @@ export class WhatsappService {
       logId: log.id,
       to: toPhone,
       text: body,
+      sendAt,
     });
 
     return log;
@@ -158,19 +170,24 @@ export class WhatsappService {
     supportConversationId?: string;
     supportMessageId?: string;
     metadata?: Record<string, unknown>;
+    sendAt?: string | Date | null;
   }) {
     const toPhone = normalizePhoneToE164(params.to);
+    const sendAt = this.normalizeSendAt(params.sendAt);
     if (!this.enabled) {
       this.logger.warn({ msg: 'WhatsApp disabled; skipping document', to: toPhone });
       return this.prisma.whatsAppMessageLog.create({
         data: {
-          provider: this.provider === 'meta' ? 'META' : 'MOCK',
+          provider: this.providerLabel,
           direction: 'OUTBOUND',
           type: 'DOCUMENT',
           status: 'FAILED',
           toPhone,
           mediaUrl: params.link,
-          payload: { document: { link: params.link, filename: params.filename }, metadata: params.metadata ?? null } as Prisma.InputJsonValue,
+          payload: {
+            document: { link: params.link, filename: params.filename },
+            metadata: { ...(params.metadata ?? {}), ...(sendAt ? { sendAt } : {}) },
+          } as Prisma.InputJsonValue,
           supportConversationId: params.supportConversationId ?? null,
           supportMessageId: params.supportMessageId ?? null,
           errorMessage: 'disabled',
@@ -179,13 +196,16 @@ export class WhatsappService {
     }
     const log = await this.prisma.whatsAppMessageLog.create({
       data: {
-        provider: this.provider === 'meta' ? 'META' : 'MOCK',
+        provider: this.providerLabel,
         direction: 'OUTBOUND',
         type: 'DOCUMENT',
         status: 'QUEUED',
         toPhone,
         mediaUrl: params.link,
-        payload: { document: { link: params.link, filename: params.filename }, metadata: params.metadata ?? null } as Prisma.InputJsonValue,
+        payload: {
+          document: { link: params.link, filename: params.filename },
+          metadata: { ...(params.metadata ?? {}), ...(sendAt ? { sendAt } : {}) },
+        } as Prisma.InputJsonValue,
         supportConversationId: params.supportConversationId ?? null,
         supportMessageId: params.supportMessageId ?? null,
       },
@@ -196,6 +216,7 @@ export class WhatsappService {
       logId: log.id,
       to: toPhone,
       document: { link: params.link, filename: params.filename },
+      sendAt,
     });
 
     return log;
@@ -204,7 +225,11 @@ export class WhatsappService {
   private resolveProvider(raw?: string): WhatsappProvider {
     if (!raw) return 'mock';
     const normalized = raw.toLowerCase();
-    return normalized === 'meta' ? 'meta' : 'mock';
+    if (normalized === 'meta') return 'meta';
+    if (normalized === 'message-pro' || normalized === 'messagepro' || normalized === 'message_pro') {
+      return 'message-pro';
+    }
+    return 'mock';
   }
 
   private redactTemplateVariables(
@@ -231,12 +256,14 @@ export class WhatsappService {
       });
       return;
     }
+    const delay = this.resolveDelay(job.sendAt);
     try {
       await this.queue.add(job.type, job, {
         attempts: 3,
         backoff: { type: 'exponential', delay: 2000 },
         removeOnComplete: 50,
         removeOnFail: 25,
+        ...(delay ? { delay } : {}),
       });
     } catch (err) {
       const message = (err as Error).message;
@@ -246,5 +273,22 @@ export class WhatsappService {
         data: { status: 'FAILED', errorMessage: message },
       });
     }
+  }
+
+  private normalizeSendAt(value?: string | Date | null) {
+    if (!value) return undefined;
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return undefined;
+    if (date.getTime() <= Date.now()) return undefined;
+    return date.toISOString();
+  }
+
+  private resolveDelay(sendAt?: string) {
+    if (!sendAt) return undefined;
+    if (this.provider === 'message-pro') return undefined;
+    const date = new Date(sendAt);
+    if (Number.isNaN(date.getTime())) return undefined;
+    const delay = date.getTime() - Date.now();
+    return delay > 0 ? delay : undefined;
   }
 }

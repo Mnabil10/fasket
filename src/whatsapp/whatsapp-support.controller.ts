@@ -8,6 +8,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CurrentUserPayload } from '../common/types/current-user.type';
 import { ErrorCode } from '../common/errors';
 import { PrismaService } from '../prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
 import { WhatsappService } from './whatsapp.service';
 import { WhatsappSupportService } from './whatsapp-support.service';
 import { maskPhone, redactSensitiveText } from './utils/redaction.util';
@@ -74,11 +75,21 @@ class SupportConversationUpdateDto {
 @StaffOrAdmin()
 @Controller({ path: 'admin/support/whatsapp', version: ['1'] })
 export class WhatsappSupportController {
+  private readonly allowFreeformOutsideWindow: boolean;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly support: WhatsappSupportService,
     private readonly whatsapp: WhatsappService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    const provider = (this.config.get<string>('WHATSAPP_PROVIDER') || 'mock').toLowerCase();
+    const defaultAllow =
+      provider === 'message-pro' || provider === 'messagepro' || provider === 'message_pro';
+    const override = (this.config.get<string>('WHATSAPP_SUPPORT_FREEFORM_ALWAYS') || '').toLowerCase();
+    this.allowFreeformOutsideWindow =
+      override === 'true' ? true : override === 'false' ? false : defaultAllow;
+  }
 
   @Get('conversations')
   async listConversations(@Query() query: SupportConversationsQueryDto, @CurrentUser() user: CurrentUserPayload) {
@@ -113,7 +124,12 @@ export class WhatsappSupportController {
       const freeformUntil = lastInboundAt
         ? new Date(lastInboundAt.getTime() + 24 * 60 * 60 * 1000)
         : null;
-      const canReplyFreeform = freeformUntil ? Date.now() < freeformUntil.getTime() : false;
+      const resolvedFreeformUntil = this.allowFreeformOutsideWindow ? null : freeformUntil;
+      const canReplyFreeform = this.allowFreeformOutsideWindow
+        ? true
+        : resolvedFreeformUntil
+          ? Date.now() < resolvedFreeformUntil.getTime()
+          : false;
       const metadata =
         conversation.metadata && typeof conversation.metadata === 'object'
           ? (conversation.metadata as Record<string, unknown>)
@@ -143,12 +159,13 @@ export class WhatsappSupportController {
         lastMessagePreview: redactSensitiveText(conversation.lastMessagePreview ?? ''),
         lastMessageAt: conversation.lastMessageAt ? conversation.lastMessageAt.toISOString() : null,
         status: conversation.status === 'RESOLVED' ? 'CLOSED' : 'OPEN',
-        freeformUntil: freeformUntil ? freeformUntil.toISOString() : null,
+        freeformUntil: resolvedFreeformUntil ? resolvedFreeformUntil.toISOString() : null,
         canReplyFreeform,
         metadata: {
           ...metadata,
-          freeformUntil: freeformUntil ? freeformUntil.toISOString() : null,
+          freeformUntil: resolvedFreeformUntil ? resolvedFreeformUntil.toISOString() : null,
           canReply: canReplyFreeform,
+          allowFreeformOutsideWindow: this.allowFreeformOutsideWindow || undefined,
         },
       };
     });
@@ -226,19 +243,21 @@ export class WhatsappSupportController {
       if (!body) {
         throw new BadRequestException('Message body is required');
       }
-      const lastInbound = await this.prisma.supportMessage.findFirst({
-        where: { conversationId: conversation.id, direction: 'INBOUND' },
-        orderBy: { createdAt: 'desc' },
-      });
-      const freeformUntil = lastInbound
-        ? new Date(lastInbound.createdAt.getTime() + 24 * 60 * 60 * 1000)
-        : null;
-      if (!freeformUntil || Date.now() > freeformUntil.getTime()) {
-        throw new BadRequestException({
-          code: ErrorCode.FREEFORM_WINDOW_EXPIRED,
-          message: 'Freeform window expired. Use a template.',
-          details: { freeformUntil: freeformUntil ? freeformUntil.toISOString() : null },
+      if (!this.allowFreeformOutsideWindow) {
+        const lastInbound = await this.prisma.supportMessage.findFirst({
+          where: { conversationId: conversation.id, direction: 'INBOUND' },
+          orderBy: { createdAt: 'desc' },
         });
+        const freeformUntil = lastInbound
+          ? new Date(lastInbound.createdAt.getTime() + 24 * 60 * 60 * 1000)
+          : null;
+        if (!freeformUntil || Date.now() > freeformUntil.getTime()) {
+          throw new BadRequestException({
+            code: ErrorCode.FREEFORM_WINDOW_EXPIRED,
+            message: 'Freeform window expired. Use a template.',
+            details: { freeformUntil: freeformUntil ? freeformUntil.toISOString() : null },
+          });
+        }
       }
       const message = await this.support.recordOutboundMessage({
         conversationId: conversation.id,

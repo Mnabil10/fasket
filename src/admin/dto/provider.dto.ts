@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, IntersectionType, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsEnum, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 import { cleanNullableString, cleanString } from '../../common/utils/sanitize.util';
 import { normalizePhoneToE164OrNull } from '../../common/utils/phone.util';
 import { PaginationDto } from './pagination.dto';
@@ -89,6 +89,25 @@ export class CreateProviderDto {
   @IsString()
   @Matches(/^\+[1-9]\d{7,14}$/)
   contactPhone?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => normalizePhoneToE164OrNull(cleanNullableString(value)))
+  @IsOptional()
+  @IsString()
+  @Matches(/^\+[1-9]\d{7,14}$/)
+  whatsappPhonePrimary?: string;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }) => normalizePhoneToE164OrNull(cleanNullableString(value)))
+  @IsOptional()
+  @IsString()
+  @Matches(/^\+[1-9]\d{7,14}$/)
+  whatsappPhoneSecondary?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  whatsappUseSecondary?: boolean;
 
   @ApiPropertyOptional()
   @Transform(({ value }) => cleanNullableString(value))

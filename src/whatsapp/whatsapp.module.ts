@@ -10,9 +10,13 @@ import { WhatsappWebhookController } from './webhook/whatsapp-webhook.controller
 import { WhatsappWebhookService } from './webhook/whatsapp-webhook.service';
 import { MetaCloudClient } from './clients/meta-cloud.client';
 import { MockWhatsappClient } from './clients/mock.client';
+import { MessageProClient } from './clients/message-pro.client';
 import { WhatsappSupportService } from './whatsapp-support.service';
 import { WhatsappSupportController } from './whatsapp-support.controller';
 import { WhatsappLogsController } from './whatsapp-logs.controller';
+import { WhatsappInstanceController } from './whatsapp-instance.controller';
+import { WhatsappBroadcastController } from './whatsapp-broadcast.controller';
+import { WhatsappBroadcastService } from './whatsapp-broadcast.service';
 import { AutomationSupportModule } from '../automation-support/automation-support.module';
 import { WhatsappQueueJob } from './whatsapp.types';
 
@@ -55,11 +59,19 @@ const queueProviders = redisEnabled
     WhatsappService,
     WhatsappWebhookService,
     WhatsappSupportService,
+    WhatsappBroadcastService,
     MetaCloudClient,
     MockWhatsappClient,
+    MessageProClient,
     ...queueProviders,
   ],
-  controllers: [WhatsappWebhookController, WhatsappSupportController, WhatsappLogsController],
+  controllers: [
+    WhatsappWebhookController,
+    WhatsappSupportController,
+    WhatsappLogsController,
+    WhatsappInstanceController,
+    WhatsappBroadcastController,
+  ],
   exports: [WhatsappService, WhatsappSupportService],
 })
 export class WhatsappModule {}

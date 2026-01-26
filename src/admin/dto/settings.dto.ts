@@ -293,6 +293,75 @@ export class AdminAlertsDto {
   systemUpdates?: { enabled?: boolean };
 }
 
+export class WhatsappOrderStatusMessagesDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  pending?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  confirmed?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  preparing?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  outForDelivery?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  delivered?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  deliveryFailed?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  canceled?: string;
+}
+
+export class WhatsappReviewMessageDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  delayMinutes?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  text?: string;
+}
+
+export class WhatsappSettingsDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WhatsappOrderStatusMessagesDto)
+  orderStatusMessages?: WhatsappOrderStatusMessagesDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WhatsappReviewMessageDto)
+  reviewMessage?: WhatsappReviewMessageDto;
+}
+
 export class NotificationsDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -311,6 +380,12 @@ export class NotificationsDto {
   @ValidateNested()
   @Type(() => AdminAlertsDto)
   adminAlerts?: AdminAlertsDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WhatsappSettingsDto)
+  whatsapp?: WhatsappSettingsDto;
 }
 
 export class GeneralSettingsDto {

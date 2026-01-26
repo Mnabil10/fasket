@@ -1,0 +1,3 @@
+ALTER TABLE "Provider" ADD COLUMN IF NOT EXISTS "whatsappPhonePrimary" TEXT;
+ALTER TABLE "Provider" ADD COLUMN IF NOT EXISTS "whatsappPhoneSecondary" TEXT;
+ALTER TABLE "Provider" ADD COLUMN IF NOT EXISTS "whatsappUseSecondary" BOOLEAN NOT NULL DEFAULT FALSE;

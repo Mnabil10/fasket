@@ -18,7 +18,7 @@ export class MetaCloudClient {
     this.accessToken = this.config.get<string>('WHATSAPP_ACCESS_TOKEN') || undefined;
   }
 
-  async sendTemplate(to: string, template: WhatsappTemplatePayload): Promise<WhatsappSendResult> {
+  async sendTemplate(to: string, template: WhatsappTemplatePayload, _sendAt?: string): Promise<WhatsappSendResult> {
     const recipient = toWhatsappRecipient(to);
     const payload = {
       messaging_product: 'whatsapp',
@@ -33,7 +33,7 @@ export class MetaCloudClient {
     return this.post(payload);
   }
 
-  async sendText(to: string, body: string): Promise<WhatsappSendResult> {
+  async sendText(to: string, body: string, _sendAt?: string): Promise<WhatsappSendResult> {
     const recipient = toWhatsappRecipient(to);
     const payload = {
       messaging_product: 'whatsapp',
@@ -44,7 +44,7 @@ export class MetaCloudClient {
     return this.post(payload);
   }
 
-  async sendDocument(to: string, document: WhatsappDocumentPayload): Promise<WhatsappSendResult> {
+  async sendDocument(to: string, document: WhatsappDocumentPayload, _sendAt?: string): Promise<WhatsappSendResult> {
     const recipient = toWhatsappRecipient(to);
     const payload = {
       messaging_product: 'whatsapp',

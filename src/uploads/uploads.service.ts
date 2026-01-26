@@ -315,6 +315,19 @@ export class UploadsService {
     return this.processImageAsset(file, { folder: 'misc', generateVariants: false });
   }
 
+  async uploadGeneratedImage(params: {
+    buffer: Buffer;
+    filename: string;
+    contentType?: string;
+    folder?: string;
+  }) {
+    this.resetDriver();
+    const contentType = params.contentType ?? 'image/png';
+    this.validateMime(contentType);
+    const key = this.buildKey(params.filename, params.folder ?? 'misc');
+    return this.storeBuffer(key, params.buffer, contentType);
+  }
+
   async processProductImage(file: Express.Multer.File, existing?: string[]) {
     return this.processImageAsset(file, { folder: 'products', generateVariants: true, existing });
   }

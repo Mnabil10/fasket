@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
-import { DeliveryDriver, NotificationStatus, OrderStatus, Prisma, UserRole } from '@prisma/client';
+import { DeliveryDriver, NotificationStatus, OrderStatus, Prisma, Setting, UserRole } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
@@ -427,11 +427,12 @@ export class NotificationsService {
     });
   }
 
-  async sendWhatsappText(params: { to: string; body: string; metadata?: Record<string, any> }) {
+  async sendWhatsappText(params: { to: string; body: string; metadata?: Record<string, any>; sendAt?: string | Date | null }) {
     return this.whatsapp.sendText({
       to: params.to,
       body: params.body,
       metadata: params.metadata,
+      sendAt: params.sendAt,
     });
   }
 
@@ -512,7 +513,8 @@ export class NotificationsService {
       const settings = await this.settings.getSettings();
       const lang = this.resolveWhatsappLanguage(settings.language);
       await this.sendCustomerOrderStatusWhatsapp(context, lang, settings);
-      await this.sendProviderNewOrderWhatsapp(context, lang, settings);
+      const providerLang: WhatsappTemplateLanguage = this.whatsapp.isMessageProProvider() ? 'ar' : lang;
+      await this.sendProviderNewOrderWhatsapp(context, providerLang, settings);
     } catch (err) {
       this.logger.warn({ msg: 'WhatsApp order created notification failed', orderId, error: (err as Error)?.message });
     }
@@ -537,7 +539,8 @@ export class NotificationsService {
       const settings = await this.settings.getSettings();
       const lang = this.resolveWhatsappLanguage(settings.language);
       await this.sendCustomerOrderStatusWhatsapp(context, lang, settings);
-      await this.sendProviderOrderCancelledWhatsapp(context, lang, reason ?? undefined);
+      const providerLang: WhatsappTemplateLanguage = this.whatsapp.isMessageProProvider() ? 'ar' : lang;
+      await this.sendProviderOrderCancelledWhatsapp(context, providerLang, reason ?? undefined);
     } catch (err) {
       this.logger.warn({ msg: 'WhatsApp order cancel notification failed', orderId, error: (err as Error)?.message });
     }
@@ -574,7 +577,7 @@ export class NotificationsService {
       user: { phone: string } | null;
     },
     lang: WhatsappTemplateLanguage,
-    settings: { contactPhone?: string | null },
+    settings: Setting,
   ) {
     const phone = order.user?.phone ?? order.guestPhone;
     if (!phone) return;
@@ -586,20 +589,42 @@ export class NotificationsService {
       },
     });
     if (existing) return;
-    const eta = this.localizeEta(lang, order.deliveryEtaMinutes ?? undefined) || order.estimatedDeliveryTime || '';
-    const supportHint = this.buildSupportHint(settings, lang);
+    const effectiveLang: WhatsappTemplateLanguage = this.whatsapp.isMessageProProvider() ? 'ar' : lang;
+    const eta = this.localizeEta(effectiveLang, order.deliveryEtaMinutes ?? undefined) || order.estimatedDeliveryTime || '';
+    const supportHint = this.buildSupportHint(settings, effectiveLang);
+    const variables = {
+      order_no: order.code ?? order.id,
+      status: this.localizeOrderStatus(order.status, effectiveLang),
+      eta,
+      support_hint: supportHint,
+    };
+
+    if (this.whatsapp.isMessageProProvider()) {
+      const template = this.resolveWhatsappOrderStatusMessage(settings, order.status);
+      if (template) {
+        const body = this.renderTemplate(template, variables);
+        await this.sendWhatsappText({
+          to: phone,
+          body,
+          metadata: { orderId: order.id, status: order.status, idempotencyKey },
+        });
+        if (order.status === OrderStatus.DELIVERED) {
+          await this.scheduleOrderReviewMessage({ order, phone, settings });
+        }
+        return;
+      }
+    }
+
     await this.sendWhatsappTemplate({
       to: phone,
       template: 'order_status_update_v1',
-      language: lang,
-      variables: {
-        order_no: order.code ?? order.id,
-        status: this.localizeOrderStatus(order.status, lang),
-        eta,
-        support_hint: supportHint,
-      },
+      language: effectiveLang,
+      variables,
       metadata: { orderId: order.id, status: order.status, idempotencyKey },
     });
+    if (order.status === OrderStatus.DELIVERED) {
+      await this.scheduleOrderReviewMessage({ order, phone, settings });
+    }
   }
 
   private async sendProviderNewOrderWhatsapp(
@@ -613,7 +638,7 @@ export class NotificationsService {
       items: Array<{ qty: number }>;
     },
     lang: WhatsappTemplateLanguage,
-    settings: { currency?: string | null },
+    settings: Setting,
   ) {
     if (!order.providerId) return;
     const enabled = await this.isProviderWhatsappEnabled(order.providerId, 'newOrders');
@@ -701,14 +726,130 @@ export class NotificationsService {
       : 'Reply HELP for support';
   }
 
-  private async resolveProviderWhatsappPhone(providerId: string, fallback?: string | null) {
-    if (fallback) return fallback;
+  async resolveProviderWhatsappPhone(providerId: string, fallback?: string | null) {
+    const provider = await this.prisma.provider.findUnique({
+      where: { id: providerId },
+      select: { contactPhone: true, whatsappPhonePrimary: true, whatsappPhoneSecondary: true, whatsappUseSecondary: true },
+    });
+    const primary = provider?.whatsappPhonePrimary ?? provider?.contactPhone ?? fallback ?? null;
+    const secondary = provider?.whatsappPhoneSecondary ?? null;
+    if (provider?.whatsappUseSecondary && secondary) return secondary;
+    if (primary) return primary;
+    if (secondary) return secondary;
     const owner = await this.prisma.providerUser.findFirst({
       where: { providerId, role: { in: ['OWNER', 'MANAGER'] } },
       orderBy: { createdAt: 'asc' },
       select: { user: { select: { phone: true } } },
     });
     return owner?.user?.phone ?? null;
+  }
+
+  private resolveWhatsappOrderStatusMessage(settings: Setting, status: OrderStatus) {
+    const defaults = this.defaultWhatsappOrderStatusMessages();
+    const whatsapp = this.extractWhatsappSettings(settings);
+    const messages = this.normalizeWhatsappMap(whatsapp.orderStatusMessages);
+    const key = this.mapOrderStatusToMessageKey(status);
+    const custom = key ? messages[key] : undefined;
+    if (custom && custom.trim()) return custom.trim();
+    return key ? defaults[key] : '';
+  }
+
+  private resolveWhatsappReviewMessage(settings: Setting) {
+    const defaults = this.defaultWhatsappReviewMessage();
+    const whatsapp = this.extractWhatsappSettings(settings);
+    const review = whatsapp.reviewMessage && typeof whatsapp.reviewMessage === 'object' ? whatsapp.reviewMessage : {};
+    const enabled = typeof review.enabled === 'boolean' ? review.enabled : defaults.enabled;
+    const delayRaw = Number((review as any).delayMinutes);
+    const delayMinutes = Number.isFinite(delayRaw) && delayRaw >= 0 ? delayRaw : defaults.delayMinutes;
+    const text = typeof review.text === 'string' && review.text.trim() ? review.text.trim() : defaults.text;
+    return { enabled, delayMinutes, text };
+  }
+
+  private async scheduleOrderReviewMessage(params: {
+    order: { id: string; code: string | null; status: OrderStatus };
+    phone: string;
+    settings: Setting;
+  }) {
+    if (!this.whatsapp.isMessageProProvider()) return;
+    const review = this.resolveWhatsappReviewMessage(params.settings);
+    if (!review.enabled || !review.text) return;
+    const idempotencyKey = `order:${params.order.id}:review`;
+    const existing = await this.prisma.whatsAppMessageLog.findFirst({
+      where: {
+        direction: 'OUTBOUND',
+        payload: { path: ['metadata', 'idempotencyKey'], equals: idempotencyKey },
+      },
+    });
+    if (existing) return;
+    const delayMs = Math.max(0, review.delayMinutes * 60 * 1000);
+    const sendAt = delayMs ? new Date(Date.now() + delayMs) : undefined;
+    const supportHint = this.buildSupportHint(params.settings, 'ar');
+    const body = this.renderTemplate(review.text, {
+      order_no: params.order.code ?? params.order.id,
+      support_hint: supportHint,
+    });
+    await this.sendWhatsappText({
+      to: params.phone,
+      body,
+      sendAt,
+      metadata: { orderId: params.order.id, status: params.order.status, idempotencyKey, kind: 'order_review' },
+    });
+  }
+
+  private renderTemplate(tpl: string, ctx: Record<string, any>) {
+    return tpl.replace(/{{\s*(\w+)\s*}}/g, (_match, key: string) => {
+      const value = ctx[key];
+      return value === undefined || value === null ? '' : String(value);
+    });
+  }
+
+  private extractWhatsappSettings(settings: Setting): Record<string, any> {
+    const notifications = settings.notifications as Record<string, any> | null | undefined;
+    if (!notifications || typeof notifications !== 'object' || Array.isArray(notifications)) return {};
+    const whatsapp = notifications.whatsapp as Record<string, any> | null | undefined;
+    if (!whatsapp || typeof whatsapp !== 'object' || Array.isArray(whatsapp)) return {};
+    return whatsapp;
+  }
+
+  private normalizeWhatsappMap(input: unknown) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+    return input as Record<string, string | undefined>;
+  }
+
+  private mapOrderStatusToMessageKey(status: OrderStatus) {
+    const map: Record<OrderStatus, keyof ReturnType<typeof this.defaultWhatsappOrderStatusMessages>> = {
+      PENDING: 'pending',
+      CONFIRMED: 'confirmed',
+      PREPARING: 'preparing',
+      OUT_FOR_DELIVERY: 'outForDelivery',
+      DELIVERY_FAILED: 'deliveryFailed',
+      DELIVERED: 'delivered',
+      CANCELED: 'canceled',
+    };
+    return map[status];
+  }
+
+  private defaultWhatsappOrderStatusMessages() {
+    return {
+      pending: '\u062A\u0645 \u0627\u0633\u062A\u0644\u0627\u0645 \u0637\u0644\u0628\u0643 \u0631\u0642\u0645 {{order_no}} \u0648\u062C\u0627\u0631\u064A \u062A\u0623\u0643\u064A\u062F\u0647.',
+      confirmed: '\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0637\u0644\u0628\u0643 \u0631\u0642\u0645 {{order_no}}.',
+      preparing: '\u062C\u0627\u0631\u064A \u062A\u062C\u0647\u064A\u0632 \u0637\u0644\u0628\u0643 \u0631\u0642\u0645 {{order_no}}.',
+      outForDelivery: '\u0637\u0644\u0628\u0643 \u0631\u0642\u0645 {{order_no}} \u0641\u064A \u0627\u0644\u0637\u0631\u064A\u0642 \u0625\u0644\u064A\u0643. {{eta}}',
+      delivered: '\u062A\u0645 \u062A\u0633\u0644\u064A\u0645 \u0637\u0644\u0628\u0643 \u0631\u0642\u0645 {{order_no}}.',
+      deliveryFailed:
+        '\u062A\u0639\u0630\u0631 \u062A\u0648\u0635\u064A\u0644 \u0637\u0644\u0628\u0643 \u0631\u0642\u0645 {{order_no}}. {{support_hint}}',
+      canceled:
+        '\u062A\u0645 \u0625\u0644\u063A\u0627\u0621 \u0637\u0644\u0628\u0643 \u0631\u0642\u0645 {{order_no}}. {{support_hint}}',
+    };
+  }
+
+  private defaultWhatsappReviewMessage() {
+    return {
+      enabled: true,
+      delayMinutes: 3,
+      text:
+        '\u0628\u0639\u062F \u0627\u0633\u062A\u0644\u0627\u0645 \u0637\u0644\u0628\u0643 \u0631\u0642\u0645 {{order_no}}\u060c \u064A\u0647\u0645\u0646\u0627 \u0631\u0623\u064A\u0643. \u0645\u0645\u0643\u0646 \u062A\u0642\u064A\u0645 \u062A\u062C\u0631\u0628\u062A\u0643\u061F',
+    };
   }
 
   private async isProviderWhatsappEnabled(providerId: string, key: 'newOrders' | 'invoiceUpdates') {

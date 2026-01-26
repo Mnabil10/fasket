@@ -4,15 +4,15 @@ import { WhatsappDocumentPayload, WhatsappSendResult, WhatsappTemplatePayload } 
 
 @Injectable()
 export class MockWhatsappClient {
-  async sendTemplate(_to: string, _template: WhatsappTemplatePayload): Promise<WhatsappSendResult> {
+  async sendTemplate(_to: string, _template: WhatsappTemplatePayload, _sendAt?: string): Promise<WhatsappSendResult> {
     return { messageId: `mock-${randomUUID()}`, status: 'sent' };
   }
 
-  async sendText(_to: string, _body: string): Promise<WhatsappSendResult> {
+  async sendText(_to: string, _body: string, _sendAt?: string): Promise<WhatsappSendResult> {
     return { messageId: `mock-${randomUUID()}`, status: 'sent' };
   }
 
-  async sendDocument(_to: string, _document: WhatsappDocumentPayload): Promise<WhatsappSendResult> {
+  async sendDocument(_to: string, _document: WhatsappDocumentPayload, _sendAt?: string): Promise<WhatsappSendResult> {
     return { messageId: `mock-${randomUUID()}`, status: 'sent' };
   }
 }

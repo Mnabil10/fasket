@@ -90,7 +90,9 @@ export class WhatsappWebhookService {
     private readonly automationSupport: AutomationSupportService,
   ) {
     this.webhookSecret = this.config.get<string>('WHATSAPP_WEBHOOK_SECRET') || undefined;
-    this.provider = (this.config.get<string>('WHATSAPP_PROVIDER') || 'mock').toLowerCase() === 'meta' ? 'META' : 'MOCK';
+    const raw = (this.config.get<string>('WHATSAPP_PROVIDER') || 'mock').toLowerCase();
+    this.provider =
+      raw === 'meta' || raw === 'message-pro' || raw === 'messagepro' || raw === 'message_pro' ? 'META' : 'MOCK';
   }
 
   verifyToken(mode?: string, token?: string, challenge?: string) {

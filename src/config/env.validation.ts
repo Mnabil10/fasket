@@ -96,7 +96,7 @@ const baseSchema = z.object({
   N8N_SEND_TELEGRAM_OTP_URL: z.string().url().optional(),
   N8N_SECRET: z.string().optional(),
 
-  WHATSAPP_PROVIDER: z.enum(['mock', 'meta']).default('mock'),
+  WHATSAPP_PROVIDER: z.enum(['mock', 'meta', 'message-pro', 'messagepro', 'message_pro']).default('mock'),
   WHATSAPP_ENABLED: z.enum(['true','false']).optional(),
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
@@ -105,6 +105,12 @@ const baseSchema = z.object({
   WHATSAPP_API_VERSION: z.string().optional(),
   WHATSAPP_API_BASE_URL: z.string().url().optional(),
   WHATSAPP_DEFAULT_LANGUAGE: z.enum(['en', 'ar']).optional(),
+  WHATSAPP_MESSAGE_PRO_TOKEN: z.string().optional(),
+  WHATSAPP_MESSAGE_PRO_INSTANCE_ID: z.string().optional(),
+  WHATSAPP_MESSAGE_PRO_BASE_URL: z.string().url().optional(),
+  WHATSAPP_MESSAGE_PRO_CHAT_ID_SUFFIX: z.string().optional(),
+  WHATSAPP_MESSAGE_PRO_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  WHATSAPP_SUPPORT_FREEFORM_ALWAYS: z.enum(['true', 'false']).optional(),
 
   PUSH_PROVIDER: z.enum(['fcm', 'onesignal', 'apns', 'mock']).optional(),
   FCM_SERVER_KEY: z.string().optional(),
@@ -161,6 +167,20 @@ export function validateEnv(config: Record<string, unknown>) {
       }
       if (!env.WHATSAPP_PHONE_NUMBER_ID) {
         ctx.addIssue({ code: 'custom', message: 'WHATSAPP_PHONE_NUMBER_ID is required when WHATSAPP_PROVIDER=meta' });
+      }
+    }
+    if (['message-pro', 'messagepro', 'message_pro'].includes(env.WHATSAPP_PROVIDER)) {
+      if (!env.WHATSAPP_MESSAGE_PRO_TOKEN) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'WHATSAPP_MESSAGE_PRO_TOKEN is required when WHATSAPP_PROVIDER=message-pro',
+        });
+      }
+      if (!env.WHATSAPP_MESSAGE_PRO_INSTANCE_ID) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'WHATSAPP_MESSAGE_PRO_INSTANCE_ID is required when WHATSAPP_PROVIDER=message-pro',
+        });
       }
     }
     // Internal secret is optional; guard will fall back to INTERNAL_TELEGRAM_SECRET or JWT_ACCESS_SECRET

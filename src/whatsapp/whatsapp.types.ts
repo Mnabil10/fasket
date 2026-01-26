@@ -1,4 +1,4 @@
-export type WhatsappProvider = 'mock' | 'meta';
+export type WhatsappProvider = 'mock' | 'meta' | 'message-pro';
 
 export type WhatsappJobType = 'SEND_TEMPLATE' | 'SEND_TEXT' | 'SEND_DOCUMENT';
 
@@ -28,6 +28,7 @@ export interface WhatsappQueueJob {
   template?: WhatsappTemplatePayload;
   text?: string;
   document?: WhatsappDocumentPayload;
+  sendAt?: string;
 }
 
 export interface WhatsappSendResult {

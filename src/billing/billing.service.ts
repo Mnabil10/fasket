@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { BillingInterval, InvoiceItemType, InvoiceStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { InvoiceImageService } from './invoice-image.service';
 
 @Injectable()
 export class BillingService {
@@ -10,6 +11,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly invoiceImages: InvoiceImageService,
   ) {}
 
   async recordCommissionForOrder(orderId: string, tx?: Prisma.TransactionClient) {
@@ -216,28 +218,30 @@ export class BillingService {
       return;
     }
     const provider = await this.prisma.provider.findUnique({ where: { id: invoice.providerId }, select: { contactPhone: true } });
-    let phone = provider?.contactPhone ?? null;
-    if (!phone) {
-      const owner = await this.prisma.providerUser.findFirst({
-        where: { providerId: invoice.providerId, role: { in: ['OWNER', 'MANAGER'] } },
-        orderBy: { createdAt: 'asc' },
-        select: { user: { select: { phone: true } } },
-      });
-      phone = owner?.user?.phone ?? null;
-    }
+    const phone = await this.notifications.resolveProviderWhatsappPhone(invoice.providerId, provider?.contactPhone ?? null);
     if (!phone) return;
 
-    const dueDate = invoice.dueAt ? invoice.dueAt.toISOString().slice(0, 10) : '';
-    const amount = `${invoice.currency ?? 'EGP'} ${(invoice.amountDueCents / 100).toFixed(2)}`;
-    await this.notifications.sendWhatsappTemplate({
-      to: phone,
-      template: 'provider_invoice_ready_v1',
-      variables: {
-        invoice_no: invoice.number,
-        amount_due: amount,
-        due_date: dueDate,
-      },
-      metadata: { invoiceId: invoice.id },
-    });
+    try {
+      const image = await this.invoiceImages.createInvoiceImage(invoice.id);
+      await this.notifications.sendWhatsappDocument({
+        to: phone,
+        link: image.url,
+        filename: image.filename,
+        metadata: { invoiceId: invoice.id, kind: 'invoice_image' },
+      });
+    } catch (err) {
+      const dueDate = invoice.dueAt ? invoice.dueAt.toISOString().slice(0, 10) : '';
+      const amount = `${invoice.currency ?? 'EGP'} ${(invoice.amountDueCents / 100).toFixed(2)}`;
+      await this.notifications.sendWhatsappTemplate({
+        to: phone,
+        template: 'provider_invoice_ready_v1',
+        variables: {
+          invoice_no: invoice.number,
+          amount_due: amount,
+          due_date: dueDate,
+        },
+        metadata: { invoiceId: invoice.id, error: (err as Error)?.message || 'invoice_image_failed' },
+      });
+    }
   }
 }
