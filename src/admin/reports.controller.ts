@@ -97,7 +97,13 @@ export class AdminReportsController {
         loyaltyDiscountCents: true,
         shippingFeeCents: true,
         items: {
-          select: { qty: true, unitPriceCents: true, unitCostCents: true, priceSnapshotCents: true },
+          select: {
+            qty: true,
+            unitPriceCents: true,
+            unitCostCents: true,
+            priceSnapshotCents: true,
+            lineTotalCents: true,
+          },
         },
       },
     });
@@ -111,12 +117,13 @@ export class AdminReportsController {
       let itemsTotal = 0;
       let itemsCost = 0;
       for (const item of order.items) {
-        const price = item.unitPriceCents || item.priceSnapshotCents || 0;
+        const unitPrice = item.unitPriceCents || item.priceSnapshotCents || 0;
+        const lineTotal = item.lineTotalCents || unitPrice * item.qty;
         const cost = item.unitCostCents || 0;
         if (!item.unitCostCents || item.unitCostCents <= 0) {
           missingCostCount += 1;
         }
-        itemsTotal += price * item.qty;
+        itemsTotal += lineTotal;
         itemsCost += cost * item.qty;
       }
       salesCents += itemsTotal;

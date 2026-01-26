@@ -41,6 +41,7 @@ export class OrderReceiptDto {
     productName: string;
     productNameAr?: string | null;
     quantity: number;
+    priceSnapshotCents?: number;
     unitPriceCents: number;
     lineTotalCents: number;
     options?: {

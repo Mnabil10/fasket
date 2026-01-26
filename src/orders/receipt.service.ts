@@ -37,6 +37,8 @@ export class ReceiptService {
                 productId: true,
                 productNameSnapshot: true,
                 priceSnapshotCents: true,
+                unitPriceCents: true,
+                lineTotalCents: true,
                 qty: true,
                 options: true,
                 product: { select: { nameAr: true, pricingModel: true } },
@@ -77,6 +79,8 @@ export class ReceiptService {
                 productId: true,
                 productNameSnapshot: true,
                 priceSnapshotCents: true,
+                unitPriceCents: true,
+                lineTotalCents: true,
                 qty: true,
                 options: true,
                 product: { select: { nameAr: true, pricingModel: true } },
@@ -99,21 +103,26 @@ export class ReceiptService {
     const zone =
       order.deliveryZoneId &&
       (await this.settings.getZoneById(order.deliveryZoneId, { includeInactive: true }));
-    const items = order.items.map((item: any) => ({
-      productId: item.productId,
-      productName: item.productNameSnapshot,
-      productNameAr: item.product?.nameAr ?? null,
-      quantity: item.qty,
-      unitPriceCents: item.priceSnapshotCents,
-      lineTotalCents: item.priceSnapshotCents * item.qty,
-      options: (item.options ?? []).map((option: any) => ({
-        optionId: option.optionId,
-        name: option.optionNameSnapshot,
-        nameAr: option.optionNameArSnapshot ?? null,
-        priceSnapshotCents: option.priceSnapshotCents,
-        qty: option.qty,
-      })),
-    }));
+    const items = order.items.map((item: any) => {
+      const unitPriceCents = item.unitPriceCents || item.priceSnapshotCents || 0;
+      const lineTotalCents = item.lineTotalCents || unitPriceCents * item.qty;
+      return {
+        productId: item.productId,
+        productName: item.productNameSnapshot,
+        productNameAr: item.product?.nameAr ?? null,
+        quantity: item.qty,
+        priceSnapshotCents: item.priceSnapshotCents,
+        unitPriceCents,
+        lineTotalCents,
+        options: (item.options ?? []).map((option: any) => ({
+          optionId: option.optionId,
+          name: option.optionNameSnapshot,
+          nameAr: option.optionNameArSnapshot ?? null,
+          priceSnapshotCents: option.priceSnapshotCents,
+          qty: option.qty,
+        })),
+      };
+    });
     const hasWeightBasedItems = order.items.some((item: any) => item.product?.pricingModel === 'weight');
     const resolvedZoneName = this.settings.resolveZoneName(zone, order.deliveryZoneName ?? undefined);
     const deliveryZone = zone

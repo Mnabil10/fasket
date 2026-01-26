@@ -17,6 +17,7 @@ type LineItem = {
   categoryId: string | null;
   qty: number;
   priceCents: number;
+  lineTotalCents?: number;
 };
 
 export type CalculatedFinancials = {
@@ -69,7 +70,7 @@ function allocateDiscounts(lines: LineItem[], totalDiscount: number) {
   if (totalDiscount <= 0 || lines.length === 0) {
     return lines.map(() => 0);
   }
-  const total = lines.reduce((sum, line) => sum + line.priceCents * line.qty, 0);
+  const total = lines.reduce((sum, line) => sum + (line.lineTotalCents || line.priceCents * line.qty), 0);
   if (total <= 0) {
     return lines.map(() => 0);
   }
@@ -78,7 +79,8 @@ function allocateDiscounts(lines: LineItem[], totalDiscount: number) {
     if (index === lines.length - 1) {
       return remaining;
     }
-    const raw = Math.floor((totalDiscount * (line.priceCents * line.qty)) / total);
+    const lineSubtotal = line.lineTotalCents || line.priceCents * line.qty;
+    const raw = Math.floor((totalDiscount * lineSubtotal) / total);
     remaining -= raw;
     return raw;
   });
@@ -112,7 +114,7 @@ export function calculateOrderFinancials(input: SettlementInput): CalculatedFina
   const lineItems: LineItem[] =
     items.length > 0
       ? items
-      : [{ categoryId: null, qty: 1, priceCents: subtotalCents }];
+      : [{ categoryId: null, qty: 1, priceCents: subtotalCents, lineTotalCents: subtotalCents }];
   const discounts = discountRule === CommissionDiscountRule.AFTER_DISCOUNT ? allocateDiscounts(lineItems, totalDiscount) : lineItems.map(() => 0);
 
   let commissionCents = 0;
@@ -120,7 +122,7 @@ export function calculateOrderFinancials(input: SettlementInput): CalculatedFina
   const categoryRates: Record<string, number> = {};
 
   lineItems.forEach((line, index) => {
-    const lineSubtotal = line.priceCents * line.qty;
+    const lineSubtotal = line.lineTotalCents || line.priceCents * line.qty;
     const lineDiscount = discounts[index] ?? 0;
     const lineBase = Math.max(0, lineSubtotal - lineDiscount);
     const override = line.categoryId ? categoryOverrides.get(line.categoryId) ?? null : null;
@@ -221,6 +223,8 @@ export class FinanceService {
           select: {
             qty: true,
             priceSnapshotCents: true,
+            unitPriceCents: true,
+            lineTotalCents: true,
             product: { select: { categoryId: true } },
           },
         },
@@ -248,11 +252,17 @@ export class FinanceService {
     const { base, categoryOverrides } = await this.configs.resolveConfigs(order.providerId, categoryIds, client);
     const baseConfig = this.configs.resolveEffectiveBaseConfig(base);
 
-    const items: LineItem[] = order.items.map((item) => ({
-      categoryId: item.product?.categoryId ?? null,
-      qty: item.qty ?? 0,
-      priceCents: item.priceSnapshotCents ?? 0,
-    }));
+    const items: LineItem[] = order.items.map((item) => {
+      const qty = item.qty ?? 0;
+      const unitPriceCents = item.unitPriceCents || item.priceSnapshotCents || 0;
+      const lineTotalCents = item.lineTotalCents || unitPriceCents * qty;
+      return {
+        categoryId: item.product?.categoryId ?? null,
+        qty,
+        priceCents: unitPriceCents,
+        lineTotalCents,
+      };
+    });
 
     const calculated = calculateOrderFinancials({
       order: {
