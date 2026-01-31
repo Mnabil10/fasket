@@ -20,10 +20,12 @@ export class WhatsappInstanceController {
 
   @Get()
   async listInstances() {
-    this.ensureMessagePro();
+    if (!this.isMessagePro()) {
+      return { items: [], raw: null, provider: this.provider, supported: false };
+    }
     const data = await this.safe(() => this.messagePro.listInstances());
     const items = Array.isArray(data) ? data : data?.instances ?? data?.data ?? [];
-    return { items, raw: data };
+    return { items, raw: data, provider: this.provider, supported: true };
   }
 
   @Get(':id')
@@ -97,9 +99,13 @@ export class WhatsappInstanceController {
   }
 
   private ensureMessagePro() {
-    if (this.provider !== 'message-pro' && this.provider !== 'messagepro' && this.provider !== 'message_pro') {
+    if (!this.isMessagePro()) {
       throw new BadRequestException('WhatsApp provider is not message-pro');
     }
+  }
+
+  private isMessagePro() {
+    return this.provider === 'message-pro' || this.provider === 'messagepro' || this.provider === 'message_pro';
   }
 
   private async safe<T>(action: () => Promise<T>) {
