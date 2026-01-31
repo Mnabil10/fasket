@@ -23,9 +23,21 @@ export class WhatsappInstanceController {
     if (!this.isMessagePro()) {
       return { items: [], raw: null, provider: this.provider, supported: false };
     }
-    const data = await this.safe(() => this.messagePro.listInstances());
-    const items = Array.isArray(data) ? data : data?.instances ?? data?.data ?? [];
-    return { items, raw: data, provider: this.provider, supported: true };
+    try {
+      const data = await this.messagePro.listInstances();
+      const items = Array.isArray(data) ? data : data?.instances ?? data?.data ?? [];
+      return { items, raw: data, provider: this.provider, supported: true };
+    } catch (err) {
+      const message = (err as Error)?.message || 'request_failed';
+      const instanceId = (this.config.get<string>('WHATSAPP_MESSAGE_PRO_INSTANCE_ID') || '').trim();
+      if (instanceId && /instance id is missing/i.test(message)) {
+        const fallback = await this.safe(() => this.messagePro.getInstanceDetails(instanceId));
+        const item = fallback?.instance ?? fallback?.data ?? fallback;
+        const items = item ? [item] : [];
+        return { items, raw: fallback, provider: this.provider, supported: true };
+      }
+      throw new BadRequestException(message);
+    }
   }
 
   @Get(':id')
