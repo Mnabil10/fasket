@@ -7,6 +7,7 @@ import { CacheModule } from '@nestjs/cache-manager';
 import { LoggerModule } from 'nestjs-pino';
 import { redisStore } from 'cache-manager-ioredis-yet';
 import { TerminusModule } from '@nestjs/terminus';
+import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -35,11 +36,13 @@ import { ProvidersModule } from './providers/providers.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { FinanceModule } from './finance/finance.module';
 import { PaymentMethodsModule } from './payment-methods/payment-methods.module';
+import { GrowthModule } from './growth/growth.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv, expandVariables: true }),
     TerminusModule,
+    ScheduleModule.forRoot(),
     LoggerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -141,6 +144,7 @@ import { PaymentMethodsModule } from './payment-methods/payment-methods.module';
     ReviewsModule,
     FinanceModule,
     PaymentMethodsModule,
+    GrowthModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

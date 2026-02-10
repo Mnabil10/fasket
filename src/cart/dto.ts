@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsArray, IsInt, IsNotEmpty, IsOptional, IsString, Min, MinLength, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min, MinLength, ValidateNested } from 'class-validator';
 import { cleanString } from '../common/utils/sanitize.util';
 
 export class CartItemOptionDto {
@@ -43,4 +43,20 @@ export class ApplyCouponDto {
   @IsNotEmpty()
   @MinLength(2)
   couponCode!: string;
+}
+
+export class FillFromOrderDto {
+  @ApiProperty({ description: 'Order id to fill from' })
+  @IsString()
+  orderId!: string;
+
+  @ApiPropertyOptional({ enum: ['SKIP_MISSING', 'REPLACE_IF_POSSIBLE'] })
+  @IsOptional()
+  @IsIn(['SKIP_MISSING', 'REPLACE_IF_POSSIBLE'])
+  strategy?: 'SKIP_MISSING' | 'REPLACE_IF_POSSIBLE';
+
+  @ApiPropertyOptional({ description: 'Clear existing cart before filling' })
+  @IsOptional()
+  @IsBoolean()
+  clearExistingCart?: boolean;
 }

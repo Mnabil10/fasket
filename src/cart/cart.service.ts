@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Address, Cart, Coupon, Prisma, ProductOptionGroupPriceMode, ProductOptionGroupType, ProductStatus } from '@prisma/client';
+import { Address, Cart, Coupon, Prisma, ProductOptionGroupPriceMode, ProductOptionGroupType, ProductStatus, ProviderStatus, BranchStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
 import { localize } from 'src/common/utils/localize.util';
@@ -147,6 +147,56 @@ type CouponValidationResult =
   | { status: 'EXPIRED' }
   | { status: 'MIN_TOTAL'; requiredSubtotalCents: number; shortfallCents: number };
 
+type ReorderPreviewItem = {
+  productId: string;
+  name: string;
+  qty: number;
+  originalPriceCents: number;
+  currentPriceCents: number;
+};
+
+type ReorderMissingItem = {
+  productId: string;
+  name: string;
+  qty: number;
+  reason: string;
+};
+
+type ReorderPriceChange = {
+  productId: string;
+  name: string;
+  qty: number;
+  oldPriceCents: number;
+  newPriceCents: number;
+};
+
+type ReorderReplacement = {
+  productId: string;
+  replacementId: string;
+  replacementName: string;
+};
+
+type ReorderPlanItem = {
+  productId: string;
+  branchId?: string | null;
+  qty: number;
+  priceCents: number;
+  optionsHash: string;
+  optionSelections: { optionId: string; qty: number }[];
+  name: string;
+  originalPriceCents: number;
+};
+
+type ReorderPlan = {
+  vendorId: string | null;
+  itemsAvailable: ReorderPreviewItem[];
+  itemsMissing: ReorderMissingItem[];
+  itemsPriceChanged: ReorderPriceChange[];
+  suggestedReplacements: ReorderReplacement[];
+  itemsToAdd: ReorderPlanItem[];
+  itemsReplaced: Array<{ fromProductId: string; toProductId: string; name: string }>;
+};
+
 @Injectable()
 export class CartService {
   private readonly defaultProviderId = 'prov_default';
@@ -171,6 +221,85 @@ export class CartService {
     const cart = await this.ensureCart(userId);
     const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
     return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
+  }
+
+  async clearCart(userId: string, lang?: Lang, addressId?: string) {
+    const cart = await this.ensureCart(userId);
+    await this.prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
+    await this.clearCartCoupon(cart.id);
+    const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
+    return this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
+  }
+
+  async getReorderPreview(userId: string, orderId: string) {
+    const order = await this.loadOrderForReorder(userId, orderId);
+    const plan = await this.buildReorderPlan(order, { allowAutoReplace: false, strategy: 'SKIP_MISSING' });
+    return {
+      vendorId: plan.vendorId,
+      itemsAvailable: plan.itemsAvailable,
+      itemsMissing: plan.itemsMissing,
+      itemsPriceChanged: plan.itemsPriceChanged,
+      suggestedReplacements: plan.suggestedReplacements,
+    };
+  }
+
+  async fillFromOrder(
+    userId: string,
+    payload: { orderId: string; strategy: 'SKIP_MISSING' | 'REPLACE_IF_POSSIBLE'; clearExistingCart?: boolean },
+    lang?: Lang,
+    addressId?: string,
+  ) {
+    const order = await this.loadOrderForReorder(userId, payload.orderId);
+    const cart = await this.ensureCart(userId);
+
+    if (!payload.clearExistingCart) {
+      await this.assertCartScopeMatchesOrder(cart.id, order);
+    }
+
+    if (payload.clearExistingCart) {
+      await this.prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
+      await this.clearCartCoupon(cart.id);
+    }
+
+    const plan = await this.buildReorderPlan(order, {
+      allowAutoReplace: payload.strategy === 'REPLACE_IF_POSSIBLE',
+      strategy: payload.strategy,
+    });
+
+    for (const item of plan.itemsToAdd) {
+      const branchId = item.branchId ?? null;
+      const cartItem = await this.prisma.cartItem.upsert({
+        where: {
+          cartId_productId_branchId_optionsHash: {
+            cartId: cart.id,
+            productId: item.productId,
+            branchId: branchId as any,
+            optionsHash: item.optionsHash,
+          },
+        },
+        update: { qty: { increment: item.qty }, priceCents: item.priceCents, optionsHash: item.optionsHash },
+        create: {
+          cartId: cart.id,
+          productId: item.productId,
+          branchId,
+          qty: item.qty,
+          priceCents: item.priceCents,
+          optionsHash: item.optionsHash,
+        },
+      });
+      await this.syncCartItemOptions(cartItem.id, item.optionSelections);
+    }
+
+    const deliveryAddress = await this.resolveDeliveryAddress(userId, addressId);
+    const cartResponse = await this.buildCartResponse(cart, lang, undefined, undefined, deliveryAddress);
+    return {
+      cart: cartResponse,
+      changes: {
+        skipped: plan.itemsMissing,
+        replaced: plan.itemsReplaced,
+        priceChanged: plan.itemsPriceChanged,
+      },
+    };
   }
 
   async add(
@@ -599,6 +728,366 @@ export class CartService {
       where: { userId },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
     });
+  }
+
+  private async loadOrderForReorder(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId },
+      include: {
+        items: { include: { options: true } },
+        provider: { select: { id: true, status: true } },
+        branch: {
+          select: {
+            id: true,
+            providerId: true,
+            status: true,
+            provider: { select: { status: true } },
+          },
+        },
+      },
+    });
+    if (!order) {
+      throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found', 404);
+    }
+    if (!order.items.length) {
+      throw new DomainError(ErrorCode.CART_EMPTY, 'Order has no items to reorder');
+    }
+    return order;
+  }
+
+  private async assertCartScopeMatchesOrder(cartId: string, order: { providerId?: string | null; branchId?: string | null; branch?: { providerId?: string | null } | null }) {
+    const existingScope = await this.prisma.cartItem.findFirst({
+      where: { cartId },
+      include: {
+        branch: { select: { id: true, providerId: true } },
+        product: { select: { providerId: true } },
+      },
+    });
+    if (!existingScope) return;
+    const existingProviderId =
+      existingScope.branch?.providerId ??
+      existingScope.product?.providerId ??
+      this.defaultProviderId;
+    const existingBranchId = existingScope.branchId ?? existingScope.branch?.id ?? null;
+    const nextProviderId =
+      order.providerId ??
+      order.branch?.providerId ??
+      this.defaultProviderId;
+    const nextBranchId = order.branchId ?? null;
+    if (existingProviderId && nextProviderId && existingProviderId !== nextProviderId) {
+      throw new DomainError(ErrorCode.CART_PROVIDER_MISMATCH, 'Cart contains items from another provider');
+    }
+    if (existingBranchId && nextBranchId && existingBranchId !== nextBranchId) {
+      throw new DomainError(ErrorCode.CART_BRANCH_MISMATCH, 'Cart contains items from another branch');
+    }
+  }
+
+  private async buildReorderPlan(
+    order: {
+      providerId?: string | null;
+      branchId?: string | null;
+      branch?: { id: string; providerId?: string | null; status: BranchStatus; provider?: { status: ProviderStatus } | null } | null;
+      provider?: { id: string; status: ProviderStatus } | null;
+      items: Array<{
+        productId: string;
+        productNameSnapshot: string;
+        priceSnapshotCents: number;
+        unitPriceCents: number;
+        qty: number;
+        options: Array<{ optionId: string | null; qty: number }>;
+      }>;
+    },
+    params: { allowAutoReplace: boolean; strategy: 'SKIP_MISSING' | 'REPLACE_IF_POSSIBLE' },
+  ): Promise<ReorderPlan> {
+    const vendorId = order.providerId ?? order.branch?.providerId ?? null;
+    const branchId = order.branchId ?? order.branch?.id ?? null;
+
+    if (order.provider && order.provider.status !== ProviderStatus.ACTIVE) {
+      return {
+        vendorId,
+        itemsAvailable: [],
+        itemsMissing: order.items.map((item) => ({
+          productId: item.productId,
+          name: item.productNameSnapshot,
+          qty: item.qty,
+          reason: 'provider_unavailable',
+        })),
+        itemsPriceChanged: [],
+        suggestedReplacements: [],
+        itemsToAdd: [],
+        itemsReplaced: [],
+      };
+    }
+
+    if (order.branch && order.branch.status !== BranchStatus.ACTIVE) {
+      return {
+        vendorId,
+        itemsAvailable: [],
+        itemsMissing: order.items.map((item) => ({
+          productId: item.productId,
+          name: item.productNameSnapshot,
+          qty: item.qty,
+          reason: 'branch_unavailable',
+        })),
+        itemsPriceChanged: [],
+        suggestedReplacements: [],
+        itemsToAdd: [],
+        itemsReplaced: [],
+      };
+    }
+
+    if (order.branch?.provider && order.branch.provider.status !== ProviderStatus.ACTIVE) {
+      return {
+        vendorId,
+        itemsAvailable: [],
+        itemsMissing: order.items.map((item) => ({
+          productId: item.productId,
+          name: item.productNameSnapshot,
+          qty: item.qty,
+          reason: 'provider_unavailable',
+        })),
+        itemsPriceChanged: [],
+        suggestedReplacements: [],
+        itemsToAdd: [],
+        itemsReplaced: [],
+      };
+    }
+
+    const productIds = Array.from(new Set(order.items.map((item) => item.productId)));
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: {
+        id: true,
+        name: true,
+        nameAr: true,
+        status: true,
+        deletedAt: true,
+        stock: true,
+        priceCents: true,
+        salePriceCents: true,
+        providerId: true,
+        categoryId: true,
+      },
+    });
+    const productMap = new Map(products.map((product) => [product.id, product]));
+
+    const branchProducts = branchId
+      ? await this.prisma.branchProduct.findMany({
+          where: { branchId, productId: { in: productIds } },
+        })
+      : [];
+    const branchProductMap = new Map(
+      branchProducts.map((bp) => [`${bp.branchId}:${bp.productId}`, bp]),
+    );
+
+    const itemsAvailable: ReorderPreviewItem[] = [];
+    const itemsMissing: ReorderMissingItem[] = [];
+    const itemsPriceChanged: ReorderPriceChange[] = [];
+    const suggestedReplacements: ReorderReplacement[] = [];
+    const itemsToAdd: ReorderPlanItem[] = [];
+    const itemsReplaced: Array<{ fromProductId: string; toProductId: string; name: string }> = [];
+
+    let replacementCandidates = new Map<
+      string,
+      Array<{
+        id: string;
+        name: string;
+        stock: number;
+        priceCents: number;
+        salePriceCents: number | null;
+        categoryId: string | null;
+      }>
+    >();
+
+    if (params.allowAutoReplace) {
+      const categoryIds = Array.from(
+        new Set(
+          order.items
+            .map((item) => productMap.get(item.productId)?.categoryId ?? null)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      );
+      if (categoryIds.length) {
+        const candidates = await this.prisma.product.findMany({
+          where: {
+            categoryId: { in: categoryIds },
+            status: ProductStatus.ACTIVE,
+            deletedAt: null,
+            ...(vendorId ? { providerId: vendorId } : {}),
+            optionGroups: { none: { minSelected: { gt: 0 }, isActive: true } },
+          },
+          select: {
+            id: true,
+            name: true,
+            nameAr: true,
+            stock: true,
+            priceCents: true,
+            salePriceCents: true,
+            categoryId: true,
+          },
+        });
+        const candidateIds = candidates.map((candidate) => candidate.id);
+        const candidateBranchProducts = branchId
+          ? await this.prisma.branchProduct.findMany({
+              where: { branchId, productId: { in: candidateIds }, isActive: true },
+            })
+          : [];
+        const candidateBranchMap = new Map(
+          candidateBranchProducts.map((bp) => [`${bp.branchId}:${bp.productId}`, bp]),
+        );
+        candidates.forEach((candidate) => {
+          const branchProduct = branchId ? candidateBranchMap.get(`${branchId}:${candidate.id}`) : undefined;
+          if (branchId && (!branchProduct || !branchProduct.isActive)) return;
+          const effectiveStock = this.resolveEffectiveStock(candidate.stock, branchProduct?.stock);
+          if (effectiveStock <= 0) return;
+          const bucket = replacementCandidates.get(candidate.categoryId ?? '') ?? [];
+          bucket.push({
+            id: candidate.id,
+            name: candidate.name,
+            stock: effectiveStock,
+            priceCents: candidate.priceCents,
+            salePriceCents: candidate.salePriceCents ?? null,
+            categoryId: candidate.categoryId ?? null,
+          });
+          replacementCandidates.set(candidate.categoryId ?? '', bucket);
+        });
+      }
+    }
+
+    const attemptReplacement = (item: typeof order.items[number], categoryId?: string | null) => {
+      if (!params.allowAutoReplace || params.strategy !== 'REPLACE_IF_POSSIBLE') return false;
+      const bucket = replacementCandidates.get(categoryId ?? '') ?? [];
+      const replacement = bucket.find((candidate) => candidate.id !== item.productId);
+      if (!replacement) return false;
+      const priceCents = replacement.salePriceCents ?? replacement.priceCents;
+      itemsToAdd.push({
+        productId: replacement.id,
+        branchId,
+        qty: item.qty,
+        priceCents,
+        optionsHash: '',
+        optionSelections: [],
+        name: replacement.name,
+        originalPriceCents: item.priceSnapshotCents ?? item.unitPriceCents ?? priceCents,
+      });
+      itemsReplaced.push({ fromProductId: item.productId, toProductId: replacement.id, name: replacement.name });
+      suggestedReplacements.push({
+        productId: item.productId,
+        replacementId: replacement.id,
+        replacementName: replacement.name,
+      });
+      return true;
+    };
+
+    for (const item of order.items) {
+      const product = productMap.get(item.productId);
+      const baseName = product?.name ?? item.productNameSnapshot ?? item.productId;
+      const originalPrice = item.priceSnapshotCents ?? item.unitPriceCents ?? 0;
+
+      if (!product || product.deletedAt || product.status !== ProductStatus.ACTIVE) {
+        const replaced = attemptReplacement(item, product?.categoryId ?? null);
+        if (!replaced) {
+          itemsMissing.push({ productId: item.productId, name: baseName, qty: item.qty, reason: 'unavailable' });
+        }
+        continue;
+      }
+
+      const branchProduct = branchId ? branchProductMap.get(`${branchId}:${item.productId}`) : undefined;
+      if (branchId && (!branchProduct || !branchProduct.isActive)) {
+        const replaced = attemptReplacement(item, product.categoryId ?? null);
+        if (!replaced) {
+          itemsMissing.push({ productId: item.productId, name: baseName, qty: item.qty, reason: 'unavailable' });
+        }
+        continue;
+      }
+
+      const availableStock = this.resolveEffectiveStock(product.stock, branchProduct?.stock);
+      if (availableStock <= 0) {
+        const replaced = attemptReplacement(item, product.categoryId ?? null);
+        if (!replaced) {
+          itemsMissing.push({ productId: item.productId, name: baseName, qty: item.qty, reason: 'out_of_stock' });
+        }
+        continue;
+      }
+      if (availableStock < item.qty) {
+        const replaced = attemptReplacement(item, product.categoryId ?? null);
+        if (!replaced) {
+          itemsMissing.push({ productId: item.productId, name: baseName, qty: item.qty, reason: 'insufficient_stock' });
+        }
+        continue;
+      }
+
+      const normalizedOptions = this.normalizeOptionInputs(
+        item.options?.map((option) => ({
+          optionId: option.optionId ?? '',
+          qty: option.qty,
+        })) ?? [],
+      );
+      if (normalizedOptions.length && normalizedOptions.some((opt) => !opt.optionId)) {
+        const replaced = attemptReplacement(item, product.categoryId ?? null);
+        if (!replaced) {
+          itemsMissing.push({ productId: item.productId, name: baseName, qty: item.qty, reason: 'options_unavailable' });
+        }
+        continue;
+      }
+
+      let optionSelection;
+      try {
+        optionSelection = await this.resolveOptionSelections(product.id, normalizedOptions);
+      } catch {
+        const replaced = attemptReplacement(item, product.categoryId ?? null);
+        if (!replaced) {
+          itemsMissing.push({ productId: item.productId, name: baseName, qty: item.qty, reason: 'options_unavailable' });
+        }
+        continue;
+      }
+
+      const basePrice =
+        branchProduct?.salePriceCents ??
+        branchProduct?.priceCents ??
+        product.salePriceCents ??
+        product.priceCents;
+      const effectiveBasePrice = optionSelection.basePriceOverrideCents ?? basePrice;
+      const currentPrice = effectiveBasePrice + optionSelection.optionsTotalCents;
+
+      itemsAvailable.push({
+        productId: item.productId,
+        name: baseName,
+        qty: item.qty,
+        originalPriceCents: originalPrice,
+        currentPriceCents: currentPrice,
+      });
+      itemsToAdd.push({
+        productId: item.productId,
+        branchId,
+        qty: item.qty,
+        priceCents: currentPrice,
+        optionsHash: this.buildOptionsHash(normalizedOptions),
+        optionSelections: normalizedOptions,
+        name: baseName,
+        originalPriceCents: originalPrice,
+      });
+
+      if (originalPrice !== currentPrice) {
+        itemsPriceChanged.push({
+          productId: item.productId,
+          name: baseName,
+          qty: item.qty,
+          oldPriceCents: originalPrice,
+          newPriceCents: currentPrice,
+        });
+      }
+    }
+
+    return {
+      vendorId,
+      itemsAvailable,
+      itemsMissing,
+      itemsPriceChanged,
+      suggestedReplacements,
+      itemsToAdd,
+      itemsReplaced,
+    };
   }
 
   private resolveEffectiveStock(productStock?: number | null, branchStock?: number | null) {

@@ -7,6 +7,7 @@ import { CreateOrderDto } from './dto';
 import { CurrentUserPayload } from '../common/types/current-user.type';
 import { ReceiptService } from './receipt.service';
 import { Response } from 'express';
+import { CartService } from '../cart/cart.service';
 
 @ApiTags('Orders')
 @ApiBearerAuth() 
@@ -16,6 +17,7 @@ export class OrdersController {
   constructor(
     private readonly service: OrdersService,
     private readonly receipts: ReceiptService,
+    private readonly cart: CartService,
   ) {}
 
   @Get()
@@ -51,9 +53,14 @@ export class OrdersController {
     return this.service.create(user.userId, dto);
   }
 
+  @Get(':id/reorder-preview')
+  reorderPreview(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
+    return this.cart.getReorderPreview(user.userId, id);
+  }
+
   @Post(':id/reorder')
   reorder(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
-    return this.service.reorder(user.userId, id);
+    return this.cart.fillFromOrder(user.userId, { orderId: id, strategy: 'SKIP_MISSING' });
   }
 
   @Get(':id/receipt')

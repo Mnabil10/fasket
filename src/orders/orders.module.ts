@@ -14,9 +14,10 @@ import { BillingModule } from '../billing/billing.module';
 import { FinanceModule } from '../finance/finance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OtpModule } from '../otp/otp.module';
+import { CartModule } from '../cart/cart.module';
 
 @Module({
-  imports: [AutomationModule, PrismaModule, BillingModule, FinanceModule, NotificationsModule, OtpModule, JwtModule.register({})],
+  imports: [AutomationModule, PrismaModule, BillingModule, FinanceModule, NotificationsModule, OtpModule, CartModule, JwtModule.register({})],
   controllers: [OrdersController, OrderGroupsController, GuestOrdersController, ProviderOrdersController],
   providers: [OrdersService, ReceiptService, OrdersStuckWatcher, OrdersGateway],
   exports: [OrdersService, ReceiptService, OrdersStuckWatcher],

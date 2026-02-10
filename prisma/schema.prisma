@@ -281,6 +281,11 @@ model User {
   loyaltyPoints Int    @default(0)
   twoFaEnabled Boolean @default(false)
   twoFaSecret  String?
+  appOpenCount Int      @default(0)
+  lastAppOpenAt DateTime?
+  firstOrderWizardDismissedAt DateTime?
+  lastRetentionSentAt DateTime?
+  retentionCountThisWeek Int @default(0)
   addresses  Address[]
   paymentMethods SavedPaymentMethod[]
   cart       Cart?
@@ -305,6 +310,8 @@ model User {
   payoutsProcessed Payout[] @relation("PayoutProcessedBy")
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+
+  @@index([lastRetentionSentAt])
 }
 
 model Address {

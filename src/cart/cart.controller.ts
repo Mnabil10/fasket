@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CartService } from './cart.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { AddToCartDto, ApplyCouponDto, UpdateCartItemDto } from './dto';
+import { AddToCartDto, ApplyCouponDto, FillFromOrderDto, UpdateCartItemDto } from './dto';
 import { CurrentUserPayload } from '../common/types/current-user.type';
 import { LangNormalizePipe } from '../common/pipes/lang-normalize.pipe';
 
@@ -47,6 +47,33 @@ export class CartController {
     @Query('addressId') addressId?: string,
   ) {
     return this.service.applyCoupon(user.userId, dto, lang, addressId);
+  }
+
+  @Post('clear')
+  @ApiQuery({ name: 'lang', required: false, enum: ['en', 'ar'] })
+  @ApiQuery({ name: 'addressId', required: false })
+  clear(
+    @CurrentUser() user: CurrentUserPayload,
+    @Query('lang', LangNormalizePipe) lang?: 'en' | 'ar',
+    @Query('addressId') addressId?: string,
+  ) {
+    return this.service.clearCart(user.userId, lang, addressId);
+  }
+
+  @Post('fill-from-order')
+  @ApiQuery({ name: 'lang', required: false, enum: ['en', 'ar'] })
+  @ApiQuery({ name: 'addressId', required: false })
+  fillFromOrder(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: FillFromOrderDto,
+    @Query('lang', LangNormalizePipe) lang?: 'en' | 'ar',
+    @Query('addressId') addressId?: string,
+  ) {
+    return this.service.fillFromOrder(user.userId, {
+      orderId: dto.orderId,
+      strategy: dto.strategy ?? 'SKIP_MISSING',
+      clearExistingCart: dto.clearExistingCart ?? false,
+    }, lang, addressId);
   }
 
   @Patch('items/:id')
