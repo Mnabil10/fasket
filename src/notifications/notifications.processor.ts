@@ -3,6 +3,7 @@ import { Logger, Optional } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { NotificationStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import {
   DeliveryReceipt,
   DirectNotificationJob,
@@ -48,6 +49,7 @@ export class NotificationsProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('notifications') @Optional() private readonly queue?: Queue<NotificationJob>,
+    @Optional() private readonly analytics?: AnalyticsService,
   ) {
     super();
     this.configureWebPush();
@@ -92,6 +94,12 @@ export class NotificationsProcessor extends WorkerHost {
       }));
       receipts.push(dispatch.receipt);
       await this.logReceipt(payload.notificationId, device, dispatch, notification);
+      if (dispatch.deactivate) {
+        await this.prisma.notificationDevice.updateMany({
+          where: { id: device.id },
+          data: { isActive: false, isEnabled: false, lastSeenAt: new Date() },
+        });
+      }
     }
     await this.touchDevices(devices);
     return { receipts };
@@ -126,13 +134,13 @@ export class NotificationsProcessor extends WorkerHost {
       }));
       receipts.push(dispatch.receipt);
       await this.logReceipt(payload.notificationId, device, dispatch, payload.payload);
-      if (dispatch.receipt.status === 'failed') {
+      if (dispatch.receipt.status === 'failed' && !dispatch.deactivate) {
         failedDevices.push(device);
       }
       if (dispatch.deactivate) {
         await this.prisma.notificationDevice.updateMany({
           where: { id: device.id },
-          data: { isActive: false },
+          data: { isActive: false, isEnabled: false, lastSeenAt: new Date() },
         });
       }
     }
@@ -151,7 +159,7 @@ export class NotificationsProcessor extends WorkerHost {
   }
 
   private async resolveDevices(target: NotificationTarget, cursor?: string) {
-    const baseWhere: Prisma.NotificationDeviceWhereInput = { isActive: true };
+    const baseWhere: Prisma.NotificationDeviceWhereInput = { isActive: true, isEnabled: true };
     const orderBy = { id: 'asc' as const };
     if (target.type === 'user') {
       baseWhere.userId = target.userId;
@@ -215,7 +223,7 @@ export class NotificationsProcessor extends WorkerHost {
       target: { type: 'devices', deviceIds },
       retryCount,
     };
-    const delay = retryCount * 10_000;
+    const delay = Math.min(300_000, Math.pow(2, retryCount - 1) * 10_000);
     const queueDisabled = (this.queue as any)?.__notificationsDisabled === true;
     if (!this.queue || queueDisabled) {
       setTimeout(() => this.processDirect(nextJob).catch(() => undefined), delay);
@@ -232,7 +240,7 @@ export class NotificationsProcessor extends WorkerHost {
     if (!devices.length) return;
     await this.prisma.notificationDevice.updateMany({
       where: { id: { in: devices.map((device) => device.id) } },
-      data: { lastActiveAt: new Date() },
+      data: { lastActiveAt: new Date(), lastSeenAt: new Date() },
     });
   }
 
@@ -287,9 +295,11 @@ export class NotificationsProcessor extends WorkerHost {
         update: logData,
         create: logData,
       });
+      await this.emitNotificationAnalytics(dispatch, device, payload);
       return;
     }
     await this.prisma.notificationLog.create({ data: logData });
+    await this.emitNotificationAnalytics(dispatch, device, payload);
   }
 
   private async buildMessage(payload: TemplateNotificationJob, lang: string) {
@@ -353,10 +363,10 @@ export class NotificationsProcessor extends WorkerHost {
     switch (this.provider) {
       case 'fcm':
         if (!this.fcmKey) throw new Error('FCM_SERVER_KEY not configured');
-        return { receipt: await this.sendFcm(token, payload), channel: 'push' };
+        return this.sendFcm(token, payload);
       case 'onesignal':
         if (!this.onesignalKey || !this.onesignalAppId) throw new Error('ONESIGNAL keys not configured');
-        return { receipt: await this.sendOneSignal(token, payload), channel: 'push' };
+        return this.sendOneSignal(token, payload);
       case 'apns':
         throw new Error('APNS provider not implemented');
       default:
@@ -365,42 +375,101 @@ export class NotificationsProcessor extends WorkerHost {
     }
   }
 
-  private async sendFcm(token: string, payload: NotificationPayload): Promise<DeliveryReceipt> {
+  private async sendFcm(token: string, payload: NotificationPayload): Promise<DispatchResult> {
     const data = this.normalizeData(payload);
-    const resp = await axios.post(
-      'https://fcm.googleapis.com/fcm/send',
-      {
-        to: token,
-        priority: payload.priority === 'high' ? 'high' : 'normal',
-        notification: {
-          title: payload.title,
-          body: payload.body,
-          sound: payload.sound,
-          image: payload.imageUrl,
+    const notification: Record<string, any> = {
+      title: payload.title,
+      body: payload.body,
+      sound: payload.sound,
+      image: payload.imageUrl,
+    };
+    if (payload.channelId) notification.android_channel_id = payload.channelId;
+    if (payload.badge !== undefined) notification.badge = payload.badge;
+    try {
+      const resp = await axios.post(
+        'https://fcm.googleapis.com/fcm/send',
+        {
+          to: token,
+          priority: payload.priority === 'high' ? 'high' : 'normal',
+          notification,
+          data,
         },
-        data,
-      },
-      { headers: { Authorization: `key=${this.fcmKey}`, 'Content-Type': 'application/json' } },
-    );
-    const messageId = resp.data?.message_id ?? resp.data?.name;
-    return { status: 'success', provider: 'fcm', token, messageId };
+        { headers: { Authorization: `key=${this.fcmKey}`, 'Content-Type': 'application/json' } },
+      );
+      const result = Array.isArray(resp.data?.results) ? resp.data.results[0] : undefined;
+      if (result?.error) {
+        const error = String(result.error);
+        const deactivate = ['NotRegistered', 'InvalidRegistration', 'MismatchSenderId'].includes(error);
+        return {
+          receipt: { status: 'failed', provider: 'fcm', token, error },
+          channel: 'push',
+          deactivate,
+        };
+      }
+      const messageId = result?.message_id ?? resp.data?.message_id ?? resp.data?.name;
+      return {
+        receipt: { status: 'success', provider: 'fcm', token, messageId },
+        channel: 'push',
+      };
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.error ?? error?.message ?? 'fcm_failed';
+      return {
+        receipt: {
+          status: 'failed',
+          provider: 'fcm',
+          token,
+          error: typeof errorMsg === 'string' ? errorMsg : String(errorMsg),
+        },
+        channel: 'push',
+        deactivate: false,
+      };
+    }
   }
 
-  private async sendOneSignal(token: string, payload: NotificationPayload): Promise<DeliveryReceipt> {
+  private async sendOneSignal(token: string, payload: NotificationPayload): Promise<DispatchResult> {
     const data = this.normalizeData(payload);
-    const resp = await axios.post(
-      'https://api.onesignal.com/notifications',
-      {
-        app_id: this.onesignalAppId,
-        include_player_ids: [token],
-        headings: { en: payload.title ?? '' },
-        contents: { en: payload.body ?? '' },
-        data,
-      },
-      { headers: { Authorization: `Basic ${this.onesignalKey}`, 'Content-Type': 'application/json' } },
-    );
-    const messageId = resp.data?.id;
-    return { status: 'success', provider: 'onesignal', token, messageId };
+    try {
+      const resp = await axios.post(
+        'https://api.onesignal.com/notifications',
+        {
+          app_id: this.onesignalAppId,
+          include_player_ids: [token],
+          headings: { en: payload.title ?? '' },
+          contents: { en: payload.body ?? '' },
+          data,
+          ...(payload.channelId ? { android_channel_id: payload.channelId } : {}),
+          ...(payload.badge !== undefined ? { ios_badgeType: 'SetTo', ios_badgeCount: payload.badge } : {}),
+        },
+        { headers: { Authorization: `Basic ${this.onesignalKey}`, 'Content-Type': 'application/json' } },
+      );
+      const invalid = Array.isArray(resp.data?.invalid_player_ids) ? resp.data.invalid_player_ids : [];
+      const deactivate = invalid.includes(token);
+      const messageId = resp.data?.id;
+      const hasErrors = Boolean(resp.data?.errors) || resp.data?.recipients === 0;
+      const status: DeliveryReceipt['status'] = deactivate || hasErrors ? 'failed' : 'success';
+      return {
+        receipt: {
+          status,
+          provider: 'onesignal',
+          token,
+          messageId,
+          error: deactivate ? 'invalid_player_id' : hasErrors ? 'onesignal_no_recipients' : undefined,
+        },
+        channel: 'push',
+        deactivate,
+      };
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.errors ?? error?.message ?? 'onesignal_failed';
+      return {
+        receipt: {
+          status: 'failed',
+          provider: 'onesignal',
+          token,
+          error: Array.isArray(errorMsg) ? errorMsg.join(', ') : String(errorMsg),
+        },
+        channel: 'push',
+      };
+    }
   }
 
   private async sendWebPush(device: DeviceRecord, payload: NotificationPayload): Promise<DispatchResult> {
@@ -462,6 +531,12 @@ export class NotificationsProcessor extends WorkerHost {
       body: payload.body,
       type: payload.type,
       orderId: payload.orderId,
+      vendorId: payload.vendorId,
+      campaignId: payload.campaignId,
+      route: payload.route,
+      url: payload.url,
+      channelId: payload.channelId,
+      badge: payload.badge,
       priority: payload.priority ?? 'normal',
       sound: payload.sound,
       imageUrl: payload.imageUrl,
@@ -470,6 +545,34 @@ export class NotificationsProcessor extends WorkerHost {
       data.vibrate = 'default';
     }
     return data;
+  }
+
+  private async emitNotificationAnalytics(
+    dispatch: DispatchResult,
+    device: DeviceRecord,
+    payload: NotificationPayload,
+  ) {
+    if (!this.analytics) return;
+    const name = dispatch.receipt.status === 'success' ? 'NOTIF_SENT' : 'NOTIF_FAILED';
+    const params = {
+      notificationType: payload.type ?? payload.data?.type,
+      orderId: payload.orderId ?? payload.data?.orderId,
+      vendorId: payload.vendorId ?? payload.data?.vendorId,
+      campaignId: payload.campaignId ?? payload.data?.campaignId,
+      provider: dispatch.receipt.provider,
+      messageId: dispatch.receipt.messageId,
+      platform: device.platform,
+      channel: dispatch.channel,
+      error: dispatch.receipt.error,
+    };
+    try {
+      await this.analytics.ingest(device.userId, {
+        events: [{ name, ts: new Date(), params }],
+        source: 'backend',
+      });
+    } catch (error) {
+      this.logger.debug({ msg: 'Failed to record notification analytics', error: (error as Error).message });
+    }
   }
 
   private configureWebPush() {

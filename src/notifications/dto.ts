@@ -55,6 +55,16 @@ export class RegisterDeviceDto {
   @MaxLength(64)
   deviceModel?: string;
 
+  @ApiPropertyOptional({ description: 'Device identifier (stable per install)' })
+  @Transform(({ value }) => {
+    const cleaned = cleanString(value);
+    return typeof cleaned === 'string' ? cleaned : undefined;
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  deviceId?: string;
+
   @ApiPropertyOptional({ description: 'Client-side preferences payload (optional)' })
   @IsOptional()
   @IsObject()

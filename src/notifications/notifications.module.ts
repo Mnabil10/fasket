@@ -10,6 +10,7 @@ import { NotificationsProcessor } from './notifications.processor';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { SettingsModule } from '../settings/settings.module';
 import { NotificationsGateway } from './notifications.gateway';
+import { AnalyticsModule } from '../analytics/analytics.module';
 
 // Ensure .env is loaded before evaluating the flag
 dotenv.config();
@@ -70,6 +71,7 @@ const queueProviders = redisEnabled
     PrismaModule,
     forwardRef(() => WhatsappModule),
     SettingsModule,
+    AnalyticsModule,
     JwtModule.register({}),
     ...queueImports,
   ],

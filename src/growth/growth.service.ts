@@ -179,6 +179,7 @@ export class GrowthService {
     const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const dayBucket = now.toISOString().slice(0, 10);
 
     const activeOrderUsers = await this.prisma.order.findMany({
       where: {
@@ -255,7 +256,7 @@ export class GrowthService {
               title: message.title,
               body: message.body,
               type: 'retention',
-              data: { segment: task.segment },
+              data: { segment: task.segment, eventId: `retention:${task.segment}:${dayBucket}`, url: '/home' },
             },
             user.id,
           );

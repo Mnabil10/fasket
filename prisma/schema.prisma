@@ -1453,13 +1453,16 @@ model NotificationDevice {
   userId      String
   role        UserRole @default(CUSTOMER)
   token       String   @unique
+  deviceId    String?  @db.VarChar(64)
   platform    String   @default("unknown")
   language    String?  @db.VarChar(8)
   appVersion  String?
   deviceModel String?
   isActive    Boolean  @default(true)
+  isEnabled   Boolean  @default(true)
   metadata    Json?
   lastActiveAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -1470,6 +1473,8 @@ model NotificationDevice {
   @@index([role])
   @@index([platform])
   @@index([isActive])
+  @@index([isEnabled])
+  @@index([deviceId])
   @@map("push_devices")
 }
 

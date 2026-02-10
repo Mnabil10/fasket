@@ -33,6 +33,12 @@ export interface NotificationPayload {
   body: string;
   type?: string;
   orderId?: string;
+  vendorId?: string;
+  campaignId?: string;
+  route?: string;
+  url?: string;
+  channelId?: string;
+  badge?: number;
   priority?: NotificationPriority;
   sound?: string;
   imageUrl?: string;

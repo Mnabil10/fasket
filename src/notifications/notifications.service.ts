@@ -21,11 +21,13 @@ import {
 import { NotificationsProcessor } from './notifications.processor';
 import { SettingsService } from '../settings/settings.service';
 import { NotificationsGateway } from './notifications.gateway';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 type DispatchOptions = {
   notificationId?: string;
   channel?: NotificationChannel;
   delayMs?: number;
+  idempotencyKey?: string;
 };
 
 export type WebPushSubscriptionInput = {
@@ -50,6 +52,22 @@ export type AdminNotificationInput = {
   deliveryCampaignId?: string | null;
 };
 
+type NotificationPreferenceState = {
+  orderUpdates: boolean;
+  loyalty: boolean;
+  marketing: boolean;
+  whatsappOrderUpdates: boolean;
+};
+
+const DEFAULT_NOTIFICATION_PREFS: NotificationPreferenceState = {
+  orderUpdates: true,
+  loyalty: true,
+  marketing: false,
+  whatsappOrderUpdates: true,
+};
+
+const DEFAULT_PUSH_CHANNEL_ID = 'fasket_notifications';
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -62,13 +80,38 @@ export class NotificationsService {
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsappService,
     private readonly settings: SettingsService,
+    @Optional() private readonly analytics?: AnalyticsService,
     @Optional() private readonly gateway?: NotificationsGateway,
     @InjectQueue('notifications') @Optional() private readonly queue?: Queue<NotificationJob>,
     @Optional() @Inject(forwardRef(() => NotificationsProcessor)) private readonly processor?: NotificationsProcessor,
   ) {}
 
   async notify(key: TemplateKey, userId: string, data: Record<string, any>) {
-    await this.enqueue({ kind: 'template', key, userId, data });
+    const payloadData = { ...data };
+    if (payloadData.type === undefined) {
+      payloadData.type = key;
+    }
+    const allowed = await this.shouldSendForUser(userId, 'push', payloadData.type);
+    if (!allowed) return;
+    const orderId = typeof payloadData.orderId === 'string' ? payloadData.orderId : undefined;
+    const previewPayload: NotificationPayload = {
+      title: '',
+      body: '',
+      type: payloadData.type,
+      orderId,
+      data: payloadData,
+    };
+    const idempotencyKey = this.resolveIdempotencyKey(userId, previewPayload, {});
+    if (idempotencyKey) {
+      const duplicate = await this.isDuplicateNotification(userId, idempotencyKey);
+      if (duplicate) {
+        this.logger.debug({ msg: 'Duplicate template notification skipped', userId, idempotencyKey });
+        return;
+      }
+      payloadData.idempotencyKey = idempotencyKey;
+    }
+    await this.enqueue({ kind: 'template', key, userId, data: payloadData });
+    await this.trackNotificationEvent('NOTIF_ENQUEUED', { type: 'user', userId }, previewPayload, 'push');
   }
 
   async notifyDriverAssigned(
@@ -96,32 +139,45 @@ export class NotificationsService {
     const normalizedLanguage = dto.language?.toLowerCase() ?? 'en';
     const now = new Date();
     const metadata = dto.preferences ? { preferences: dto.preferences } : undefined;
+    const deviceId = dto.deviceId?.trim() || undefined;
     const device = await this.prisma.notificationDevice.upsert({
       where: { token: dto.token },
       update: {
         userId,
         role,
+        deviceId,
         platform: dto.platform ?? 'unknown',
         language: normalizedLanguage,
         appVersion: dto.appVersion,
         deviceModel: dto.deviceModel,
         isActive: true,
+        isEnabled: true,
         lastActiveAt: now,
+        lastSeenAt: now,
         ...(metadata ? { metadata: metadata as Prisma.InputJsonValue } : {}),
       },
       create: {
         userId,
         role,
         token: dto.token,
+        deviceId,
         platform: dto.platform ?? 'unknown',
         language: normalizedLanguage,
         appVersion: dto.appVersion,
         deviceModel: dto.deviceModel,
         isActive: true,
+        isEnabled: true,
         lastActiveAt: now,
+        lastSeenAt: now,
         metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined,
       },
     });
+    if (deviceId) {
+      await this.prisma.notificationDevice.updateMany({
+        where: { userId, deviceId, token: { not: dto.token } },
+        data: { isActive: false, isEnabled: false },
+      });
+    }
     this.logger.log({
       msg: 'Registered notification device',
       userId,
@@ -133,7 +189,7 @@ export class NotificationsService {
   async unregisterDevice(userId: string, token: string) {
     await this.prisma.notificationDevice.updateMany({
       where: { userId, token },
-      data: { isActive: false },
+      data: { isActive: false, isEnabled: false },
     });
     this.logger.log({ msg: 'Unregistered notification device', userId });
     return { success: true };
@@ -152,7 +208,9 @@ export class NotificationsService {
         role,
         platform: 'web',
         isActive: true,
+        isEnabled: true,
         lastActiveAt: now,
+        lastSeenAt: now,
         metadata: metadata as Prisma.InputJsonValue,
       },
       create: {
@@ -161,7 +219,9 @@ export class NotificationsService {
         token: payload.endpoint,
         platform: 'web',
         isActive: true,
+        isEnabled: true,
         lastActiveAt: now,
+        lastSeenAt: now,
         metadata: metadata as Prisma.InputJsonValue,
       },
     });
@@ -171,13 +231,26 @@ export class NotificationsService {
   async unregisterWebSubscription(userId: string, endpoint: string) {
     await this.prisma.notificationDevice.updateMany({
       where: { userId, token: endpoint },
-      data: { isActive: false },
+      data: { isActive: false, isEnabled: false },
     });
     return { success: true };
   }
 
   async sendToUser(payload: NotificationPayload, userId: string, options: DispatchOptions = {}) {
-    await this.enqueueDirect(payload, { type: 'user', userId }, options);
+    const channel = options.channel ?? 'push';
+    const allowed = await this.shouldSendForUser(userId, channel, payload.type ?? payload.data?.type);
+    if (!allowed) return;
+    const prepared = this.ensurePriority(payload);
+    const idempotencyKey = this.resolveIdempotencyKey(userId, prepared, options);
+    if (idempotencyKey) {
+      const duplicate = await this.isDuplicateNotification(userId, idempotencyKey);
+      if (duplicate) {
+        this.logger.debug({ msg: 'Duplicate notification skipped', userId, idempotencyKey });
+        return;
+      }
+    }
+    const finalPayload = idempotencyKey ? this.attachIdempotency(prepared, idempotencyKey) : prepared;
+    await this.enqueueDirect(finalPayload, { type: 'user', userId }, options);
   }
 
   async sendToRole(payload: NotificationPayload, role: UserRole, options: DispatchOptions = {}) {
@@ -314,13 +387,15 @@ export class NotificationsService {
     if (!order) return;
     const code = order.code ?? order.id;
 
+    const eventId = `order:${order.id}:status:${status}`;
     const customerPayload = (title: string, body: string) =>
       this.ensureCritical({
         title,
         body,
         type: 'order_status',
         orderId: order.id,
-        data: { orderCode: code, status },
+        vendorId: order.providerId ?? undefined,
+        data: { orderCode: code, status, eventId, url: `/orders/${order.id}` },
       });
 
     if (order.userId) {
@@ -351,7 +426,7 @@ export class NotificationsService {
             body: `Order #${code} is ready for delivery.`,
             type: 'driver_order',
             orderId: order.id,
-            data: { orderCode: code, status },
+            data: { orderCode: code, status, eventId: `order:${order.id}:driver:${status}`, url: `/orders/${order.id}` },
           }),
           driverUser.userId,
         );
@@ -446,14 +521,20 @@ export class NotificationsService {
   }
 
   private async enqueueDirect(payload: NotificationPayload, target: NotificationTarget, options: DispatchOptions = {}) {
+    const prepared = this.ensurePriority(payload);
+    const finalPayload =
+      options.idempotencyKey && !prepared.data?.idempotencyKey
+        ? this.attachIdempotency(prepared, options.idempotencyKey)
+        : prepared;
     const job: NotificationJob = {
       kind: 'direct',
-      payload: this.ensurePriority(payload),
+      payload: finalPayload,
       target,
       notificationId: options.notificationId,
       channel: options.channel,
     };
     await this.enqueue(job, options.delayMs);
+    await this.trackNotificationEvent('NOTIF_ENQUEUED', target, finalPayload, options.channel);
   }
 
   private async enqueue(payload: NotificationJob, delayMs?: number) {
@@ -483,17 +564,31 @@ export class NotificationsService {
   private ensurePriority(payload: NotificationPayload): NotificationPayload {
     const priority = payload.priority ?? this.defaultPriority;
     const sound = payload.sound ?? (priority === 'high' ? this.criticalSound : undefined);
-    const data = {
-      ...(payload.data ?? {}),
-      priority,
-      sound,
-      type: payload.type ?? payload.data?.type,
-      orderId: payload.orderId ?? payload.data?.orderId,
-    };
+    const channelId = payload.channelId ?? DEFAULT_PUSH_CHANNEL_ID;
+    const badge = payload.badge ?? (typeof payload.data?.badge === 'number' ? payload.data?.badge : undefined);
+    const data = { ...(payload.data ?? {}) } as Record<string, any>;
+    if (data.priority === undefined) data.priority = priority;
+    if (data.sound === undefined && sound !== undefined) data.sound = sound;
+    if (data.type === undefined && payload.type !== undefined) data.type = payload.type;
+    if (data.orderId === undefined && payload.orderId !== undefined) data.orderId = payload.orderId;
+    if (data.vendorId === undefined && payload.vendorId !== undefined) data.vendorId = payload.vendorId;
+    if (data.campaignId === undefined && payload.campaignId !== undefined) data.campaignId = payload.campaignId;
+    if (data.route === undefined && payload.route !== undefined) data.route = payload.route;
+    if (data.url === undefined && payload.url !== undefined) data.url = payload.url;
+    if (data.channelId === undefined && channelId) data.channelId = channelId;
+    if (data.badge === undefined && badge !== undefined) data.badge = badge;
     return {
       ...payload,
+      type: payload.type ?? data.type,
+      orderId: payload.orderId ?? data.orderId,
+      vendorId: payload.vendorId ?? data.vendorId,
+      campaignId: payload.campaignId ?? data.campaignId,
+      route: payload.route ?? data.route,
+      url: payload.url ?? data.url,
       priority,
       sound,
+      channelId,
+      badge,
       data,
     };
   }
@@ -552,6 +647,7 @@ export class NotificationsService {
       select: {
         id: true,
         code: true,
+        userId: true,
         status: true,
         deliveryEtaMinutes: true,
         estimatedDeliveryTime: true,
@@ -570,6 +666,7 @@ export class NotificationsService {
     order: {
       id: string;
       code: string | null;
+      userId: string | null;
       status: OrderStatus;
       deliveryEtaMinutes: number | null;
       estimatedDeliveryTime: string | null;
@@ -579,6 +676,12 @@ export class NotificationsService {
     lang: WhatsappTemplateLanguage,
     settings: Setting,
   ) {
+    if (order.userId) {
+      const prefs = await this.getUserPreferences(order.userId);
+      if (!prefs.whatsappOrderUpdates) {
+        return;
+      }
+    }
     const phone = order.user?.phone ?? order.guestPhone;
     if (!phone) return;
     const idempotencyKey = `order:${order.id}:status:${order.status}`;
@@ -860,5 +963,142 @@ export class NotificationsService {
       return Boolean(channel.whatsapp);
     }
     return true;
+  }
+
+  private normalizePreferences(input?: Prisma.JsonValue | null): NotificationPreferenceState {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return { ...DEFAULT_NOTIFICATION_PREFS };
+    }
+    const prefs: NotificationPreferenceState = { ...DEFAULT_NOTIFICATION_PREFS };
+    const data = input as Record<string, any>;
+    for (const key of Object.keys(DEFAULT_NOTIFICATION_PREFS)) {
+      if (data[key] !== undefined) {
+        prefs[key as keyof NotificationPreferenceState] = Boolean(data[key]);
+      }
+    }
+    return prefs;
+  }
+
+  private async getUserPreferences(userId: string): Promise<NotificationPreferenceState> {
+    const record = await this.prisma.userNotificationPreference.findUnique({
+      where: { userId },
+      select: { preferences: true },
+    });
+    return this.normalizePreferences(record?.preferences ?? null);
+  }
+
+  private resolveNotificationCategory(type?: string | null) {
+    if (!type) return 'unknown';
+    const normalized = String(type).toLowerCase();
+    if (normalized === 'order_status' || normalized.startsWith('order_') || normalized === 'driver_order') {
+      return 'orderUpdates';
+    }
+    if (normalized.startsWith('loyalty')) {
+      return 'loyalty';
+    }
+    if (
+      normalized === 'promotion' ||
+      normalized === 'retention' ||
+      normalized === 'marketing' ||
+      normalized === 'delivery_campaign'
+    ) {
+      return 'marketing';
+    }
+    return 'unknown';
+  }
+
+  private async shouldSendForUser(userId: string, channel: NotificationChannel, type?: string | null) {
+    let prefs: NotificationPreferenceState;
+    try {
+      prefs = await this.getUserPreferences(userId);
+    } catch (error) {
+      this.logger.warn({ msg: 'Failed to load notification preferences', userId, error: (error as Error).message });
+      return true;
+    }
+    const category = this.resolveNotificationCategory(type);
+    if (category === 'unknown') return true;
+    if (channel === 'whatsapp') {
+      if (category === 'orderUpdates') return prefs.whatsappOrderUpdates;
+      if (category === 'marketing') return prefs.marketing;
+      if (category === 'loyalty') return prefs.loyalty;
+      return true;
+    }
+    if (channel === 'push' || channel === 'webpush') {
+      if (category === 'orderUpdates') return prefs.orderUpdates;
+      if (category === 'loyalty') return prefs.loyalty;
+      if (category === 'marketing') return prefs.marketing;
+    }
+    return true;
+  }
+
+  private resolveIdempotencyKey(
+    userId: string,
+    payload: NotificationPayload,
+    options: DispatchOptions,
+  ): string | null {
+    const fromOptions = options.idempotencyKey ?? payload.data?.idempotencyKey;
+    if (fromOptions) return String(fromOptions);
+    const type = payload.type ?? payload.data?.type;
+    if (!type) return null;
+    const eventId =
+      payload.data?.eventId ??
+      payload.orderId ??
+      payload.data?.orderId ??
+      payload.data?.campaignId ??
+      payload.data?.vendorId;
+    if (!eventId) return null;
+    const now = new Date();
+    const dayBucket = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+      .toISOString()
+      .slice(0, 10);
+    return `${userId}:${type}:${eventId}:${dayBucket}`;
+  }
+
+  private attachIdempotency(payload: NotificationPayload, idempotencyKey: string): NotificationPayload {
+    return {
+      ...payload,
+      data: { ...(payload.data ?? {}), idempotencyKey },
+    };
+  }
+
+  private async isDuplicateNotification(userId: string, idempotencyKey: string) {
+    const now = new Date();
+    const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const existing = await this.prisma.notificationLog.findFirst({
+      where: {
+        userId,
+        status: 'sent',
+        createdAt: { gte: startOfDay },
+        payload: { path: ['data', 'idempotencyKey'], equals: idempotencyKey },
+      },
+      select: { id: true },
+    });
+    return Boolean(existing);
+  }
+
+  private async trackNotificationEvent(
+    name: string,
+    target: NotificationTarget,
+    payload: NotificationPayload,
+    channel?: NotificationChannel,
+  ) {
+    if (!this.analytics) return;
+    if (target.type !== 'user') return;
+    const params = {
+      notificationType: payload.type ?? payload.data?.type,
+      orderId: payload.orderId ?? payload.data?.orderId,
+      vendorId: payload.vendorId ?? payload.data?.vendorId,
+      campaignId: payload.campaignId ?? payload.data?.campaignId,
+      channel: channel ?? 'push',
+      idempotencyKey: payload.data?.idempotencyKey,
+    };
+    try {
+      await this.analytics.ingest(target.userId, {
+        events: [{ name, ts: new Date(), params }],
+        source: 'backend',
+      });
+    } catch (error) {
+      this.logger.debug({ msg: 'Analytics ingest failed for notification', error: (error as Error).message });
+    }
   }
 }
