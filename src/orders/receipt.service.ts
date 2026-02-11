@@ -1,12 +1,22 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { OrderReceiptDto } from './dto/receipt.dto';
 import { DomainError, ErrorCode } from '../common/errors';
 import { CacheService } from '../common/cache/cache.service';
+import { normalizeTtlSeconds } from '../common/utils/ttl.util';
 
 @Injectable()
 export class ReceiptService {
+  private readonly logger = new Logger(ReceiptService.name);
+  private readonly receiptTtl = normalizeTtlSeconds(
+    'ORDER_RECEIPT_CACHE_TTL',
+    Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60),
+    60 * 60 * 6,
+    60,
+    this.logger.warn.bind(this.logger),
+  );
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
@@ -47,7 +57,7 @@ export class ReceiptService {
             },
           },
         }),
-      Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60),
+      this.receiptTtl,
     );
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found');
@@ -89,7 +99,7 @@ export class ReceiptService {
             },
           },
         }),
-      Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60),
+      this.receiptTtl,
     );
     if (!order) {
       throw new DomainError(ErrorCode.ORDER_NOT_FOUND, 'Order not found');

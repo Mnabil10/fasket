@@ -21,6 +21,7 @@ import { normalizePhoneToE164 } from '../common/utils/phone.util';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import { SlugService } from '../common/slug/slug.service';
+import { normalizeTtlSeconds } from '../common/utils/ttl.util';
 
 interface PendingSignup {
   name: string;
@@ -328,8 +329,8 @@ export class AuthService {
       ip: metadata.ip,
       userAgent: metadata.userAgent,
     };
-    const ttl = Math.max(otpResult.expiresInSeconds ?? 300, 60);
-    await this.cache.set(this.signupCacheKey(otpResult.otpId), pending, ttl);
+    const ttlSeconds = Math.max(otpResult.expiresInSeconds ?? 300, 60);
+    await this.cache.set(this.signupCacheKey(otpResult.otpId), pending, this.toMs(ttlSeconds));
     return { otpId: otpResult.otpId, expiresInSeconds: otpResult.expiresInSeconds };
   }
 
@@ -423,8 +424,20 @@ export class AuthService {
     if (!refreshSecret) {
       throw new InternalServerErrorException('JWT_REFRESH_SECRET is not configured');
     }
-    const accessTtl = this.config.get<number>('JWT_ACCESS_TTL') ?? 900;
-    const refreshTtl = this.config.get<number>('JWT_REFRESH_TTL') ?? 1209600;
+    const accessTtl = normalizeTtlSeconds(
+      'JWT_ACCESS_TTL',
+      this.config.get<number>('JWT_ACCESS_TTL'),
+      60 * 60 * 24 * 7,
+      900,
+      this.logger.warn.bind(this.logger),
+    );
+    const refreshTtl = normalizeTtlSeconds(
+      'JWT_REFRESH_TTL',
+      this.config.get<number>('JWT_REFRESH_TTL'),
+      60 * 60 * 24 * 365,
+      1209600,
+      this.logger.warn.bind(this.logger),
+    );
     const jti = randomUUID();
     const accessPayload = {
       sub: user.id,
@@ -437,15 +450,18 @@ export class AuthService {
       secret: accessSecret,
       expiresIn: accessTtl,
     });
-    const refresh = await this.jwt.signAsync({ sub: user.id, jti }, {
-      secret: refreshSecret,
-      expiresIn: refreshTtl,
-    });
-    await this.cache.set(this.refreshCacheKey(user.id, jti), true, refreshTtl);
+    const refresh = await this.jwt.signAsync(
+      { sub: user.id, jti, twoFaVerified: user.twoFaVerified ?? true },
+      {
+        secret: refreshSecret,
+        expiresIn: refreshTtl,
+      },
+    );
+    await this.cache.set(this.refreshCacheKey(user.id, jti), true, this.toMs(refreshTtl));
     return { accessToken: access, refreshToken: refresh };
   }
 
-  async issueTokensForUserId(sub: string, previousJti?: string) {
+  async issueTokensForUserId(sub: string, previousJti?: string, twoFaVerified?: boolean) {
     const user = await this.prisma.user.findUnique({
       where: { id: sub },
       select: { role: true, phone: true, email: true, twoFaEnabled: true },
@@ -479,12 +495,18 @@ export class AuthService {
       }
       await this.cache.del(this.refreshCacheKey(sub, previousJti));
     }
+    const resolvedTwoFaVerified =
+      typeof twoFaVerified === 'boolean'
+        ? twoFaVerified
+        : user.role === UserRole.ADMIN
+          ? true
+          : !user.twoFaEnabled;
     return this.issueTokens({
       id: sub,
       role: user.role,
       phone: user.phone,
       email: user.email ?? undefined,
-      twoFaVerified: !user.twoFaEnabled,
+      twoFaVerified: resolvedTwoFaVerified,
     });
   }
 
@@ -571,5 +593,10 @@ export class AuthService {
   async revokeRefreshToken(userId: string, jti: string) {
     await this.cache.del(this.refreshCacheKey(userId, jti));
     return { success: true };
+  }
+
+  private toMs(seconds: number) {
+    if (!Number.isFinite(seconds)) return 0;
+    return Math.max(0, Math.floor(seconds * 1000));
   }
 }

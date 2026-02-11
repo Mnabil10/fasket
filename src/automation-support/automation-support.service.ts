@@ -9,7 +9,7 @@ import { createHash } from 'crypto';
 @Injectable()
 export class AutomationSupportService {
   private readonly phoneRegex = /^\+?[1-9]\d{7,14}$/;
-  private readonly rateLimitTtl = 600;
+  private readonly rateLimitTtlSeconds = 600;
   private readonly rateLimitPerPhone = 5;
   private readonly rateLimitPerIp = 20;
 
@@ -22,9 +22,19 @@ export class AutomationSupportService {
 
   async orderStatusLookup(params: { phone: string; orderCode?: string; last4?: string; ip?: string; correlationId?: string }) {
     const phone = this.normalizePhone(params.phone);
-    await this.bumpOrThrow(`support:status:phone:${phone}`, this.rateLimitPerPhone, this.rateLimitTtl, 'Rate limit exceeded');
+    await this.bumpOrThrow(
+      `support:status:phone:${phone}`,
+      this.rateLimitPerPhone,
+      this.rateLimitTtlSeconds,
+      'Rate limit exceeded',
+    );
     if (params.ip) {
-      await this.bumpOrThrow(`support:status:ip:${params.ip}`, this.rateLimitPerIp, this.rateLimitTtl, 'Rate limit exceeded');
+      await this.bumpOrThrow(
+        `support:status:ip:${params.ip}`,
+        this.rateLimitPerIp,
+        this.rateLimitTtlSeconds,
+        'Rate limit exceeded',
+      );
     }
 
     let success = false;
@@ -100,7 +110,12 @@ export class AutomationSupportService {
   async productSearch(q: string, ip?: string) {
     const query = (q || '').trim();
     if (!query) throw new BadRequestException('q is required');
-    await this.bumpOrThrow(`support:product:ip:${ip ?? 'unknown'}`, 30, this.rateLimitTtl, 'Rate limit exceeded');
+    await this.bumpOrThrow(
+      `support:product:ip:${ip ?? 'unknown'}`,
+      30,
+      this.rateLimitTtlSeconds,
+      'Rate limit exceeded',
+    );
 
     const products = await this.prisma.product.findMany({
       where: {
@@ -192,11 +207,16 @@ export class AutomationSupportService {
     });
   }
 
-  private async bumpOrThrow(key: string, limit: number, ttl: number, message: string) {
+  private async bumpOrThrow(key: string, limit: number, ttlSeconds: number, message: string) {
     const current = (await this.cache.get<number>(key)) ?? 0;
     if (current >= limit) {
       throw new BadRequestException(message);
     }
-    await this.cache.set(key, current + 1, ttl);
+    await this.cache.set(key, current + 1, this.toMs(ttlSeconds));
+  }
+
+  private toMs(seconds: number) {
+    if (!Number.isFinite(seconds)) return 0;
+    return Math.max(0, Math.floor(seconds * 1000));
   }
 }

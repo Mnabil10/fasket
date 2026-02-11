@@ -8,7 +8,7 @@ describe('CartService.add', () => {
       product: { findFirst: jest.fn() },
       branch: { findUnique: jest.fn(), findFirst: jest.fn() },
       branchProduct: { findUnique: jest.fn() },
-      cartItem: { findUnique: jest.fn(), upsert: jest.fn() },
+      cartItem: { findUnique: jest.fn(), findFirst: jest.fn(), upsert: jest.fn() },
       address: { findFirst: jest.fn() },
     } as any;
     const settings = {} as any;

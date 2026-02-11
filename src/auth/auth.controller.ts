@@ -6,6 +6,7 @@ import { Request, Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
+import { normalizeTtlSeconds } from '../common/utils/ttl.util';
 import {
   LoginDto,
   LoginOtpDto,
@@ -88,7 +89,7 @@ export class AuthController {
   @UseGuards(AuthGuard('jwt-refresh'))
   async refresh(@Req() req: any, @Body() _dto: RefreshDto, @Res({ passthrough: true }) res: Response) {
     // req.user is populated by JwtRefreshStrategy.validate
-    const payload = await this.service.issueTokensForUserId(req.user.userId, req.user.jti);
+    const payload = await this.service.issueTokensForUserId(req.user.userId, req.user.jti, req.user.twoFaVerified);
     this.setRefreshCookie(res, payload?.refreshToken);
     return payload;
   }
@@ -126,11 +127,13 @@ export class AuthController {
     if (!refreshToken) return;
     const cookieName = this.resolveCookieName();
     res.cookie(cookieName, refreshToken, this.buildRefreshCookieOptions());
+    res.setHeader('x-refresh-token', refreshToken);
   }
 
   private clearRefreshCookie(res: Response) {
     const cookieName = this.resolveCookieName();
     res.clearCookie(cookieName, this.buildRefreshCookieOptions({ maxAge: 0 }));
+    res.setHeader('x-refresh-token', '');
   }
 
   private resolveCookieName() {
@@ -138,7 +141,12 @@ export class AuthController {
   }
 
   private buildRefreshCookieOptions(overrides: Partial<CookieOptions> = {}): CookieOptions {
-    const maxAgeSeconds = this.config.get<number>('JWT_REFRESH_TTL') ?? 1209600;
+    const maxAgeSeconds = normalizeTtlSeconds(
+      'JWT_REFRESH_TTL',
+      this.config.get<number>('JWT_REFRESH_TTL'),
+      60 * 60 * 24 * 365,
+      1209600,
+    );
     const nodeEnv = (this.config.get<string>('NODE_ENV') ?? '').toLowerCase();
     const secureEnv = this.config.get<string>('AUTH_REFRESH_COOKIE_SECURE');
     const secure = secureEnv ? secureEnv === 'true' : nodeEnv === 'production';

@@ -19,9 +19,10 @@ describe('ProviderApplicationsService', () => {
     const automation = { emit: jest.fn(), enqueueMany: jest.fn() } as any;
     const slugs = { generateUniqueSlug: jest.fn() } as any;
     const audit = { log: jest.fn() } as any;
+    const notifications = { notifyAdminEvent: jest.fn() } as any;
 
-    const service = new ProviderApplicationsService(prisma, automation, slugs, audit);
-    return { service, prisma, automation, slugs, audit };
+    const service = new ProviderApplicationsService(prisma, automation, slugs, audit, notifications);
+    return { service, prisma, automation, slugs, audit, notifications };
   };
 
   it('creates provider application and emits automation event', async () => {

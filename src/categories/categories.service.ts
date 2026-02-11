@@ -1,14 +1,22 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
 import { CacheService } from '../common/cache/cache.service';
 import { localize } from '../common/utils/localize.util';
 import { PublicCategoryListDto } from './dto/public-category-query.dto';
+import { normalizeTtlSeconds } from '../common/utils/ttl.util';
 
 @Injectable()
 export class CategoriesService {
-  private readonly ttl = Number(process.env.CATEGORIES_CACHE_TTL ?? 60);
+  private readonly logger = new Logger(CategoriesService.name);
+  private readonly ttl = normalizeTtlSeconds(
+    'CATEGORIES_CACHE_TTL',
+    Number(process.env.CATEGORIES_CACHE_TTL ?? 60),
+    60 * 60 * 6,
+    60,
+    this.logger.warn.bind(this.logger),
+  );
 
   constructor(private prisma: PrismaService, private cache: CacheService) {}
 

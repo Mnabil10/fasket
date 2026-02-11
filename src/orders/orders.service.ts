@@ -26,6 +26,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { OtpService } from '../otp/otp.service';
 import { normalizePhoneToE164 } from '../common/utils/phone.util';
 import { OrdersGateway } from './orders.gateway';
+import { normalizeTtlSeconds } from '../common/utils/ttl.util';
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
@@ -88,8 +89,20 @@ type GuestAddressInput = {
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
-  private readonly listTtl = Number(process.env.ORDER_LIST_CACHE_TTL ?? 30);
-  private readonly receiptTtl = Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60);
+  private readonly listTtl = normalizeTtlSeconds(
+    'ORDER_LIST_CACHE_TTL',
+    Number(process.env.ORDER_LIST_CACHE_TTL ?? 30),
+    60 * 60,
+    30,
+    this.logger.warn.bind(this.logger),
+  );
+  private readonly receiptTtl = normalizeTtlSeconds(
+    'ORDER_RECEIPT_CACHE_TTL',
+    Number(process.env.ORDER_RECEIPT_CACHE_TTL ?? 60),
+    60 * 60 * 6,
+    60,
+    this.logger.warn.bind(this.logger),
+  );
   private readonly defaultProviderId = 'prov_default';
   private readonly defaultBranchId = 'branch_default';
   private readonly serviceFeeCents = 300;

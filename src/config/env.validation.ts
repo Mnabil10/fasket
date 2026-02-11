@@ -114,6 +114,12 @@ const baseSchema = z.object({
 
   PUSH_PROVIDER: z.enum(['fcm', 'onesignal', 'apns', 'mock']).optional(),
   FCM_SERVER_KEY: z.string().optional(),
+  FCM_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  FCM_SERVICE_ACCOUNT_PATH: z.string().optional(),
+  FCM_USE_APPLICATION_DEFAULT: z.enum(['true', 'false']).optional(),
+  FIREBASE_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  FIREBASE_SERVICE_ACCOUNT_PATH: z.string().optional(),
+  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
   ONESIGNAL_REST_KEY: z.string().optional(),
   ONESIGNAL_APP_ID: z.string().optional(),
   WEB_PUSH_PUBLIC_KEY: z.string().optional(),

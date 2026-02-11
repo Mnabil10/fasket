@@ -26,8 +26,10 @@ describe('PayoutsService', () => {
       resolveEffectiveBaseConfig: jest.fn().mockReturnValue({ minimumPayoutCents: 0 }),
     } as unknown as CommissionConfigService;
 
-    const service = new PayoutsService(prisma, finance, configs);
-    return { service, prisma, finance, configs };
+    const notifications = { notifyAdminEvent: jest.fn() } as any;
+
+    const service = new PayoutsService(prisma, finance, configs, notifications);
+    return { service, prisma, finance, configs, notifications };
   };
 
   it('throws when balance is insufficient', async () => {

@@ -1,6 +1,7 @@
 import { Body, Controller, Post, Req, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
+import { Throttle } from '@nestjs/throttler';
 import { OtpService } from '../otp/otp.service';
 import { PasswordResetService } from '../password-reset/password-reset.service';
 
@@ -10,6 +11,7 @@ export class AuthCompatController {
   constructor(private readonly otp: OtpService, private readonly passwordReset: PasswordResetService) {}
 
   @Post('otp/send')
+  @Throttle({ otpRequest: {} })
   async sendOtp(@Body() body: { phone: string }, @Req() req: Request, @Res() res: Response) {
     const result = await this.otp.requestOtp(body.phone, 'LOGIN', req.ip);
     res.setHeader('x-deprecated-endpoint', 'true');
@@ -17,6 +19,7 @@ export class AuthCompatController {
   }
 
   @Post('otp/verify')
+  @Throttle({ otpVerify: {} })
   async verifyOtp(@Body() body: { phone: string; otp: string }, @Req() req: Request, @Res() res: Response) {
     const result = await this.otp.verifyOtpLegacy(body.phone, 'LOGIN', body.otp, req.ip);
     res.setHeader('x-deprecated-endpoint', 'true');
@@ -24,6 +27,7 @@ export class AuthCompatController {
   }
 
   @Post('forgot-password')
+  @Throttle({ passwordResetRequest: {} })
   async forgotPassword(@Body() body: { identifier: string }, @Req() req: Request, @Res() res: Response) {
     const result = await this.passwordReset.requestReset(body.identifier, req.ip);
     res.setHeader('x-deprecated-endpoint', 'true');
@@ -31,6 +35,7 @@ export class AuthCompatController {
   }
 
   @Post('reset-password')
+  @Throttle({ passwordResetConfirm: {} })
   async resetPassword(
     @Body() body: { identifier: string; otp: string; newPassword: string },
     @Req() req: Request,

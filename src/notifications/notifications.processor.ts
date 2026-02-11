@@ -15,6 +15,8 @@ import {
   TemplateNotificationJob,
 } from './notifications.types';
 import axios from 'axios';
+import * as admin from 'firebase-admin';
+import * as fs from 'fs';
 import webpush from 'web-push';
 
 type DeviceRecord = {
@@ -38,6 +40,13 @@ export class NotificationsProcessor extends WorkerHost {
   private readonly logger = new Logger(NotificationsProcessor.name);
   private readonly provider: PushProvider = (process.env.PUSH_PROVIDER as PushProvider) ?? 'mock';
   private readonly fcmKey = process.env.FCM_SERVER_KEY;
+  private readonly fcmServiceAccountJson =
+    process.env.FCM_SERVICE_ACCOUNT_JSON ?? process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  private readonly fcmServiceAccountPath =
+    process.env.FCM_SERVICE_ACCOUNT_PATH ??
+    process.env.FIREBASE_SERVICE_ACCOUNT_PATH ??
+    process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  private readonly fcmUseApplicationDefault = process.env.FCM_USE_APPLICATION_DEFAULT === 'true';
   private readonly onesignalKey = process.env.ONESIGNAL_REST_KEY;
   private readonly onesignalAppId = process.env.ONESIGNAL_APP_ID;
   private readonly webPushPublicKey = process.env.WEB_PUSH_PUBLIC_KEY;
@@ -45,6 +54,8 @@ export class NotificationsProcessor extends WorkerHost {
   private readonly webPushSubject = process.env.WEB_PUSH_SUBJECT ?? 'mailto:notifications@fasket.shop';
   private readonly batchSize = Math.max(50, Number(process.env.NOTIFICATION_BATCH_SIZE ?? 500));
   private webPushReady = false;
+  private firebaseApp?: admin.app.App;
+  private firebaseInitError?: Error;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -361,9 +372,23 @@ export class NotificationsProcessor extends WorkerHost {
 
   private async sendPush(token: string, payload: NotificationPayload): Promise<DispatchResult> {
     switch (this.provider) {
-      case 'fcm':
-        if (!this.fcmKey) throw new Error('FCM_SERVER_KEY not configured');
-        return this.sendFcm(token, payload);
+      case 'fcm': {
+        if (this.hasFirebaseAdminConfig()) {
+          try {
+            return await this.sendFcmAdmin(token, payload);
+          } catch (error) {
+            if (!this.fcmKey) {
+              throw error;
+            }
+            this.logger.warn({
+              msg: 'FCM admin initialization failed, falling back to legacy key',
+              error: (error as Error).message,
+            });
+          }
+        }
+        if (!this.fcmKey) throw new Error('FCM credentials not configured');
+        return this.sendFcmLegacy(token, payload);
+      }
       case 'onesignal':
         if (!this.onesignalKey || !this.onesignalAppId) throw new Error('ONESIGNAL keys not configured');
         return this.sendOneSignal(token, payload);
@@ -375,7 +400,141 @@ export class NotificationsProcessor extends WorkerHost {
     }
   }
 
-  private async sendFcm(token: string, payload: NotificationPayload): Promise<DispatchResult> {
+  private hasFirebaseAdminConfig() {
+    return Boolean(this.fcmServiceAccountJson || this.fcmServiceAccountPath || this.fcmUseApplicationDefault);
+  }
+
+  private initFirebaseApp(): admin.app.App {
+    if (this.firebaseApp) return this.firebaseApp;
+    if (this.firebaseInitError) throw this.firebaseInitError;
+    if (admin.apps.length) {
+      this.firebaseApp = admin.app();
+      return this.firebaseApp;
+    }
+    try {
+      const serviceAccount = this.loadServiceAccount();
+      if (serviceAccount) {
+        this.firebaseApp = admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+        this.logger.log({ msg: 'Firebase admin initialized', source: 'serviceAccount' });
+      } else {
+        this.firebaseApp = admin.initializeApp();
+        this.logger.log({ msg: 'Firebase admin initialized', source: 'applicationDefault' });
+      }
+    } catch (error) {
+      const err = error as Error;
+      this.firebaseInitError = err;
+      this.logger.error({ msg: 'Firebase admin initialization failed', error: err.message });
+      throw err;
+    }
+    return this.firebaseApp;
+  }
+
+  private loadServiceAccount(): admin.ServiceAccount | null {
+    if (this.fcmServiceAccountJson) {
+      return JSON.parse(this.fcmServiceAccountJson) as admin.ServiceAccount;
+    }
+    if (this.fcmServiceAccountPath) {
+      const raw = fs.readFileSync(this.fcmServiceAccountPath, 'utf8');
+      return JSON.parse(raw) as admin.ServiceAccount;
+    }
+    return null;
+  }
+
+  private normalizeDataForFcm(payload: NotificationPayload) {
+    const data = this.normalizeData(payload);
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (value === undefined) continue;
+      if (value === null) {
+        normalized[key] = '';
+        continue;
+      }
+      if (typeof value === 'string') {
+        normalized[key] = value;
+        continue;
+      }
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        normalized[key] = String(value);
+        continue;
+      }
+      normalized[key] = JSON.stringify(value);
+    }
+    return normalized;
+  }
+
+  private buildFcmMessage(token: string, payload: NotificationPayload): admin.messaging.Message {
+    const data = this.normalizeDataForFcm(payload);
+    const notification: admin.messaging.Notification = {
+      title: payload.title,
+      body: payload.body,
+      ...(payload.imageUrl ? { imageUrl: payload.imageUrl } : {}),
+    };
+
+    const androidNotification: admin.messaging.AndroidNotification = {
+      ...(payload.channelId ? { channelId: payload.channelId } : {}),
+      ...(payload.sound ? { sound: payload.sound } : {}),
+      ...(payload.imageUrl ? { imageUrl: payload.imageUrl } : {}),
+    };
+
+    const android: admin.messaging.AndroidConfig = {
+      ...(payload.priority ? { priority: payload.priority === 'high' ? 'high' : 'normal' } : {}),
+      ...(Object.keys(androidNotification).length ? { notification: androidNotification } : {}),
+    };
+
+    const apnsPayload: admin.messaging.ApnsPayload = {
+      aps: {
+        ...(payload.sound ? { sound: payload.sound } : {}),
+        ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
+      },
+    };
+
+    const apns: admin.messaging.ApnsConfig = {
+      ...(payload.priority
+        ? { headers: { 'apns-priority': payload.priority === 'high' ? '10' : '5' } }
+        : {}),
+      ...(Object.keys(apnsPayload.aps ?? {}).length ? { payload: apnsPayload } : {}),
+      ...(payload.imageUrl ? { fcmOptions: { image: payload.imageUrl } } : {}),
+    };
+
+    return {
+      token,
+      data,
+      notification,
+      ...(Object.keys(android).length ? { android } : {}),
+      ...(Object.keys(apns).length ? { apns } : {}),
+    };
+  }
+
+  private async sendFcmAdmin(token: string, payload: NotificationPayload): Promise<DispatchResult> {
+    const app = this.initFirebaseApp();
+    const message = this.buildFcmMessage(token, payload);
+    try {
+      const messageId = await app.messaging().send(message, false);
+      return {
+        receipt: { status: 'success', provider: 'fcm', token, messageId },
+        channel: 'push',
+      };
+    } catch (error: any) {
+      const errorCode = error?.code ?? error?.errorInfo?.code ?? error?.errorInfo?.message ?? error?.message ?? 'fcm_failed';
+      const deactivate = [
+        'messaging/registration-token-not-registered',
+        'messaging/invalid-registration-token',
+        'messaging/mismatched-credential',
+      ].includes(String(errorCode));
+      return {
+        receipt: {
+          status: 'failed',
+          provider: 'fcm',
+          token,
+          error: typeof errorCode === 'string' ? errorCode : String(errorCode),
+        },
+        channel: 'push',
+        deactivate,
+      };
+    }
+  }
+
+  private async sendFcmLegacy(token: string, payload: NotificationPayload): Promise<DispatchResult> {
     const data = this.normalizeData(payload);
     const notification: Record<string, any> = {
       title: payload.title,

@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
 import { PublicProductFeedDto, PublicProductListDto } from './dto/public-product-query.dto';
 import { CacheService } from '../common/cache/cache.service';
 import { localize } from '../common/utils/localize.util';
+import { normalizeTtlSeconds } from '../common/utils/ttl.util';
 
 type Lang = 'en' | 'ar' | undefined;
 const categorySelect = {
@@ -25,9 +26,28 @@ type ProductDetailWithOptions = Prisma.ProductGetPayload<{
 
 @Injectable()
 export class ProductsService {
-  private readonly listTtl = Number(process.env.PRODUCT_LIST_CACHE_TTL ?? 60);
-  private readonly homeTtl = Number(process.env.HOME_CACHE_TTL ?? 120);
-  private readonly swrTtl = Number(process.env.CACHE_SWR_TTL ?? 30);
+  private readonly logger = new Logger(ProductsService.name);
+  private readonly listTtl = normalizeTtlSeconds(
+    'PRODUCT_LIST_CACHE_TTL',
+    Number(process.env.PRODUCT_LIST_CACHE_TTL ?? 60),
+    60 * 60 * 6,
+    60,
+    this.logger.warn.bind(this.logger),
+  );
+  private readonly homeTtl = normalizeTtlSeconds(
+    'HOME_CACHE_TTL',
+    Number(process.env.HOME_CACHE_TTL ?? 120),
+    60 * 60 * 6,
+    120,
+    this.logger.warn.bind(this.logger),
+  );
+  private readonly swrTtl = normalizeTtlSeconds(
+    'CACHE_SWR_TTL',
+    Number(process.env.CACHE_SWR_TTL ?? 30),
+    60 * 60,
+    30,
+    this.logger.warn.bind(this.logger),
+  );
 
   constructor(private prisma: PrismaService, private cache: CacheService) {}
 

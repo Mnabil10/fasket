@@ -3,12 +3,19 @@ import { ErrorCode } from '../common/errors/error-codes';
 import { OrdersService } from './orders.service';
 import { PaymentMethodDto } from './dto';
 
-const buildRealtimeGateway = () => ({
-  emitAdminNewOrder: jest.fn(),
-  emitProviderNewOrder: jest.fn(),
-  emitAdminOrderStatus: jest.fn(),
-  emitProviderOrderStatus: jest.fn(),
-});
+jest.mock('file-type', () => ({
+  fileTypeFromBuffer: jest.fn(),
+}));
+
+const buildRealtimeGateway = () =>
+  ({
+    emitAdminNewOrder: jest.fn(),
+    emitProviderNewOrder: jest.fn(),
+    emitAdminOrderStatus: jest.fn(),
+    emitProviderOrderStatus: jest.fn(),
+  } as any);
+
+const mockOtp = {} as any;
 
 describe('OrdersService.awardLoyaltyForOrder', () => {
   const mockAudit = { log: jest.fn() } as any;
@@ -16,7 +23,6 @@ describe('OrdersService.awardLoyaltyForOrder', () => {
   const mockAutomation = { emit: jest.fn(), enqueueMany: jest.fn() } as any;
   const mockBilling = { voidCommissionForOrder: jest.fn() } as any;
   const mockFinance = {} as any;
-
   const baseConfig = {
     enabled: true,
     earnRate: 1,
@@ -75,6 +81,7 @@ describe('OrdersService.awardLoyaltyForOrder', () => {
       mockBilling,
       mockFinance,
       {} as any,
+      mockOtp,
       buildRealtimeGateway(),
     );
     return { service, prisma, tx, settings, loyalty };
@@ -139,6 +146,7 @@ describe('OrdersService status transitions', () => {
       {} as any,
       {} as any,
       {} as any,
+      mockOtp,
       buildRealtimeGateway(),
     );
     return { service, prisma };
@@ -218,9 +226,10 @@ describe('OrdersService.create delivery terms', () => {
     const prisma = {
       orderGroup: { findFirst: jest.fn() },
     } as any;
+    const settings = { isDistancePricingEnabled: jest.fn().mockReturnValue(false) } as any;
     const service = new OrdersService(
       prisma,
-      {} as any,
+      settings,
       {} as any,
       { log: jest.fn() } as any,
       {} as any,
@@ -228,6 +237,7 @@ describe('OrdersService.create delivery terms', () => {
       {} as any,
       {} as any,
       {} as any,
+      mockOtp,
       buildRealtimeGateway(),
     );
     return { service, prisma };
@@ -272,6 +282,7 @@ describe('OrdersService.computeGroupTotals', () => {
       {} as any,
       {} as any,
       {} as any,
+      mockOtp,
       buildRealtimeGateway(),
     );
     return service;
@@ -317,10 +328,11 @@ describe('OrdersService.computeGroupTotals', () => {
 });
 
 describe('OrdersService ordering window', () => {
-  const buildService = () =>
-    new OrdersService(
+  const buildService = () => {
+    const settings = { getSettings: jest.fn().mockResolvedValue({ timezone: 'Africa/Cairo' }) } as any;
+    return new OrdersService(
       {} as any,
-      {} as any,
+      settings,
       {} as any,
       { log: jest.fn() } as any,
       {} as any,
@@ -328,51 +340,48 @@ describe('OrdersService ordering window', () => {
       {} as any,
       {} as any,
       {} as any,
+      mockOtp,
       buildRealtimeGateway(),
     );
+  };
 
   const makeDate = (hours: number, minutes: number) => new Date(2026, 0, 1, hours, minutes, 0, 0);
 
-  it('allows ordering when no window is configured', () => {
+  it('allows ordering when no window is configured', async () => {
     const service = buildService();
-    expect(() =>
+    await expect(
       (service as any).assertOrderingWindowOpen({ id: 'prov-1' }, makeDate(10, 0)),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('allows ordering within the configured window', () => {
+  it('allows ordering within the configured window', async () => {
     const service = buildService();
-    expect(() =>
+    await expect(
       (service as any).assertOrderingWindowOpen(
         { id: 'prov-1', orderWindowStartMinutes: 480, orderWindowEndMinutes: 1200 },
         makeDate(12, 0),
       ),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('blocks ordering outside the configured window', () => {
+  it('blocks ordering outside the configured window', async () => {
     const service = buildService();
-    let thrown: any;
-    try {
+    await expect(
       (service as any).assertOrderingWindowOpen(
         { id: 'prov-1', orderWindowStartMinutes: 480, orderWindowEndMinutes: 1200 },
         makeDate(6, 0),
-      );
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeDefined();
-    expect(thrown).toMatchObject({ code: ErrorCode.ORDERING_CLOSED });
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.ORDERING_CLOSED });
   });
 
-  it('supports windows that wrap past midnight', () => {
+  it('supports windows that wrap past midnight', async () => {
     const service = buildService();
-    expect(() =>
+    await expect(
       (service as any).assertOrderingWindowOpen(
         { id: 'prov-1', orderWindowStartMinutes: 1200, orderWindowEndMinutes: 300 },
         makeDate(1, 0),
       ),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -391,6 +400,7 @@ describe('OrdersService.cancelOrderGroup', () => {
       {} as any,
       {} as any,
       {} as any,
+      mockOtp,
       buildRealtimeGateway(),
     );
     return { service, prisma };
@@ -469,6 +479,7 @@ describe('OrdersService.refreshOrderGroupTotals', () => {
       {} as any,
       {} as any,
       {} as any,
+      mockOtp,
       buildRealtimeGateway(),
     );
     return { service, prisma };
@@ -553,6 +564,7 @@ describe('OrdersService.assignDriverToOrder', () => {
       {} as any,
       {} as any,
       {} as any,
+      mockOtp,
       buildRealtimeGateway(),
     );
     jest.spyOn(service as any, 'buildOrderEventPayload').mockResolvedValue({ orderId: 'o1' });
@@ -612,6 +624,7 @@ describe('OrdersService.updateStatus delivery timestamps', () => {
     const cache = { buildKey: jest.fn(), del: jest.fn() } as any;
     const automation = { emit: jest.fn(), enqueueMany: jest.fn() } as any;
     const finance = { settleOrder: jest.fn() } as any;
+    const notifications = { notifyOrderStatusChange: jest.fn() } as any;
     const service = new OrdersService(
       prisma,
       {} as any,
@@ -621,7 +634,8 @@ describe('OrdersService.updateStatus delivery timestamps', () => {
       automation,
       {} as any,
       finance,
-      {} as any,
+      notifications,
+      mockOtp,
       buildRealtimeGateway(),
     );
     jest.spyOn(service as any, 'emitOrderStatusAutomationEvent').mockResolvedValue(null);

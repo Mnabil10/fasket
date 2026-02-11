@@ -23,6 +23,7 @@ import { AppController } from './app.controller';
 import { HealthController } from './health/health.controller';
 import { CommonModule } from './common/common.module';
 import { validateEnv } from './config/env.validation';
+import { normalizeTtlSeconds } from './common/utils/ttl.util';
 import { SettingsModule } from './settings/settings.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { UploadsModule } from './uploads/uploads.module';
@@ -64,7 +65,14 @@ import { GrowthModule } from './growth/growth.module';
       inject: [ConfigService],
       useFactory: async (config: ConfigService) => {
         const logger = new Logger('Cache');
-        const ttl = Number(config.get('CACHE_DEFAULT_TTL') ?? 60);
+        const ttlSeconds = normalizeTtlSeconds(
+          'CACHE_DEFAULT_TTL',
+          Number(config.get('CACHE_DEFAULT_TTL') ?? 60),
+          60 * 60 * 6,
+          60,
+          logger.warn.bind(logger),
+        );
+        const ttlMs = Math.max(0, Math.floor(ttlSeconds * 1000));
         const redisEnabled = (config.get<string>('REDIS_ENABLED') ?? 'true') !== 'false';
         const redisUrl = redisEnabled ? config.get<string>('REDIS_URL') : undefined;
 
@@ -80,7 +88,7 @@ import { GrowthModule } from './growth/growth.module';
             client.on('error', (err: Error) => logger.warn(`Redis cache error: ${err.message}`));
 
             await client.connect();
-            const store = await redisStore({ client, ttl });
+            const store = await redisStore({ client, ttl: ttlMs });
             logger.log(`Cache connected to Redis at ${redisUrl}`);
             return { store };
           } catch (err) {
@@ -97,14 +105,19 @@ import { GrowthModule } from './growth/growth.module';
           logger.warn('Redis cache disabled via REDIS_ENABLED=false');
         }
 
-        return { ttl };
+        return { ttl: ttlMs };
       },
     }),
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => [
         {
-          ttl: parseInt(String(config.get('RATE_LIMIT_TTL') ?? 60), 10),
+          ttl: normalizeTtlSeconds(
+            'RATE_LIMIT_TTL',
+            Number(config.get('RATE_LIMIT_TTL') ?? 60),
+            60 * 60,
+            60,
+          ),
           limit: parseInt(String(config.get('RATE_LIMIT_MAX') ?? 100), 10),
         },
         { name: 'authLogin', ttl: 60, limit: 10 },

@@ -1,6 +1,10 @@
 import { OrderStatus } from '@prisma/client';
 import { DriverOrdersController } from './driver-orders.controller';
 
+jest.mock('file-type', () => ({
+  fileTypeFromBuffer: jest.fn(),
+}));
+
 describe('DriverOrdersController', () => {
   const buildController = () => {
     const prisma = {
@@ -16,8 +20,9 @@ describe('DriverOrdersController', () => {
     } as any;
     const orders = { updateStatus: jest.fn().mockResolvedValue({ success: true }) } as any;
     const drivers = { recordLocation: jest.fn() } as any;
-    const controller = new DriverOrdersController(prisma, orders, drivers);
-    return { controller, prisma, orders };
+    const settings = { getDeliveryZones: jest.fn().mockResolvedValue([]) } as any;
+    const controller = new DriverOrdersController(prisma, orders, drivers, settings);
+    return { controller, prisma, orders, settings };
   };
 
   it('filters out delivered and canceled orders by default', async () => {

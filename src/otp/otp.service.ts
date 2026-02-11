@@ -10,6 +10,7 @@ import { AuditLogService } from '../common/audit/audit-log.service';
 import { normalizePhoneToE164 } from '../common/utils/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ErrorCode } from '../common/errors';
+import { normalizeTtlSeconds } from '../common/utils/ttl.util';
 
 export type OtpPurpose = 'LOGIN' | 'PASSWORD_RESET' | 'SIGNUP' | 'ORDER_TRACKING';
 
@@ -71,7 +72,13 @@ export class OtpService {
     this.otpTtlSec = this.resolveOtpTtlSeconds();
     this.maxAttempts = Number(this.config.get('OTP_MAX_ATTEMPTS') ?? 5);
     this.lockMinutes = Number(this.config.get('OTP_LOCK_MINUTES') ?? 15);
-    this.otpRateLimitSeconds = Number(this.config.get('OTP_RATE_LIMIT_SECONDS') ?? 60);
+    this.otpRateLimitSeconds = normalizeTtlSeconds(
+      'OTP_RATE_LIMIT_SECONDS',
+      Number(this.config.get('OTP_RATE_LIMIT_SECONDS') ?? 60),
+      60 * 60,
+      60,
+      this.logger.warn.bind(this.logger),
+    );
     this.otpDailyLimit = Number(this.config.get('OTP_MAX_PER_DAY') ?? this.config.get('OTP_DAILY_LIMIT') ?? 10);
     this.otpPerIpLimit = Number(this.config.get('OTP_PER_IP_LIMIT') ?? 20);
     this.requestIdTtlSeconds = Math.max(this.otpTtlSec, this.otpRateLimitSeconds);
@@ -248,7 +255,13 @@ export class OtpService {
     if (purpose === 'PASSWORD_RESET') {
       const resetToken = randomUUID();
       const hashedToken = this.hashOtp(resetToken);
-      const ttl = Number(this.config.get('RESET_TOKEN_TTL_SECONDS') ?? 900);
+      const ttl = normalizeTtlSeconds(
+        'RESET_TOKEN_TTL_SECONDS',
+        Number(this.config.get('RESET_TOKEN_TTL_SECONDS') ?? 900),
+        60 * 60 * 24,
+        900,
+        this.logger.warn.bind(this.logger),
+      );
       await this.cache.set(this.resetKey(hashedToken), { phone: normalizedPhone, otpId }, this.ttlMs(ttl));
       await this.sendPasswordResetWhatsapp(normalizedPhone, otp, resetToken, ttl, record.requestId);
       return { success: true, resetToken, expiresInSeconds: ttl };
@@ -407,12 +420,24 @@ export class OtpService {
 
   private resolveOtpTtlSeconds() {
     const env = (this.config.get<string>('NODE_ENV') || '').toLowerCase();
-    const testTtl = Number(this.config.get('OTP_TTL_SECONDS_TEST'));
-    if (env !== 'production' && Number.isFinite(testTtl) && testTtl > 0) {
+    const testTtl = normalizeTtlSeconds(
+      'OTP_TTL_SECONDS_TEST',
+      Number(this.config.get('OTP_TTL_SECONDS_TEST')),
+      60 * 60,
+      0,
+      this.logger.warn.bind(this.logger),
+    );
+    if (env !== 'production' && testTtl > 0) {
       return testTtl;
     }
-    const configuredSeconds = Number(this.config.get('OTP_TTL_SECONDS'));
-    if (Number.isFinite(configuredSeconds) && configuredSeconds > 0) {
+    const configuredSeconds = normalizeTtlSeconds(
+      'OTP_TTL_SECONDS',
+      Number(this.config.get('OTP_TTL_SECONDS')),
+      60 * 60,
+      0,
+      this.logger.warn.bind(this.logger),
+    );
+    if (configuredSeconds > 0) {
       if (env === 'production' && configuredSeconds < 60) {
         this.logger.warn({
           msg: 'OTP TTL too low in production; using default fallback',

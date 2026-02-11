@@ -1,13 +1,21 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Cache } from 'cache-manager';
 import { createHash } from 'crypto';
+import { normalizeTtlSeconds } from '../utils/ttl.util';
 
 type CacheKeyPart = string | number | boolean | null | undefined | Record<string, any>;
 
 @Injectable()
 export class CacheService {
-  private readonly defaultTtl = Number(process.env.CACHE_DEFAULT_TTL ?? 60);
+  private readonly logger = new Logger(CacheService.name);
+  private readonly defaultTtlSeconds = normalizeTtlSeconds(
+    'CACHE_DEFAULT_TTL',
+    Number(process.env.CACHE_DEFAULT_TTL ?? 60),
+    60 * 60 * 6,
+    60,
+    this.logger.warn.bind(this.logger),
+  );
   private hits = 0;
   private misses = 0;
 
@@ -41,9 +49,17 @@ export class CacheService {
   }
 
   async set<T>(key: string, value: T, ttl?: number) {
-    const effectiveTtl = ttl ?? this.defaultTtl;
-    if (effectiveTtl <= 0) return;
-    await this.cache.set(key, value, effectiveTtl);
+    const rawTtlSeconds = ttl ?? this.defaultTtlSeconds;
+    if (!Number.isFinite(rawTtlSeconds) || rawTtlSeconds <= 0) return;
+    const effectiveTtlSeconds = normalizeTtlSeconds(
+      'CACHE_TTL',
+      rawTtlSeconds,
+      60 * 60 * 6,
+      this.defaultTtlSeconds,
+      this.logger.warn.bind(this.logger),
+    );
+    if (effectiveTtlSeconds <= 0) return;
+    await this.cache.set(key, value, this.toMs(effectiveTtlSeconds));
   }
 
   async del(key: string) {
@@ -81,6 +97,11 @@ export class CacheService {
 
   private hash(input: string) {
     return createHash('sha1').update(input).digest('hex');
+  }
+
+  private toMs(seconds: number) {
+    if (!Number.isFinite(seconds)) return 0;
+    return Math.max(0, Math.floor(seconds * 1000));
   }
 
   stats() {
