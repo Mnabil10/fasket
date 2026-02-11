@@ -493,7 +493,7 @@ export class NotificationsProcessor extends WorkerHost {
         ? { headers: { 'apns-priority': payload.priority === 'high' ? '10' : '5' } }
         : {}),
       ...(Object.keys(apnsPayload.aps ?? {}).length ? { payload: apnsPayload } : {}),
-      ...(payload.imageUrl ? { fcmOptions: { image: payload.imageUrl } } : {}),
+      ...(payload.imageUrl ? { fcmOptions: { imageUrl: payload.imageUrl } } : {}),
     };
 
     return {
