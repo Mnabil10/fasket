@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Address, Cart, Coupon, Prisma, ProductOptionGroupPriceMode, ProductOptionGroupType, ProductStatus, ProviderStatus, BranchStatus } from '@prisma/client';
+import { Address, BranchStatus, Cart, Coupon, OrderStatus, Prisma, ProductOptionGroupPriceMode, ProductOptionGroupType, ProductStatus, ProviderStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPublicImageUrl } from 'src/uploads/image.util';
 import { localize } from 'src/common/utils/localize.util';
@@ -131,6 +131,7 @@ type SerializedCoupon = {
   valueCents: number;
   maxDiscountCents: number | null;
   minOrderCents: number | null;
+  maxUsesPerUser: number | null;
   startsAt: Date | null;
   endsAt: Date | null;
 };
@@ -145,7 +146,8 @@ type CouponValidationResult =
   | { status: 'VALID' }
   | { status: 'INACTIVE' }
   | { status: 'EXPIRED' }
-  | { status: 'MIN_TOTAL'; requiredSubtotalCents: number; shortfallCents: number };
+  | { status: 'MIN_TOTAL'; requiredSubtotalCents: number; shortfallCents: number }
+  | { status: 'USER_LIMIT' };
 
 type ReorderPreviewItem = {
   productId: string;
@@ -519,7 +521,7 @@ export class CartService {
     if (!coupon) {
       throw new DomainError(ErrorCode.COUPON_INVALID, 'Invalid coupon code');
     }
-    const validation = this.validateCoupon(coupon, snapshot.subtotalCents);
+    const validation = await this.validateCoupon(coupon, snapshot.subtotalCents, userId);
     if (validation.status !== 'VALID' && validation.status !== 'MIN_TOTAL') {
       const message = this.formatCouponValidationMessage(validation.status);
       const code =
@@ -1207,6 +1209,7 @@ export class CartService {
       cart.id,
       couponCode,
       cartSnapshot.subtotalCents,
+      cart.userId,
       couponOverride,
     );
     const totalCents = Math.max(
@@ -1398,6 +1401,7 @@ export class CartService {
     cartId: string,
     couponCode: string | null,
     subtotalCents: number,
+    userId?: string | null,
     couponOverride?: Coupon | null,
   ) {
     if (!couponCode && !couponOverride) {
@@ -1414,7 +1418,7 @@ export class CartService {
       }
       return { discountCents: 0, coupon: null, couponNotice: undefined };
     }
-    const validation = this.validateCoupon(coupon, subtotalCents);
+    const validation = await this.validateCoupon(coupon, subtotalCents, userId);
     if (validation.status === 'MIN_TOTAL') {
       return {
         discountCents: 0,
@@ -1436,7 +1440,11 @@ export class CartService {
     return { discountCents, coupon: this.serializeCoupon(coupon), couponNotice: undefined };
   }
 
-  private validateCoupon(coupon: Coupon, subtotalCents: number): CouponValidationResult {
+  private async validateCoupon(
+    coupon: Coupon,
+    subtotalCents: number,
+    userId?: string | null,
+  ): Promise<CouponValidationResult> {
     const now = new Date();
     if (!coupon.isActive || (coupon.startsAt && coupon.startsAt > now)) {
       return { status: 'INACTIVE' };
@@ -1451,6 +1459,21 @@ export class CartService {
         requiredSubtotalCents: coupon.minOrderCents,
         shortfallCents: shortfall,
       };
+    }
+    if (userId && coupon.maxUsesPerUser && coupon.maxUsesPerUser > 0) {
+      const usageCount = await this.prisma.order.count({
+        where: {
+          userId,
+          status: { not: OrderStatus.CANCELED },
+          OR: [
+            { couponId: coupon.id },
+            { couponCode: coupon.code },
+          ],
+        },
+      });
+      if (usageCount >= coupon.maxUsesPerUser) {
+        return { status: 'USER_LIMIT' };
+      }
     }
     return { status: 'VALID' };
   }
@@ -1477,6 +1500,8 @@ export class CartService {
         return 'Coupon is not active';
       case 'EXPIRED':
         return 'Coupon has expired';
+      case 'USER_LIMIT':
+        return 'Coupon usage limit reached for this customer';
       default:
         return 'Coupon cannot be applied';
     }
@@ -1489,6 +1514,7 @@ export class CartService {
       valueCents: coupon.valueCents,
       maxDiscountCents: coupon.maxDiscountCents,
       minOrderCents: coupon.minOrderCents,
+      maxUsesPerUser: coupon.maxUsesPerUser,
       startsAt: coupon.startsAt,
       endsAt: coupon.endsAt,
     };

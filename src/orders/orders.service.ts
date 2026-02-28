@@ -904,6 +904,21 @@ export class OrdersService {
           if (!active || !coupon) {
             throw new DomainError(ErrorCode.COUPON_EXPIRED, 'Coupon is invalid or expired');
           }
+          if (userId && coupon.maxUsesPerUser && coupon.maxUsesPerUser > 0) {
+            const priorUsageCount = await tx.order.count({
+              where: {
+                userId,
+                status: { not: OrderStatus.CANCELED },
+                OR: [
+                  { couponId: coupon.id },
+                  { couponCode: coupon.code },
+                ],
+              },
+            });
+            if (priorUsageCount >= coupon.maxUsesPerUser) {
+              throw new DomainError(ErrorCode.COUPON_INVALID, 'Coupon usage limit reached for this customer');
+            }
+          }
 
           appliedCouponId = coupon.id;
           couponScope = {

@@ -1441,6 +1441,7 @@ model Coupon {
   endsAt          DateTime?
   minOrderCents   Int?
   maxDiscountCents Int?
+  maxUsesPerUser  Int?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
