@@ -82,8 +82,8 @@ export class AdminNotificationsController {
 
   @Post()
   @ApiOkResponse({ description: 'Create admin notification' })
-  create(@CurrentUser() user: CurrentUserPayload, @Body() dto: AdminNotificationCreateDto) {
-    const target = this.toTarget(dto.target);
+  async create(@CurrentUser() user: CurrentUserPayload, @Body() dto: AdminNotificationCreateDto) {
+    const target = await this.toTarget(dto.target);
     const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : null;
     return this.notifications.createAdminNotification({
       title: dto.title.trim(),
@@ -125,9 +125,64 @@ export class AdminNotificationsController {
     return this.notifications.unregisterWebSubscription(user.userId, dto.endpoint);
   }
 
-  private toTarget(input: NotificationTargetDto): NotificationTarget {
+  private async toTarget(input: NotificationTargetDto): Promise<NotificationTarget> {
     if (input.type === 'all') {
       return { type: 'broadcast' };
+    }
+    if (input.type === 'customers_with_coupons') {
+      return { type: 'customers_with_coupons' };
+    }
+    if (input.type === 'coupon_users') {
+      const couponCode = String(input.couponCode ?? '').trim();
+      const couponId = String(input.couponId ?? '').trim();
+      if (!couponCode && !couponId) {
+        throw new BadRequestException('couponCode or couponId is required for coupon_users targets');
+      }
+      const coupon = couponId
+        ? await this.svc.prisma.coupon.findUnique({ where: { id: couponId }, select: { id: true, code: true } })
+        : await this.svc.prisma.coupon.findFirst({ where: { code: couponCode }, select: { id: true, code: true } });
+      if (!coupon) {
+        throw new BadRequestException('Coupon not found');
+      }
+      return { type: 'coupon_users', couponId: coupon.id, couponCode: coupon.code };
+    }
+    if (input.type === 'provider_customers') {
+      if (!input.providerId) {
+        throw new BadRequestException('providerId is required for provider_customers targets');
+      }
+      return { type: 'provider_customers', providerId: input.providerId };
+    }
+    if (input.type === 'recent_customers') {
+      const days = Number.isFinite(Number(input.days)) ? Math.trunc(Number(input.days)) : 7;
+      if (days <= 0) {
+        throw new BadRequestException('days must be greater than zero for recent_customers targets');
+      }
+      return { type: 'recent_customers', days };
+    }
+    if (input.type === 'minimum_orders') {
+      const minOrders = Number.isFinite(Number(input.minOrders)) ? Math.trunc(Number(input.minOrders)) : 1;
+      if (minOrders <= 0) {
+        throw new BadRequestException('minOrders must be greater than zero for minimum_orders targets');
+      }
+      return { type: 'minimum_orders', minOrders };
+    }
+    if (input.type === 'minimum_orders_recent') {
+      const minOrders = Number.isFinite(Number(input.minOrders)) ? Math.trunc(Number(input.minOrders)) : 1;
+      const days = Number.isFinite(Number(input.days)) ? Math.trunc(Number(input.days)) : 30;
+      if (minOrders <= 0) {
+        throw new BadRequestException('minOrders must be greater than zero for minimum_orders_recent targets');
+      }
+      if (days <= 0) {
+        throw new BadRequestException('days must be greater than zero for minimum_orders_recent targets');
+      }
+      return { type: 'minimum_orders_recent', minOrders, days };
+    }
+    if (input.type === 'delivery_campaign_customers') {
+      const deliveryCampaignId = String(input.deliveryCampaignId ?? '').trim();
+      if (!deliveryCampaignId) {
+        throw new BadRequestException('deliveryCampaignId is required for delivery_campaign_customers targets');
+      }
+      return { type: 'delivery_campaign_customers', deliveryCampaignId };
     }
     if (input.type === 'role') {
       if (!input.role) {

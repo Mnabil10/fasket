@@ -721,6 +721,8 @@ model Order {
   deliveryRatePerKmCents Int?
   notes            String?
   couponCode       String?
+  couponId         String?
+  coupon           Coupon?              @relation(fields: [couponId], references: [id], onDelete: SetNull)
   deliveryTermsAccepted Boolean?
   subtotalCents    Int
   shippingFeeCents Int                  @default(0)
@@ -769,6 +771,7 @@ model Order {
   @@index([providerId])
   @@index([branchId])
   @@index([deliveryCampaignId])
+  @@index([couponId])
   @@unique([userId, idempotencyKey])
   @@index([code])
   @@index([createdAt])
@@ -1443,6 +1446,7 @@ model Coupon {
 
   provider        Provider?  @relation(fields: [providerId], references: [id])
   branch          Branch?    @relation(fields: [branchId], references: [id])
+  orders          Order[]
 
   @@index([providerId])
   @@index([branchId])

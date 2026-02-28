@@ -184,6 +184,54 @@ export class NotificationsProcessor extends WorkerHost {
       baseWhere.user = { addresses: { some: { zoneId: { in: target.areaIds } } } };
     } else if (target.type === 'provider') {
       baseWhere.user = { providerMemberships: { some: { providerId: target.providerId } } };
+    } else if (target.type === 'customers_with_coupons') {
+      baseWhere.role = UserRole.CUSTOMER;
+      baseWhere.user = {
+        orders: {
+          some: {
+            OR: [
+              { couponId: { not: null } },
+              { couponCode: { not: null } },
+            ],
+          },
+        },
+      };
+    } else if (target.type === 'coupon_users') {
+      baseWhere.role = UserRole.CUSTOMER;
+      baseWhere.user = {
+        orders: {
+          some: {
+            OR: [
+              { couponId: target.couponId },
+              ...(target.couponCode ? [{ couponCode: target.couponCode }] : []),
+            ],
+          },
+        },
+      };
+    } else if (target.type === 'provider_customers') {
+      baseWhere.role = UserRole.CUSTOMER;
+      baseWhere.user = { orders: { some: { providerId: target.providerId } } };
+    } else if (target.type === 'recent_customers') {
+      const since = new Date(Date.now() - Math.max(1, target.days) * 24 * 60 * 60 * 1000);
+      baseWhere.role = UserRole.CUSTOMER;
+      baseWhere.user = { orders: { some: { createdAt: { gte: since } } } };
+    } else if (target.type === 'minimum_orders') {
+      const userIds = await this.resolveUsersByMinimumOrders(target.minOrders);
+      if (!userIds.length) {
+        return { items: [] as DeviceRecord[], hasMore: false, nextCursor: undefined };
+      }
+      baseWhere.role = UserRole.CUSTOMER;
+      baseWhere.userId = { in: userIds };
+    } else if (target.type === 'minimum_orders_recent') {
+      const userIds = await this.resolveUsersByMinimumOrders(target.minOrders, target.days);
+      if (!userIds.length) {
+        return { items: [] as DeviceRecord[], hasMore: false, nextCursor: undefined };
+      }
+      baseWhere.role = UserRole.CUSTOMER;
+      baseWhere.userId = { in: userIds };
+    } else if (target.type === 'delivery_campaign_customers') {
+      baseWhere.role = UserRole.CUSTOMER;
+      baseWhere.user = { orders: { some: { deliveryCampaignId: target.deliveryCampaignId } } };
     } else if (target.type === 'devices') {
       baseWhere.id = { in: target.deviceIds };
     }
@@ -203,6 +251,23 @@ export class NotificationsProcessor extends WorkerHost {
     const hasMore = target.type !== 'devices' && devices.length === take;
     const nextCursor = devices.length ? devices[devices.length - 1].id : undefined;
     return { items: devices as DeviceRecord[], hasMore, nextCursor };
+  }
+
+  private async resolveUsersByMinimumOrders(minOrders: number, days?: number) {
+    const minOrdersSafe = Math.max(1, minOrders);
+    const since =
+      days && days > 0
+        ? new Date(Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000)
+        : null;
+    const rows = await this.prisma.$queryRaw<Array<{ userId: string }>>(Prisma.sql`
+      SELECT "userId"
+      FROM "Order"
+      WHERE "userId" IS NOT NULL
+      ${since ? Prisma.sql`AND "createdAt" >= ${since}` : Prisma.empty}
+      GROUP BY "userId"
+      HAVING COUNT(*) >= ${minOrdersSafe}
+    `);
+    return rows.map((row) => row.userId).filter(Boolean);
   }
 
   private async fetchAlreadySent(notificationId: string | undefined, deviceIds: string[]) {

@@ -6,8 +6,11 @@ import {
   IsDateString,
   IsEnum,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
+  Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
@@ -15,9 +18,52 @@ import { NotificationStatus, UserRole } from '@prisma/client';
 import { PaginationDto } from './pagination.dto';
 
 export class NotificationTargetDto {
-  @ApiProperty({ enum: ['all', 'role', 'area', 'areas', 'provider', 'user'] })
-  @IsIn(['all', 'role', 'area', 'areas', 'provider', 'user'])
-  type!: 'all' | 'role' | 'area' | 'areas' | 'provider' | 'user';
+  @ApiProperty({
+    enum: [
+      'all',
+      'role',
+      'area',
+      'areas',
+      'provider',
+      'user',
+      'customers_with_coupons',
+      'coupon_users',
+      'provider_customers',
+      'recent_customers',
+      'minimum_orders',
+      'minimum_orders_recent',
+      'delivery_campaign_customers',
+    ],
+  })
+  @IsIn([
+    'all',
+    'role',
+    'area',
+    'areas',
+    'provider',
+    'user',
+    'customers_with_coupons',
+    'coupon_users',
+    'provider_customers',
+    'recent_customers',
+    'minimum_orders',
+    'minimum_orders_recent',
+    'delivery_campaign_customers',
+  ])
+  type!:
+    | 'all'
+    | 'role'
+    | 'area'
+    | 'areas'
+    | 'provider'
+    | 'user'
+    | 'customers_with_coupons'
+    | 'coupon_users'
+    | 'provider_customers'
+    | 'recent_customers'
+    | 'minimum_orders'
+    | 'minimum_orders_recent'
+    | 'delivery_campaign_customers';
 
   @ApiPropertyOptional({ enum: UserRole })
   @IsOptional()
@@ -44,6 +90,35 @@ export class NotificationTargetDto {
   @IsOptional()
   @IsString()
   userId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  couponId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  deliveryCampaignId?: string;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 365, default: 7 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  days?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 10000 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10000)
+  minOrders?: number;
 }
 
 export class AdminNotificationCreateDto {

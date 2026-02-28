@@ -891,6 +891,7 @@ export class OrdersService {
 
         const subtotalCentsTotal = Array.from(grouped.values()).reduce((sum, group) => sum + group.subtotalCents, 0);
         let discountCents = 0;
+        let appliedCouponId: string | null = null;
         let couponScope: { scope?: string | null; providerId?: string | null; branchId?: string | null } | null = null;
         if (couponCode) {
           const coupon = await tx.coupon.findFirst({ where: { code: couponCode, isActive: true } });
@@ -904,6 +905,7 @@ export class OrdersService {
             throw new DomainError(ErrorCode.COUPON_EXPIRED, 'Coupon is invalid or expired');
           }
 
+          appliedCouponId = coupon.id;
           couponScope = {
             scope: coupon.scope ?? null,
             providerId: coupon.providerId ?? null,
@@ -1064,6 +1066,7 @@ export class OrdersService {
               cartId: cart.id,
               notes: payload.note,
               couponCode,
+              couponId: appliedCouponId,
               orderGroupId: orderGroup.id,
               providerId: group.providerId,
               branchId,
@@ -1618,6 +1621,7 @@ export class OrdersService {
               cartId: null,
               notes: payload.note,
               couponCode: null,
+              couponId: null,
               orderGroupId: orderGroup.id,
               providerId: group.providerId,
               branchId,
@@ -3272,6 +3276,7 @@ export class OrdersService {
           cartId: null,
           notes: 'Reorder',
           couponCode: null,
+          couponId: null,
           providerId: source.providerId ?? undefined,
           branchId: branchId ?? undefined,
           deliveryMode,

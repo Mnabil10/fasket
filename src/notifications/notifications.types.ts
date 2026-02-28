@@ -25,6 +25,13 @@ export type NotificationTarget =
   | { type: 'area'; areaId: string }
   | { type: 'areas'; areaIds: string[] }
   | { type: 'provider'; providerId: string }
+  | { type: 'customers_with_coupons' }
+  | { type: 'coupon_users'; couponId: string; couponCode?: string }
+  | { type: 'provider_customers'; providerId: string }
+  | { type: 'recent_customers'; days: number }
+  | { type: 'minimum_orders'; minOrders: number }
+  | { type: 'minimum_orders_recent'; minOrders: number; days: number }
+  | { type: 'delivery_campaign_customers'; deliveryCampaignId: string }
   | { type: 'broadcast' }
   | { type: 'devices'; deviceIds: string[] };
 
